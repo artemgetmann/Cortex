@@ -1,0 +1,15 @@
+# Local worktree checkouts live here; keep them out of `git status`.
+.worktrees/
+
+# Local assistant config (machine/user-specific).
+.claude/
+
+# macOS noise
+.DS_Store
+._*
+
+# Common secrets
+.env
+.env.*
+!.env.example
+
