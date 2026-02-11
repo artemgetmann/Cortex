@@ -17,11 +17,19 @@ def main() -> int:
     ap.add_argument("--session", type=int, default=1)
     ap.add_argument("--max-steps", type=int, default=80)
     ap.add_argument("--model", default="")
+    ap.add_argument("--no-skills", action="store_true")
     args = ap.parse_args()
 
     cfg = load_config()
     model = args.model.strip() or cfg.model_heavy
-    res = run_agent(cfg=cfg, task=args.task, session_id=args.session, max_steps=args.max_steps, model=model)
+    res = run_agent(
+        cfg=cfg,
+        task=args.task,
+        session_id=args.session,
+        max_steps=args.max_steps,
+        model=model,
+        load_skills=not args.no_skills,
+    )
     print("metrics:", res.metrics)
     return 0
 

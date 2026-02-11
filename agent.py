@@ -106,6 +106,7 @@ def run_agent(
     max_steps: int = 80,
     model: str,
     allowed_actions: set[str] | None = None,
+    load_skills: bool = True,
 ) -> RunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
 
@@ -137,15 +138,19 @@ def run_agent(
     # This mirrors Anthropic prompt caching guidance: keep the prefix stable.
     base_system_block: dict[str, Any] = {"type": "text", "text": build_system_prompt(tool_api_type=computer_api_type)}
 
-    skills_text_parts: list[str] = []
-    skills_index = Path("skills/fl-studio/index.md")
-    if skills_index.exists():
-        skills_text_parts.append("## Skills Index\n" + read_text(skills_index))
-    # Default: include the first hand-written skill doc if it exists.
-    drum_skill = Path("skills/fl-studio/drum-pattern.md")
-    if drum_skill.exists():
-        skills_text_parts.append("## Skill: drum-pattern\n" + read_text(drum_skill))
-    skills_system_block: dict[str, Any] = {"type": "text", "text": "\n\n".join(skills_text_parts).strip() or "No skills loaded."}
+    if load_skills:
+        skills_text_parts: list[str] = []
+        skills_index = Path("skills/fl-studio/index.md")
+        if skills_index.exists():
+            skills_text_parts.append("## Skills Index\n" + read_text(skills_index))
+        # Default: include the first hand-written skill doc if it exists.
+        drum_skill = Path("skills/fl-studio/drum-pattern.md")
+        if drum_skill.exists():
+            skills_text_parts.append("## Skill: drum-pattern\n" + read_text(drum_skill))
+        skills_text = "\n\n".join(skills_text_parts).strip() or "No skills loaded."
+    else:
+        skills_text = "No skills loaded."
+    skills_system_block: dict[str, Any] = {"type": "text", "text": skills_text}
     system_blocks = [base_system_block, skills_system_block]
 
     betas = [computer_beta]
