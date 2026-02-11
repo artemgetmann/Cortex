@@ -88,11 +88,13 @@ class ToolResult:
 
 # ── FL Studio process helpers ─────────────────────────────────────────────────
 
+_FL_BUNDLE_ID = "com.image-line.flstudio"
+
+
 def _find_fl_pid() -> int | None:
     ws = NSWorkspace.sharedWorkspace()
     for app in ws.runningApplications():
-        name = app.localizedName() or ""
-        if "FL Studio" in name:
+        if (app.bundleIdentifier() or "") == _FL_BUNDLE_ID:
             return app.processIdentifier()
     return None
 
@@ -100,7 +102,7 @@ def _find_fl_pid() -> int | None:
 def _activate_fl_studio() -> None:
     ws = NSWorkspace.sharedWorkspace()
     for app in ws.runningApplications():
-        if "FL Studio" in (app.localizedName() or ""):
+        if (app.bundleIdentifier() or "") == _FL_BUNDLE_ID:
             # NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps
             app.activateWithOptions_(3)
             time.sleep(0.1)
