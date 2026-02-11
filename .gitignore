@@ -13,3 +13,15 @@
 .env.*
 !.env.example
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local run artifacts
+gate_local.png
+debug_capture.png
+
+# Session logs/screenshots are local by default (keep sessions/.gitkeep tracked).
+sessions/session-*/
