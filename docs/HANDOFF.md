@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Cortex is a hackathon project (Anthropic "Built with Opus 4.6", Feb 10-16). An AI agent that teaches itself FL Studio through computer use + persistent memory. The gate test passed — pyautogui works with FL Studio Desktop on this Mac.
+Cortex is a hackathon project (Anthropic "Built with Opus 4.6", Feb 10-16). An AI agent that teaches itself FL Studio through computer use + persistent memory. The gate test passed — native macOS Quartz CGEvent APIs work with FL Studio Desktop on this Mac.
 
 ## Documents
 
@@ -21,10 +21,19 @@ docs/
 
 Two components. That's it.
 
-1. **Explorer Agent** — Python script that loops: screenshot FL Studio → send to Opus 4.6 API → parse action → execute via pyautogui → repeat
+1. **Explorer Agent** — Python script that loops: screenshot FL Studio → send to Opus 4.6 API → parse action → execute via Quartz CGEvent APIs → repeat
 2. **Batch Consolidation Script** — Runs BETWEEN sessions. Reads session JSONL logs → generates/updates skill markdown files
 
 No database. No Agents SDK. No Background Monitor. No research agents. No Docker. No custom UI.
+
+## IMPORTANT: FL Studio Must Be Visible
+
+FL Studio **MUST be forefront and visible on screen** for all tests and agent runs. If FL Studio is hidden/minimized:
+- Window bounds detection fails (CGWindowListCopyWindowInfo returns nothing)
+- Screenshots capture nothing
+- Key delivery may still work (CGEventPostToPid) but you can't verify visually
+
+**Before running any script:** Make sure FL Studio is visible and not behind other windows.
 
 ## Execution Steps (Do These In Order)
 
@@ -42,7 +51,7 @@ Cortex/
 ├── memory.py                   # Read/write skills + session logs (files on disk)
 ├── consolidate.py              # Between-session consolidation
 ├── config.py                   # API key, screen dims, paths
-├── requirements.txt            # anthropic, pyautogui, Pillow, pynput
+├── requirements.txt            # anthropic, pyobjc (Quartz), Pillow, pynput (pyautogui removed — replaced by native macOS Quartz framework)
 ├── skills/fl-studio/
 │   ├── index.md
 │   └── drum-pattern.md         # Hand-written first skill
@@ -53,18 +62,15 @@ Cortex/
 
 ### Step 3: Port the reference implementation to macOS
 
-Replace `xdotool` with `pyautogui`:
-- `xdotool mousemove` → `pyautogui.moveTo(x, y)`
-- `xdotool click 1` → `pyautogui.click(x, y)`
-- `xdotool type` → `pyautogui.write(text)`
-- `xdotool key` → `pyautogui.hotkey()` / `pyautogui.press()`
-- Screenshot: `pyautogui.screenshot()` → PIL Image → base64 → API
+Replace `xdotool` with native macOS Quartz CGEvent APIs (not pyautogui):
+- Mouse: `CGWarpMouseCursorPosition` + `CGEventPost` (not `pyautogui.moveTo`/`click`)
+- Keys: `CGEventPostToPid` to FL Studio PID (not `pyautogui.press`/`hotkey`)
+- Screenshots: `Quartz.CGWindowListCreateImage` (not `pyautogui.screenshot`)
+- Activation: `NSRunningApplication.activateWithOptions_` (not `osascript`)
 
-**Add before every action:**
-```python
-import subprocess
-subprocess.run(["osascript", "-e", 'tell application "FL Studio" to activate'])
-```
+**Activate FL Studio before every action:**
+
+Use `NSRunningApplication.activateWithOptions_` with app name `"FL Studio"` (not `"FL Studio 2024"`). This is more reliable than the old `osascript` approach and doesn't require a subprocess call.
 
 **API config:**
 ```python
@@ -156,3 +162,22 @@ listener.start()
 6. Session JSONL logging works
 
 **All 6 done → Day 1 success. Move to Day 2 (skill-following + complete task).**
+
+---
+
+## Evidence Log
+
+### Permission Diagnosis — PASS (2026-02-11)
+- **Script:** `scripts/diag_permissions.py`
+- **Results:**
+  - Alacritty terminal: CGPreflightPostEventAccess = **False** (permission bug confirmed)
+  - VS Code terminal: CGPreflightPostEventAccess = **True**
+  - Claude Code sandbox: blocks XPC to `com.apple.hiservices-xpcservice` (events silently dropped)
+  - Without sandbox: all APIs work correctly
+
+### Space Playback Gate — PASS (2026-02-11)
+- **Script:** `scripts/diag_focus_single.py J`
+- **Method:** CGEventPostToPid(pid, Space) directly to FL Studio PID
+- **Result:** Playback toggled successfully (confirmed by human — audio heard)
+- **Window bounds:** owner='FL Studio', bounds=(0, 30, 1024, 678)
+- **Key finding:** pyautogui replaced with Quartz CGEvent APIs for reliable input delivery
