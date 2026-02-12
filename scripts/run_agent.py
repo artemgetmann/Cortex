@@ -18,6 +18,7 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=80)
     ap.add_argument("--model", default="")
     ap.add_argument("--no-skills", action="store_true")
+    ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -29,6 +30,7 @@ def main() -> int:
         max_steps=args.max_steps,
         model=model,
         load_skills=not args.no_skills,
+        verbose=args.verbose,
     )
     print("metrics:", res.metrics)
     return 0

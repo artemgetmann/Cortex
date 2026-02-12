@@ -18,8 +18,9 @@ BASE_SYSTEM_PROMPT = """You are controlling FL Studio Desktop on macOS via scree
 
 Rules:
 - Keyboard first. Prefer shortcuts over clicking whenever possible.
-- Prefer Hint Bar verification: before clicking any UI element, move the mouse to the target and use a screenshot to read the Hint Bar text.
-  If the Hint Bar is not visible/readable, proceed using zoom + visual confirmation instead (do not get stuck).
+- Hint Bar verification: hover the target, take a screenshot, read the Hint Bar text at the top-left of the FL Studio window.
+  Once the Hint Bar confirms the expected element, immediately act (click, type, etc.). Do not re-verify.
+  If 2 hover attempts fail to confirm, skip verification and use visual recognition. Never loop on hover-zoom-read.
 - After every action, verify the UI changed as expected. If not, undo (Ctrl+Z) and try an alternative.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
@@ -107,6 +108,7 @@ def run_agent(
     model: str,
     allowed_actions: set[str] | None = None,
     load_skills: bool = True,
+    verbose: bool = False,
 ) -> RunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
 
@@ -167,6 +169,7 @@ def run_agent(
         "model": model,
         "time_start": time.time(),
         "steps": 0,
+        "load_skills": load_skills,
         "tool_actions": 0,
         "tool_errors": 0,
         "usage": [],
@@ -261,10 +264,19 @@ def run_agent(
                 },
             )
 
+            if verbose:
+                action = tool_input.get("action") if isinstance(tool_input, dict) else None
+                print(
+                    f"[step {step:03d}] tool={tool_name} action={action!r} ok={not result.is_error()} error={result.error!r}",
+                    flush=True,
+                )
+
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
             # No tool calls => model claims it's done / can't proceed.
+            if verbose:
+                print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
             break
 
         messages.append({"role": "user", "content": tool_results})

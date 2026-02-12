@@ -1,27 +1,30 @@
 # Skill: Create a 4-on-the-Floor Kick Pattern
 
-Use this procedure to program a basic house/techno kick pattern in FL Studio's Channel Rack.
+Program a basic house/techno kick pattern in FL Studio's Channel Rack.
 
-## Prerequisites
+## Channel Rack Layout
 
-- FL Studio is open and focused.
-- At least one drum channel exists, including `Kick`.
+The Channel Rack is a grid. Each row is one instrument:
+- **Left side**: channel number, LED (green = unmuted), channel name (e.g. "808 Kick").
+- **Right side**: 16 step buttons in a horizontal row. Each is a small rectangle.
+  - Step 1 = leftmost button. Step 16 = rightmost.
+  - Steps 1, 5, 9, 13 are evenly spaced at quarter intervals across the 16 buttons.
+  - Lit (bright) = active. Dark = inactive.
+- Channel rows are stacked vertically, ~20 px apart. The Kick is usually channel 1 (top row).
 
-## Steps
+## Procedure
 
-1. Press `F6` to open or focus the Channel Rack.
-2. Find the `Kick` channel row.
-3. Verify you are on the correct row with Hint Bar confirmation:
-   - Move the mouse over channel names in the rack.
-   - Read the Hint Bar at the bottom of the FL Studio window.
-   - Only proceed when the hint confirms the `Kick` target.
-4. In the `Kick` row, click step buttons `1`, `5`, `9`, and `13`.
-   - These are quarter notes (four-on-the-floor) in a 16-step bar.
-   - Step buttons are the 16 small rectangular cells to the right of the channel name.
-   - Lit = active. Dark = inactive.
-5. Press `Space` to play.
-6. Verify the pattern is playing correctly.
-7. If you click the wrong step or row, press `Ctrl+Z` to undo, then re-apply the correct clicks.
+1. Press `F6` to open/focus Channel Rack.
+2. Visually identify the row labeled "Kick" (or "808 Kick"). It is usually the first row.
+   - If unsure, hover the **channel name** (left side) and check the Hint Bar.
+   - Once confirmed, **immediately proceed to clicking step buttons**. Do not re-verify.
+3. Click the 4 step buttons in the Kick row: **step 1, step 5, step 9, step 13**.
+   - Click each button once. A lit button confirms activation.
+   - **IMPORTANT**: Step buttons show "Select" in the Hint Bar, NOT the channel name. Do not try to verify step buttons via Hint Bar — just click them based on their position in the confirmed Kick row.
+   - After each click, take a screenshot to verify the correct step toggled on.
+   - If the wrong step or row was clicked, press `Ctrl+Z` to undo, then retry.
+4. Press `Space` to start playback. Verify the kick plays on every beat.
+5. Press `Space` again to stop.
 
 ## Keyboard Shortcuts
 
@@ -31,13 +34,13 @@ Use this procedure to program a basic house/techno kick pattern in FL Studio's C
 
 ## Common Mistakes
 
-- Wrong row clicked: channel rows are close together (about 20 px apart).
-- Channel muted: the channel's green LED is off, so no sound plays.
-- Wrong transport mode: `PAT` should be lit, not `SONG` (top-left transport area).
-- Wrong pattern selected: edits were made to a different pattern slot.
+- Clicking the wrong row (rows are close together, ~20 px apart).
+- Channel muted (green LED is off).
+- Wrong transport mode (`PAT` should be lit, not `SONG`).
+- Re-verifying instead of clicking — once you see "Kick" in the row label, click the steps.
 
 ## Verification Checklist
 
-- Wave Candy shows activity during playback.
-- Transport timer advances while playing.
-- Step buttons `1`, `5`, `9`, and `13` are lit in the `Kick` row.
+- Steps 1, 5, 9, 13 are lit in the Kick row.
+- Transport timer advances during playback.
+- You hear a kick on every beat.
