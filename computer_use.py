@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 import io
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import Quartz  # type: ignore
 from AppKit import NSWorkspace  # type: ignore
+from ApplicationServices import AXIsProcessTrusted  # type: ignore
 from PIL import Image, ImageChops
 
 
@@ -110,6 +112,45 @@ def _activate_fl_studio() -> None:
 
 
 # ── CGEvent input helpers ─────────────────────────────────────────────────────
+
+_INPUT_ACTIONS = frozenset({
+    "mouse_move",
+    "left_click",
+    "right_click",
+    "middle_click",
+    "double_click",
+    "triple_click",
+    "left_click_drag",
+    "scroll",
+    "key",
+    "hold_key",
+    "type",
+})
+
+
+def _has_post_event_access() -> bool:
+    try:
+        return bool(Quartz.CGPreflightPostEventAccess())
+    except Exception:
+        return False
+
+
+def _has_ax_access() -> bool:
+    try:
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return False
+
+
+def _build_input_access_error() -> str:
+    return (
+        "macOS denied synthetic input events. "
+        f"CGPreflightPostEventAccess={_has_post_event_access()} "
+        f"AXIsProcessTrusted={_has_ax_access()} "
+        f"python={sys.executable}. "
+        "Grant Accessibility to your terminal/IDE and this Python binary, then restart both."
+    )
+
 
 def _cg_post_key_to_pid(pid: int, keycode: int, down: bool, flags: int = 0) -> None:
     event = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
@@ -303,6 +344,14 @@ class ComputerTool:
     # ── FL Studio state ───────────────────────────────────────────────────
 
     def _get_fl_pid(self) -> int | None:
+        if self._fl_pid is not None:
+            ws = NSWorkspace.sharedWorkspace()
+            for app in ws.runningApplications():
+                if app.processIdentifier() == self._fl_pid:
+                    return self._fl_pid
+            # Cached PID went stale after app restart.
+            self._fl_pid = None
+
         if self._fl_pid is None:
             self._fl_pid = _find_fl_pid()
         return self._fl_pid
@@ -448,6 +497,9 @@ class ComputerTool:
             return ToolResult(error=f"Invalid tool input: missing action: {tool_input!r}")
 
         try:
+            if action in _INPUT_ACTIONS and not _has_post_event_access():
+                return ToolResult(error=_build_input_access_error())
+
             _activate_fl_studio()
 
             if action == "screenshot":

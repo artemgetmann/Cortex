@@ -62,11 +62,11 @@ response = client.beta.messages.create(
 
 **System prompt core directives:**
 - "You are controlling FL Studio Desktop on macOS via screenshots and mouse/keyboard."
-- "KEYBOARD FIRST: Always prefer keyboard shortcuts over clicking. F6=Channel Rack, F7=Piano Roll, Space=Play/Stop, Ctrl+Z=Undo, Escape=Close dialogs."
+- "KEYBOARD FIRST: Always prefer keyboard shortcuts over clicking. F6=Channel Rack, F7=Piano Roll, Space=Play/Stop, Cmd+Z=Undo, Escape=Close dialogs."
 - "HINT BAR VERIFICATION: Before clicking any UI element, move the mouse to the target and read the Hint Bar at the bottom of FL Studio. Verify it matches your intended target. Only click after Hint Bar confirmation."
 - "ZOOM FOR PRECISION: When UI elements are small or dense, use the zoom action to inspect the region at full resolution before clicking."
 - "SEMANTIC MEMORY: When recording what you learned, describe targets semantically ('Kick row, first row in Channel Rack') not by raw coordinates. Coordinates change if the window moves."
-- "After every action, take a screenshot and evaluate: did the UI change as expected? If not, Ctrl+Z and try again."
+- "After every action, take a screenshot and evaluate: did the UI change as expected? If not, Cmd+Z and try again."
 - "When you succeed at something, note exactly what worked and why."
 - "When you fail, note what went wrong and what you'll try differently."
 
@@ -184,7 +184,7 @@ memories/
 ## Keyboard Shortcuts
 - F6: Open Channel Rack
 - Space: Play/Stop
-- Ctrl+Z: Undo last action
+- Cmd+Z: Undo last action
 
 ## Common Mistakes
 - Clicking the wrong channel row (Kick vs Clap vs Hat)
@@ -507,7 +507,7 @@ Cortex/
 ### Day 2 (Feb 11) — Agent Controls FL Studio
 
 - Agent follows skill doc to place a kick drum pattern
-- Keyboard-first interaction: F6, F7, Space, Ctrl+Z, Escape
+- Keyboard-first interaction: F6, F7, Space, Cmd+Z, Escape
 - Hint Bar verification: move mouse → read hint → verify → click
 - Add `emergency_reset()` recovery function
 - Add `activate_fl_studio()` window focus management

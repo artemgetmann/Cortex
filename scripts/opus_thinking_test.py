@@ -31,7 +31,7 @@ Rules:
 - Hint Bar verification: hover the target, take a screenshot, read the Hint Bar text at the top-left of the FL Studio window.
   Once the Hint Bar confirms the expected element, immediately act (click, type, etc.). Do not re-verify.
   If 2 hover attempts fail to confirm, skip verification and use visual recognition. Never loop on hover-zoom-read.
-- After every action, verify the UI changed as expected. If not, undo (Ctrl+Z) and try an alternative.
+- After every action, verify the UI changed as expected. If not, undo (Cmd+Z) and try an alternative.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
 """

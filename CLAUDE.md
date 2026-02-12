@@ -82,6 +82,14 @@ docs/
 - `CGWarpMouseCursorPosition` works even with sandbox (different API path).
 - `computer_use.py` forbids dangerous key combos (cmd+q, cmd+tab, cmd+w, cmd+m).
 
+## Computer Tool Compatibility (Important)
+
+- Decider models (default Haiku/Sonnet path) use `computer_20250124`.
+- Heavy model (default Opus path) uses `computer_20251124`.
+- The `zoom` action is available only with `computer_20251124` (Opus path).
+- Do not ask Haiku/Sonnet runs to use zoom; they should use screenshot + precise clicks instead.
+- If you need zoom-dependent precision checks, run with Opus.
+
 ## Environment variables
 
 | Variable | Default | Purpose |

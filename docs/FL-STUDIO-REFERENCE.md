@@ -82,7 +82,7 @@ For the hackathon demo, focus on: **Channel Rack** and **Piano Roll** only.
 | F7 | Piano Roll |
 | F9 | Mixer |
 | Space | Play / Stop |
-| Ctrl+Z | Undo |
+| Cmd+Z | Undo |
 | Escape | Close dialog / deselect |
 | Ctrl+S | Save |
 | Tab | Toggle between Pattern and Song mode |

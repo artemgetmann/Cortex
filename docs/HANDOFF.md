@@ -4,6 +4,20 @@
 
 Cortex is a hackathon project (Anthropic "Built with Opus 4.6", Feb 10-16). An AI agent that teaches itself FL Studio through computer use + persistent memory. The gate test passed — native macOS Quartz CGEvent APIs work with FL Studio Desktop on this Mac.
 
+## Latest Status (2026-02-12)
+
+- Input-delivery root cause identified: tmux session context was missing macOS input trust; non-tmux shell had trust.
+- `scripts/diag_permissions.py` now reports screen/post/listen/AX access plus Python binary and parent process.
+- `computer_use.py` now fails fast with a clear permission error when post-event access is denied.
+- `computer_use.py` now revalidates cached FL Studio PID so app restarts do not leave stale PID targeting.
+- New diagnostic `scripts/click_test.py` (v4) validates left-click on browser panel targets; this passed with Method A (HID tap).
+- Model/tool compatibility clarified:
+  - Haiku/Sonnet decider path uses `computer_20250124` (no `zoom` action).
+  - Opus heavy path uses `computer_20251124` (includes `zoom` action).
+- Recent validated sessions:
+  - Session 3102: `F6` exactly once, then stop (pass).
+  - Session 3206 (Sonnet): 4 clicks + space + space, completed without tool errors.
+
 ## Documents
 
 ```
@@ -193,3 +207,16 @@ listener.start()
   - Agent successfully sent F6 keypress to FL Studio via CGEventPostToPid
   - Prompt caching confirmed working (cache_read on subsequent steps)
 - **All Day 1 success criteria met.**
+
+### Input Permission/Tmux Diagnosis — PASS (2026-02-12)
+- **Scripts:** `scripts/diag_permissions.py`, `scripts/click_test.py`
+- **Findings:**
+  - In tmux context: `Post events=False`, `AX=False` (events dropped).
+  - In trusted shell context: `Post events=True`, `AX=True`.
+  - Root cause is process trust context, not virtual-display coordinate routing.
+- **Outcome:** left-click and key delivery both verified in trusted shell context.
+
+### Model Compatibility Update — CONFIRMED (2026-02-12)
+- **Decider path (Haiku/Sonnet):** `computer_20250124` (no zoom action).
+- **Heavy path (Opus):** `computer_20251124` (zoom action enabled).
+- **Code references:** `config.py` tool type defaults + `agent.py` conditional prompt guidance.
