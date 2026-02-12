@@ -22,6 +22,12 @@ Rules:
   Once the Hint Bar confirms the expected element, immediately act (click, type, etc.). Do not re-verify.
   If 2 hover attempts fail to confirm, skip verification and use visual recognition. Never loop on hover-zoom-read.
 - After every action, verify the UI changed as expected. If not, undo (Cmd+Z) and try an alternative.
+- Numeric field strategy (tempo/BPM/value boxes): use direct value entry first.
+  Click the value field, type the target value, press Enter, then verify. Do not right-click value fields unless the user asks.
+  Do not perform repeated scroll loops on numeric fields; if one direct entry attempt fails, try one alternate click-focus attempt, then move on.
+- Popup/menu selection strategy: after opening a context menu or dropdown, do one zoom focused on the menu list,
+  click the target item, then verify the resulting value. Do not spam repeated zooms on the same menu region
+  unless the click failed verification.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
 """

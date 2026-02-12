@@ -41,6 +41,13 @@ The Channel Rack is a grid. Each row is one instrument:
 - Verifying after each step click — batch all 4 clicks, then verify once with a screenshot.
 - Hovering step buttons and reading time elapsed in Hint Bar — this is expected, not an error.
 
+## Tempo Change Playbook (for tempo tasks)
+
+- Target the BPM number display directly (e.g., `130.000`).
+- Use direct entry first: click the BPM field, type target value (e.g., `140`), press `Enter`, verify it reads `140.000`.
+- Avoid right-click tempo menus for basic tempo changes unless explicitly requested.
+- Avoid repeated scroll loops for tempo; if direct entry fails once, retry with one alternate click-focus and direct entry.
+
 ## Verification Checklist
 
 - Steps 1, 5, 9, 13 are lit in the Kick row.

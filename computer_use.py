@@ -295,6 +295,17 @@ def _image_to_base64_png(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _cgimage_to_pil(cgimg: Any) -> Image.Image:
+    width = Quartz.CGImageGetWidth(cgimg)
+    height = Quartz.CGImageGetHeight(cgimg)
+    bpr = Quartz.CGImageGetBytesPerRow(cgimg)
+    provider = Quartz.CGImageGetDataProvider(cgimg)
+    data = Quartz.CGDataProviderCopyData(provider)
+    buf = bytes(data)
+    img = Image.frombuffer("RGBA", (width, height), buf, "raw", "BGRA", bpr, 1)
+    return img.copy()
+
+
 # ── ComputerTool ──────────────────────────────────────────────────────────────
 
 class ComputerTool:
@@ -407,6 +418,114 @@ class ComputerTool:
 
     # ── Screenshot ────────────────────────────────────────────────────────
 
+    def _list_online_displays(self) -> list[int]:
+        try:
+            err, displays, count = Quartz.CGGetOnlineDisplayList(32, None, None)
+            if err != Quartz.kCGErrorSuccess or count <= 0:
+                return []
+            return [int(d) for d in displays[:count]]
+        except Exception:
+            return []
+
+    def _display_bounds(self, display_id: int) -> tuple[int, int, int, int] | None:
+        try:
+            rect = Quartz.CGDisplayBounds(display_id)
+            x = int(rect.origin.x)
+            y = int(rect.origin.y)
+            w = int(rect.size.width)
+            h = int(rect.size.height)
+            if w <= 0 or h <= 0:
+                return None
+            return x, y, w, h
+        except Exception:
+            return None
+
+    def _display_for_window(self, bounds: tuple[int, int, int, int]) -> int:
+        wx, wy, ww, wh = bounds
+        displays = self._list_online_displays()
+        if not displays:
+            return int(Quartz.CGMainDisplayID())
+
+        best_display: int | None = None
+        best_area = -1
+        for did in displays:
+            db = self._display_bounds(did)
+            if db is None:
+                continue
+            dx, dy, dw, dh = db
+            ix0 = max(wx, dx)
+            iy0 = max(wy, dy)
+            ix1 = min(wx + ww, dx + dw)
+            iy1 = min(wy + wh, dy + dh)
+            iw = ix1 - ix0
+            ih = iy1 - iy0
+            if iw <= 0 or ih <= 0:
+                continue
+            area = iw * ih
+            if area > best_area:
+                best_area = area
+                best_display = did
+
+        if best_display is not None:
+            return best_display
+        return int(Quartz.CGMainDisplayID())
+
+    def _desktop_union_bounds(self, displays: list[int]) -> tuple[int, int, int, int] | None:
+        rects: list[tuple[int, int, int, int]] = []
+        for did in displays:
+            db = self._display_bounds(did)
+            if db is not None:
+                rects.append(db)
+        if not rects:
+            return None
+        min_x = min(r[0] for r in rects)
+        min_y = min(r[1] for r in rects)
+        max_x = max(r[0] + r[2] for r in rects)
+        max_y = max(r[1] + r[3] for r in rects)
+        return min_x, min_y, max_x - min_x, max_y - min_y
+
+    def _capture_composited_all(self) -> Image.Image | None:
+        cgimg = Quartz.CGWindowListCreateImage(
+            Quartz.CGRectInfinite,
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID,
+            Quartz.kCGWindowImageDefault,
+        )
+        if cgimg is None:
+            return None
+        return _cgimage_to_pil(cgimg)
+
+    def _capture_display(self, display_id: int) -> tuple[Image.Image, tuple[int, int, int, int]] | None:
+        bounds = self._display_bounds(display_id)
+        if bounds is None:
+            return None
+
+        full = self._capture_composited_all()
+        if full is not None:
+            displays = self._list_online_displays()
+            union = self._desktop_union_bounds(displays)
+            if union is not None:
+                ux, uy, uw, uh = union
+                dx, dy, dw, dh = bounds
+                if uw > 0 and uh > 0:
+                    sx = full.width / float(uw)
+                    sy = full.height / float(uh)
+                    x0 = int(round((dx - ux) * sx))
+                    y0 = int(round((dy - uy) * sy))
+                    x1 = int(round((dx + dw - ux) * sx))
+                    y1 = int(round((dy + dh - uy) * sy))
+                    x0 = max(0, min(full.width - 1, x0))
+                    y0 = max(0, min(full.height - 1, y0))
+                    x1 = max(0, min(full.width, x1))
+                    y1 = max(0, min(full.height, y1))
+                    if x1 > x0 and y1 > y0:
+                        return full.crop((x0, y0, x1, y1)), bounds
+
+        cgimg = Quartz.CGDisplayCreateImage(display_id)
+        if cgimg is None:
+            return None
+        return _cgimage_to_pil(cgimg), bounds
+
     def _capture_fl_window(self) -> Image.Image | None:
         found = self._find_fl_window()
         if found is None:
@@ -415,6 +534,30 @@ class ComputerTool:
         self._fl_window_id = wid
         self._fl_window_bounds = (x, y, ww, wh)
 
+        display_id = self._display_for_window((x, y, ww, wh))
+        captured = self._capture_display(display_id)
+        if captured is None:
+            raise RuntimeError(
+                "Display capture failed. Grant Screen Recording permission to your terminal/IDE, "
+                "then restart it."
+            )
+        full, (dx, dy, dw, dh) = captured
+        if dw <= 0 or dh <= 0:
+            return full
+        sx = full.width / float(dw)
+        sy = full.height / float(dh)
+        x0 = int(round((x - dx) * sx))
+        y0 = int(round((y - dy) * sy))
+        x1 = int(round((x + ww - dx) * sx))
+        y1 = int(round((y + wh - dy) * sy))
+        x0 = max(0, min(full.width - 1, x0))
+        y0 = max(0, min(full.height - 1, y0))
+        x1 = max(0, min(full.width, x1))
+        y1 = max(0, min(full.height, y1))
+        if x1 > x0 and y1 > y0:
+            return full.crop((x0, y0, x1, y1))
+
+        # Fallback only if crop bounds are invalid for the composited frame.
         rect = Quartz.CGRectMake(x, y, ww, wh)
         cgimg = Quartz.CGWindowListCreateImage(
             rect,

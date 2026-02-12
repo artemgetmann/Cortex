@@ -30,3 +30,4 @@ toolbar_detail.png
 
 # Session logs/screenshots are local by default (keep sessions/.gitkeep tracked).
 sessions/session-*/
+sessions/fullscreen-test/
