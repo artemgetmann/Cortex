@@ -79,6 +79,19 @@ def _default_task_text(task_id: str) -> str:
             "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
             "- Keep SQL deterministic and concise.\n"
         )
+    if task_id == "incremental_reconcile":
+        return (
+            "SQLite task: incremental_reconcile.\n"
+            "Goal:\n"
+            "1) Ingest rows from the fixture into `ledger`.\n"
+            "2) Deduplicate by `event_id` and store duplicate rows in `rejects`.\n"
+            "3) Write checkpoint metadata in `checkpoint_log`.\n"
+            "4) Return deterministic aggregate totals by category.\n"
+            "Constraints:\n"
+            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
+            "- Read relevant skills before SQL execution.\n"
+            "- Keep SQL deterministic and transaction-safe.\n"
+        )
     return f"SQLite task id: {task_id}. Use run_sqlite to complete the task."
 
 
@@ -110,13 +123,14 @@ def _read_skill_tool_param() -> dict[str, Any]:
     }
 
 
-def _show_fixture_tool_param() -> dict[str, Any]:
+def _show_fixture_tool_param(path_refs: list[str]) -> dict[str, Any]:
+    refs_text = ", ".join(path_refs) if path_refs else "(none)"
     return {
         "name": SHOW_FIXTURE_TOOL_NAME,
-        "description": "Read task fixture/bootstrap file by stable path_ref.",
+        "description": f"Read task fixture/bootstrap file by stable path_ref. Available refs: {refs_text}.",
         "input_schema": {
             "type": "object",
-            "properties": {"path_ref": {"type": "string", "enum": ["fixture.csv", "bootstrap.sql"]}},
+            "properties": {"path_ref": {"type": "string"}},
             "required": ["path_ref"],
             "additionalProperties": False,
         },
@@ -266,7 +280,8 @@ def _build_system_prompt(
         "You are controlling a deterministic sqlite3 CLI environment.\n"
         "Rules:\n"
         "- Use run_sqlite for SQL execution.\n"
-        "- Use read_skill when summary metadata is not enough.\n"
+        "- You must read at least one routed skill with read_skill before run_sqlite.\n"
+        "- Use read_skill whenever routed skill summaries are insufficient for exact execution.\n"
         "- Use show_fixture to inspect fixture/bootstrap files.\n"
         "- Keep SQL concise, deterministic, and verifiable.\n"
         "- Do not use unsupported sqlite shell actions.\n"
@@ -295,6 +310,16 @@ def _load_skill_snapshots(
     return snapshots, digests
 
 
+def _is_skill_gate_satisfied(
+    *,
+    read_skill_refs: set[str],
+    required_skill_refs: set[str],
+) -> bool:
+    if not required_skill_refs:
+        return True
+    return bool(read_skill_refs & required_skill_refs)
+
+
 def run_cli_agent(
     *,
     cfg: CortexConfig,
@@ -312,6 +337,7 @@ def run_cli_agent(
     escalation_consecutive_runs: int = 2,
     promotion_min_runs: int = 3,
     promotion_min_delta: float = 0.2,
+    require_skill_read: bool = True,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     task_text = task.strip() if isinstance(task, str) and task.strip() else _default_task_text(task_id)
@@ -323,6 +349,7 @@ def run_cli_agent(
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
     routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
     routed_refs = [entry.skill_ref for entry in routed_entries]
+    required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
     skills_text = manifest_summaries_text(routed_entries)
     lessons_text, lessons_loaded = load_relevant_lessons(
         path=LESSONS_PATH,
@@ -332,9 +359,18 @@ def run_cli_agent(
         max_sessions=5,
     )
     system_prompt = _build_system_prompt(task_id=task_id, skills_text=skills_text, lessons_text=lessons_text)
+    if required_skill_refs:
+        system_prompt += (
+            "\nSkill gate requirement:\n"
+            f"- Before first run_sqlite call, read at least one of: {sorted(required_skill_refs)}\n"
+        )
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
-    tools = [_run_sqlite_tool_param(), _read_skill_tool_param(), _show_fixture_tool_param()]
+    tools = [
+        _run_sqlite_tool_param(),
+        _read_skill_tool_param(),
+        _show_fixture_tool_param(sorted(task_workspace.fixture_paths.keys())),
+    ]
 
     escalation_state = _load_escalation_state(base_model=model_critic)
     critic_model_for_run, escalation_state = _resolve_critic_model_for_run(
@@ -350,7 +386,10 @@ def run_cli_agent(
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,
+        "skill_gate_blocks": 0,
         "skill_reads": 0,
+        "required_skill_refs": sorted(required_skill_refs),
+        "require_skill_read": require_skill_read,
         "lessons_loaded": lessons_loaded,
         "lessons_generated": 0,
         "posttask_patch_attempted": False,
@@ -411,6 +450,17 @@ def run_cli_agent(
                 sql = tool_input.get("sql")
                 if not isinstance(sql, str):
                     result = ToolResult(error=f"run_sqlite requires string sql, got {sql!r}")
+                elif require_skill_read and not _is_skill_gate_satisfied(
+                    read_skill_refs=read_skill_refs,
+                    required_skill_refs=required_skill_refs,
+                ):
+                    metrics["skill_gate_blocks"] += 1
+                    result = ToolResult(
+                        error=(
+                            "Skill gate: call read_skill for at least one routed skill before run_sqlite. "
+                            f"Required refs: {sorted(required_skill_refs)}"
+                        )
+                    )
                 else:
                     exec_result = run_sqlite(
                         db_path=task_workspace.db_path,

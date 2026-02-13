@@ -16,5 +16,14 @@
     "skill_ref": "sqlite/import-aggregate",
     "title": "sqlite-import-aggregate",
     "version": 1
+  },
+  {
+    "confidence": 0.7,
+    "description": "Stateful ingest workflow with dedupe, rejects, and checkpoint logging.",
+    "last_updated": "1970-01-01T00:00:00+00:00",
+    "path": "tracks/cli_sqlite/skills/sqlite/incremental-reconcile/SKILL.md",
+    "skill_ref": "sqlite/incremental-reconcile",
+    "title": "sqlite-incremental-reconcile",
+    "version": 1
   }
 ]

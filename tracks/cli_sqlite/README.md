@@ -22,6 +22,11 @@ This track is an isolated, fast-iteration learning loop that uses `sqlite3` inst
 - `scripts/score_cli_session.py`: Deterministic re-score for a session.
 - `tests/test_cli_track.py`: Unit and integration tests for this track.
 
+## Tasks
+
+- `import_aggregate`: CSV import + grouped totals.
+- `incremental_reconcile`: transaction-safe ingest, dedupe-by-id, rejects logging, checkpoint metadata.
+
 ## Quick Start
 
 ```bash
@@ -42,3 +47,4 @@ python3 tracks/cli_sqlite/scripts/score_cli_session.py \
 - Runtime artifacts live under `tracks/cli_sqlite/sessions/` and `tracks/cli_sqlite/learning/`.
 - Default models are Haiku for executor and critic.
 - Critic-only escalation is enabled by default (`haiku -> sonnet -> opus`) when score/no-update streak triggers fire.
+- Skill-read gate is enabled by default. `run_sqlite` is blocked until at least one routed skill is loaded via `read_skill`.

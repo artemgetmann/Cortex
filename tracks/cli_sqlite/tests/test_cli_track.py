@@ -9,8 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
-from tracks.cli_sqlite.executor import run_sqlite
+from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
 from tracks.cli_sqlite.learning_cli import Lesson, load_relevant_lessons, store_lessons
 from tracks.cli_sqlite.memory_cli import ensure_session, write_event
 from tracks.cli_sqlite.self_improve_cli import (
@@ -56,6 +57,28 @@ class ExecutorTests(unittest.TestCase):
             self.assertFalse(result.ok)
             assert result.error is not None
             self.assertIn("timed out", result.error)
+
+    def test_prepare_task_workspace_loads_fixture_seed_with_dynamic_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = root / "tasks" / "dynamic_fixture_case"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            (task_dir / "bootstrap.sql").write_text("CREATE TABLE IF NOT EXISTS marker(id INTEGER);", encoding="utf-8")
+            (task_dir / "fixture.csv").write_text(
+                "event_id,category,amount,batch_id\n"
+                "e1,drums,5,b1\n"
+                "e2,bass,4,b1\n",
+                encoding="utf-8",
+            )
+            db_path = root / "sessions" / "session-001" / "task.db"
+            workspace = prepare_task_workspace(track_root=root, task_id="dynamic_fixture_case", db_path=db_path)
+            self.assertIn("fixture.csv", workspace.fixture_paths)
+
+            with sqlite3.connect(str(db_path)) as conn:
+                rows = conn.execute(
+                    "SELECT event_id, category, amount, batch_id FROM fixture_seed ORDER BY event_id;"
+                ).fetchall()
+            self.assertEqual(rows, [("e1", "drums", "5", "b1"), ("e2", "bass", "4", "b1")])
 
 
 class SkillRoutingTests(unittest.TestCase):
@@ -160,6 +183,63 @@ class EvalTests(unittest.TestCase):
             self.assertIn("matched_forbidden_pattern", result.reasons)
             self.assertIn("required_query_mismatch", result.reasons)
             self.assertIn("too_many_errors", result.reasons)
+
+    def test_eval_incremental_reconcile_pass_case(self) -> None:
+        track_tasks = Path(__file__).resolve().parents[1] / "tasks"
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "task.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE ledger(event_id TEXT PRIMARY KEY, category TEXT, amount INTEGER, batch_id TEXT, checkpoint_tag TEXT)"
+                )
+                conn.execute("CREATE TABLE rejects(event_id TEXT, reason TEXT)")
+                conn.execute("CREATE TABLE checkpoint_log(checkpoint_tag TEXT PRIMARY KEY, row_count INTEGER)")
+                conn.executemany(
+                    "INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        ("e1", "drums", 5, "b1", "CKP-APR-01"),
+                        ("e2", "bass", 4, "b1", "CKP-APR-01"),
+                        ("e3", "lead", 3, "b1", "CKP-APR-01"),
+                        ("e4", "drums", 8, "b1", "CKP-APR-01"),
+                    ],
+                )
+                conn.execute("INSERT INTO rejects(event_id, reason) VALUES ('e2', 'duplicate_event')")
+                conn.execute("INSERT INTO checkpoint_log(checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)")
+                conn.commit()
+
+            events = [
+                {
+                    "tool": "run_sqlite",
+                    "tool_input": {
+                        "sql": "BEGIN TRANSACTION; INSERT INTO ledger VALUES ('e1','drums',5,'b1','CKP-APR-01'); COMMIT;"
+                    },
+                    "ok": True,
+                },
+                {"tool": "run_sqlite", "tool_input": {"sql": "INSERT INTO rejects(event_id, reason) VALUES ('e2', 'duplicate_event');"}, "ok": True},
+                {"tool": "run_sqlite", "tool_input": {"sql": "INSERT INTO checkpoint_log(checkpoint_tag, row_count) VALUES ('CKP-APR-01',4);"}, "ok": True},
+            ]
+            result = evaluate_cli_session(
+                task="sqlite incremental reconcile with dedupe",
+                task_id="incremental_reconcile",
+                events=events,
+                db_path=db_path,
+                tasks_root=track_tasks,
+            )
+            self.assertTrue(result.applicable)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.score, 1.0)
+
+
+class SkillGateTests(unittest.TestCase):
+    def test_skill_gate_requires_intersection(self) -> None:
+        self.assertTrue(_is_skill_gate_satisfied(read_skill_refs={"sqlite/basics"}, required_skill_refs=set()))
+        self.assertFalse(_is_skill_gate_satisfied(read_skill_refs=set(), required_skill_refs={"sqlite/incremental-reconcile"}))
+        self.assertTrue(
+            _is_skill_gate_satisfied(
+                read_skill_refs={"sqlite/incremental-reconcile"},
+                required_skill_refs={"sqlite/incremental-reconcile"},
+            )
+        )
 
 
 class LearningAndPromotionTests(unittest.TestCase):

@@ -155,34 +155,48 @@ def _execute_bootstrap_sql(db_path: Path, bootstrap_sql_path: Path) -> None:
         raise RuntimeError(f"Failed to execute bootstrap SQL: {result.error}")
 
 
-def _load_fixture_into_seed_table(db_path: Path, fixture_csv_path: Path) -> None:
-    if not fixture_csv_path.exists():
+def _sanitize_identifier(text: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", text.strip().lower())
+    normalized = normalized.strip("_")
+    if not normalized:
+        return "fixture_data"
+    if normalized[0].isdigit():
+        normalized = f"f_{normalized}"
+    return normalized
+
+
+def _load_csv_into_table(
+    *,
+    db_path: Path,
+    csv_path: Path,
+    table_name: str,
+) -> None:
+    if not csv_path.exists():
         return
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            return
+        columns = [_sanitize_identifier(col) for col in reader.fieldnames]
+        rows: list[tuple[str, ...]] = []
+        for row in reader:
+            if not isinstance(row, dict):
+                continue
+            rows.append(tuple(str(row.get(name, "")).strip() for name in reader.fieldnames))
+
+    quoted_cols = [f'"{col}"' for col in columns]
+    create_cols_sql = ", ".join(f'{col} TEXT' for col in quoted_cols)
+    placeholders = ", ".join("?" for _ in columns)
+    insert_cols_sql = ", ".join(quoted_cols)
+
     with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS fixture_seed (
-                category TEXT NOT NULL,
-                amount INTEGER NOT NULL
+        conn.execute(f'CREATE TABLE IF NOT EXISTS "{table_name}" ({create_cols_sql})')
+        conn.execute(f'DELETE FROM "{table_name}"')
+        if rows:
+            conn.executemany(
+                f'INSERT INTO "{table_name}" ({insert_cols_sql}) VALUES ({placeholders})',
+                rows,
             )
-            """
-        )
-        conn.execute("DELETE FROM fixture_seed")
-        with fixture_csv_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            rows: list[tuple[str, int]] = []
-            for row in reader:
-                category = str(row.get("category", "")).strip()
-                amount_raw = str(row.get("amount", "0")).strip()
-                if not category:
-                    continue
-                try:
-                    amount = int(amount_raw)
-                except ValueError:
-                    continue
-                rows.append((category, amount))
-            if rows:
-                conn.executemany("INSERT INTO fixture_seed(category, amount) VALUES (?, ?)", rows)
         conn.commit()
 
 
@@ -200,16 +214,21 @@ def prepare_task_workspace(
     if db_path.exists():
         db_path.unlink()
 
-    fixture_paths = {
-        "fixture.csv": task_dir / "fixture.csv",
-        "bootstrap.sql": task_dir / "bootstrap.sql",
-    }
+    fixture_paths: dict[str, Path] = {"bootstrap.sql": task_dir / "bootstrap.sql"}
+    for csv_path in sorted(task_dir.glob("*.csv")):
+        fixture_paths[csv_path.name] = csv_path
 
     # Bootstrap creates deterministic schema state for each run.
-    _execute_bootstrap_sql(db_path, fixture_paths["bootstrap.sql"])
+    _execute_bootstrap_sql(db_path, fixture_paths.get("bootstrap.sql", task_dir / "bootstrap.sql"))
 
-    # Load CSV once into fixture_seed so the model can verify/import from SQL.
-    _load_fixture_into_seed_table(db_path, fixture_paths["fixture.csv"])
+    # Every csv fixture is loaded into a deterministic table name so the model can
+    # perform repeatable SQL workflows without external file I/O.
+    for name, path in fixture_paths.items():
+        if not name.lower().endswith(".csv"):
+            continue
+        stem = Path(name).stem
+        table_name = "fixture_seed" if stem == "fixture" else f"fixture_{_sanitize_identifier(stem)}"
+        _load_csv_into_table(db_path=db_path, csv_path=path, table_name=table_name)
 
     return TaskWorkspace(task_id=task_id, task_dir=task_dir, db_path=db_path, fixture_paths=fixture_paths)
 

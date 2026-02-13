@@ -26,6 +26,7 @@ def main() -> int:
     ap.add_argument("--auto-escalate-critic", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--escalation-score-threshold", type=float, default=0.75)
     ap.add_argument("--escalation-consecutive-runs", type=int, default=2)
+    ap.add_argument("--require-skill-read", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--verbose", action="store_true")
@@ -46,6 +47,7 @@ def main() -> int:
         auto_escalate_critic=bool(args.auto_escalate_critic),
         escalation_score_threshold=args.escalation_score_threshold,
         escalation_consecutive_runs=max(1, args.escalation_consecutive_runs),
+        require_skill_read=bool(args.require_skill_read),
     )
     print(json_dump(result.metrics))
     return 0
