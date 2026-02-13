@@ -234,6 +234,7 @@ def run_agent(
     # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
     non_productive_streak = 0
     loop_guard_enabled = computer_api_type == "computer_20251124"
+    read_skill_refs: set[str] = set()
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
@@ -329,6 +330,7 @@ def run_agent(
                         result = ToolResult(error=err)
                         metrics["tool_errors"] += 1
                     else:
+                        read_skill_refs.add(skill_ref)
                         result = ToolResult(output=f"skill_ref: {skill_ref}\n\n{content}")
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")
@@ -435,6 +437,8 @@ def run_agent(
             f"{json.dumps(tail_events, ensure_ascii=True)}\n\n"
             "ROUTED_SKILLS:\n"
             f"{json.dumps(routed_refs, ensure_ascii=True)}\n\n"
+            "READ_SKILL_REFS:\n"
+            f"{json.dumps(sorted(read_skill_refs), ensure_ascii=True)}\n\n"
             "SKILL_DIGESTS:\n"
             f"{json.dumps(skill_digests, ensure_ascii=True)}\n\n"
             "SKILL_CONTENTS:\n"
@@ -461,6 +465,7 @@ def run_agent(
                 min_confidence=0.7,
                 valid_steps=valid_steps,
                 required_skill_digests=skill_digests,
+                allowed_skill_refs=read_skill_refs,
             )
             metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
             write_event(

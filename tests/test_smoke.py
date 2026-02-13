@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent import build_system_prompt, _inject_prompt_caching
 from memory import ensure_session, write_event
-from self_improve import SkillUpdate, apply_skill_updates, parse_reflection_response
+from self_improve import SkillUpdate, apply_skill_updates, parse_reflection_response, skill_digest
 from skill_routing import build_skill_manifest, manifest_summaries_text, resolve_skill_content, route_manifest_entries
 
 
@@ -77,6 +77,7 @@ class SkillRoutingTests(unittest.TestCase):
                         "---\n"
                         "name: fl-studio-drum-pattern\n"
                         "description: Place kick hits on 1, 5, 9, 13 in Channel Rack.\n"
+                        "version: 3\n"
                         "---\n\n"
                         "# Drum Pattern\n\nUse F6 first."
                     ),
@@ -90,6 +91,7 @@ class SkillRoutingTests(unittest.TestCase):
                 self.assertEqual(manifest[0].skill_ref, "fl-studio/drum-pattern")
                 self.assertEqual(manifest[0].title, "fl-studio-drum-pattern")
                 self.assertIn("Place kick hits", manifest[0].description)
+                self.assertEqual(manifest[0].version, 3)
             finally:
                 os.chdir(cwd)
 
@@ -220,6 +222,7 @@ class SelfImproveTests(unittest.TestCase):
                         "---\n"
                         "name: fl-studio-basics\n"
                         "description: Use when task is in FL Studio.\n"
+                        "version: 1\n"
                         "---\n\n"
                         "# FL Studio Basics\n"
                     ),
@@ -239,9 +242,7 @@ class SelfImproveTests(unittest.TestCase):
                         append_bullets=["Prefer decisive clicks after two inspections."],
                     )
                 ]
-                from self_improve import skill_digest as _skill_digest
-
-                digest = _skill_digest(skill_path.read_text(encoding="utf-8"))
+                digest = skill_digest(skill_path.read_text(encoding="utf-8"))
                 updates[0] = SkillUpdate(
                     skill_ref=updates[0].skill_ref,
                     skill_digest=digest,
@@ -257,11 +258,62 @@ class SelfImproveTests(unittest.TestCase):
                     min_confidence=0.7,
                     valid_steps={5, 6, 7},
                     required_skill_digests={"fl-studio/basics": digest},
+                    allowed_skill_refs={"fl-studio/basics"},
                 )
                 self.assertEqual(result["applied"], 1)
                 body = skill_path.read_text(encoding="utf-8")
                 self.assertIn("## Learned Updates", body)
                 self.assertIn("Prefer decisive clicks", body)
+                self.assertIn("version: 2", body)
+            finally:
+                os.chdir(cwd)
+
+    def test_apply_skill_updates_requires_read_before_write(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                skill_path = skills_root / "fl-studio" / "basics" / "SKILL.md"
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-basics\n"
+                        "description: Use when task is in FL Studio.\n"
+                        "version: 1\n"
+                        "---\n\n"
+                        "# FL Studio Basics\n"
+                    ),
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                digest = skill_digest(skill_path.read_text(encoding="utf-8"))
+                updates = [
+                    SkillUpdate(
+                        skill_ref="fl-studio/basics",
+                        skill_digest=digest,
+                        root_cause="Missed decisive click after repeated zoom checks.",
+                        evidence_steps=[2, 3],
+                        replace_rules=[],
+                        append_bullets=["After two zoom checks, click immediately."],
+                    )
+                ]
+                result = apply_skill_updates(
+                    entries=manifest,
+                    updates=updates,
+                    confidence=0.9,
+                    min_confidence=0.7,
+                    valid_steps={2, 3},
+                    required_skill_digests={"fl-studio/basics": digest},
+                    allowed_skill_refs=set(),
+                )
+                self.assertEqual(result["applied"], 0)
+                body = skill_path.read_text(encoding="utf-8")
+                self.assertNotIn("Learned Updates", body)
             finally:
                 os.chdir(cwd)
 

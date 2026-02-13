@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-ALLOWED_FRONTMATTER_KEYS = {"name", "description", "license", "allowed-tools", "metadata"}
+ALLOWED_FRONTMATTER_KEYS = {"name", "description", "version", "license", "allowed-tools", "metadata"}
 NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
@@ -84,6 +84,17 @@ def validate_skill_file(path: Path) -> list[ValidationIssue]:
         # Enforce trigger-oriented metadata for routing quality.
         if "use when" not in description.lower():
             issues.append(ValidationIssue(path, "description should include explicit trigger phrase: 'Use when ...'"))
+
+    raw_version = meta.get("version", "").strip()
+    if not raw_version:
+        issues.append(ValidationIssue(path, "missing required frontmatter key: version"))
+    else:
+        try:
+            version = int(raw_version)
+            if version < 1:
+                issues.append(ValidationIssue(path, "version must be an integer >= 1"))
+        except ValueError:
+            issues.append(ValidationIssue(path, "version must be an integer >= 1"))
 
     return issues
 

@@ -1,6 +1,7 @@
 ---
 name: fl-studio-basics
 description: Use when any task is executed in FL Studio; provides universal UI rules (Hint Bar usage, Channel Rack orientation, numeric entry, and anti-loop behavior).
+version: 1
 ---
 
 # FL Studio Basics

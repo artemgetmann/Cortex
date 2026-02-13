@@ -1,6 +1,7 @@
 ---
 name: fl-studio-drum-pattern
 description: Use when the task is to create a 4-on-the-floor kick pattern in FL Studio Channel Rack (steps 1,5,9,13) with keyboard-first verification.
+version: 1
 ---
 
 # FL Studio Drum Pattern

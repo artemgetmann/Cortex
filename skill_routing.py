@@ -15,6 +15,7 @@ class SkillManifestEntry:
     title: str
     description: str
     path: str
+    version: int
     last_updated: str
     confidence: float
 
@@ -52,7 +53,7 @@ def _extract_frontmatter(text: str) -> dict[str, str]:
         key, value = line.split(":", 1)
         key = key.strip().lower()
         value = value.strip().strip('"').strip("'")
-        if key in {"name", "title", "description"} and value:
+        if key in {"name", "title", "description", "version"} and value:
             meta[key] = value
     return meta
 
@@ -103,6 +104,18 @@ def _extract_title_and_description(text: str) -> tuple[str, str]:
     return title, description
 
 
+def _extract_version(text: str) -> int:
+    meta = _extract_frontmatter(text)
+    raw = str(meta.get("version", "")).strip()
+    try:
+        value = int(raw)
+        if value >= 1:
+            return value
+    except ValueError:
+        pass
+    return 1
+
+
 def discover_skill_files(skills_root: Path) -> list[Path]:
     return sorted(skills_root.glob("**/SKILL.md"))
 
@@ -125,6 +138,7 @@ def build_skill_manifest(
         except Exception:
             continue
         title, description = _extract_title_and_description(text)
+        version = _extract_version(text)
         last_updated = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
         entries.append(
             SkillManifestEntry(
@@ -132,6 +146,7 @@ def build_skill_manifest(
                 title=title,
                 description=description,
                 path=str(path),
+                version=version,
                 last_updated=last_updated,
                 confidence=float(default_confidence),
             )

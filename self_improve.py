@@ -42,6 +42,45 @@ def skill_digest(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], tuple[int, int] | None]:
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return {}, None
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return {}, None
+    meta: dict[str, str] = {}
+    for raw in lines[1:end_idx]:
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        meta[key.strip()] = value.strip().strip('"').strip("'")
+    span_end = sum(len(ln) for ln in lines[: end_idx + 1])
+    return meta, (0, span_end)
+
+
+def _render_frontmatter(meta: dict[str, str]) -> str:
+    ordered = ["name", "description", "version"]
+    out: list[str] = ["---\n"]
+    for key in ordered:
+        if key in meta and str(meta[key]).strip():
+            out.append(f"{key}: {meta[key]}\n")
+    for key in sorted(meta.keys()):
+        if key in ordered:
+            continue
+        value = str(meta[key]).strip()
+        if not value:
+            continue
+        out.append(f"{key}: {value}\n")
+    out.append("---\n")
+    return "".join(out)
+
+
 def _extract_json_object(raw: str) -> dict[str, Any] | None:
     text = raw.strip()
     if not text:
@@ -147,6 +186,7 @@ def apply_skill_updates(
     max_skills: int = 2,
     valid_steps: set[int] | None = None,
     required_skill_digests: dict[str, str] | None = None,
+    allowed_skill_refs: set[str] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "attempted": bool(updates),
@@ -169,6 +209,8 @@ def apply_skill_updates(
     for upd in updates[:max_skills]:
         entry = by_ref.get(upd.skill_ref)
         if entry is None:
+            continue
+        if allowed_skill_refs is not None and upd.skill_ref not in allowed_skill_refs:
             continue
         if required_skill_digests is not None:
             expected = required_skill_digests.get(upd.skill_ref, "")
@@ -223,6 +265,15 @@ def apply_skill_updates(
             changed = True
 
         if changed and text != original_text:
+            meta, span = _parse_frontmatter(text)
+            if span is not None:
+                current_version = 1
+                raw = str(meta.get("version", "")).strip()
+                if raw.isdigit():
+                    current_version = max(1, int(raw))
+                meta["version"] = str(current_version + 1)
+                fm = _render_frontmatter(meta)
+                text = fm + text[span[1] :]
             backup = p.with_suffix(p.suffix + ".bak")
             if not backup.exists():
                 backup.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")

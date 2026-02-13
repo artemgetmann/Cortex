@@ -1,6 +1,7 @@
 ---
 name: skill-creator
 description: Use when creating or updating local skills under skills/; enforces SKILL.md folder format, valid frontmatter, and trigger-focused descriptions.
+version: 1
 ---
 
 # Skill Creator (Local)
