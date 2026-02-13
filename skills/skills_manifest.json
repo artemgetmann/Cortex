@@ -1,16 +1,16 @@
 [
   {
     "confidence": 0.7,
-    "description": "Create or update local skills in this repo using strict SKILL.md folder format with concise metadata-first design.",
-    "last_updated": "2026-02-13T13:17:19.486600+00:00",
+    "description": "Use when creating or updating local skills under skills/; enforces SKILL.md folder format, valid frontmatter, and trigger-focused descriptions.",
+    "last_updated": "2026-02-13T13:36:46.898221+00:00",
     "path": "skills/core/skill-creator/SKILL.md",
     "skill_ref": "core/skill-creator",
     "title": "skill-creator"
   },
   {
     "confidence": 0.7,
-    "description": "Create a basic 4-on-the-floor kick pattern in FL Studio Channel Rack using a keyboard-first, verify-once workflow.",
-    "last_updated": "2026-02-13T13:17:19.484894+00:00",
+    "description": "Use when the task is to create a 4-on-the-floor kick pattern in FL Studio Channel Rack (steps 1,5,9,13) with keyboard-first verification.",
+    "last_updated": "2026-02-13T13:36:31.960338+00:00",
     "path": "skills/fl-studio/drum-pattern/SKILL.md",
     "skill_ref": "fl-studio/drum-pattern",
     "title": "fl-studio-drum-pattern"
