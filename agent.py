@@ -11,7 +11,14 @@ import anthropic
 
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
-from memory import ensure_session, read_text, write_event, write_metrics
+from memory import ensure_session, write_event, write_metrics
+from skill_routing import (
+    SkillManifestEntry,
+    build_skill_manifest,
+    manifest_summaries_text,
+    resolve_skill_content,
+    route_manifest_entries,
+)
 
 
 BASE_SYSTEM_PROMPT = """You are controlling FL Studio Desktop on macOS via screenshots and mouse/keyboard.
@@ -51,6 +58,28 @@ def build_system_prompt(*, tool_api_type: str) -> str:
 
 
 PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
+READ_SKILL_TOOL_NAME = "read_skill"
+
+
+def _read_skill_tool_param() -> dict[str, Any]:
+    return {
+        "name": READ_SKILL_TOOL_NAME,
+        "description": (
+            "Read full contents of a skill document by stable skill_ref. "
+            "Use this only when manifest summaries are not enough."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill_ref": {
+                    "type": "string",
+                    "description": "Stable skill reference from manifest summaries.",
+                }
+            },
+            "required": ["skill_ref"],
+            "additionalProperties": False,
+        },
+    }
 
 
 def _inject_prompt_caching(messages: list[dict[str, Any]], *, breakpoints: int = 3) -> None:
@@ -154,21 +183,31 @@ def run_agent(
     # System is split so we can put the cache breakpoint after stable "skills" text.
     # This mirrors Anthropic prompt caching guidance: keep the prefix stable.
     base_system_block: dict[str, Any] = {"type": "text", "text": build_system_prompt(tool_api_type=computer_api_type)}
+    skill_manifest_entries: list[SkillManifestEntry] = []
+    routed_skill_entries: list[SkillManifestEntry] = []
 
     if load_skills:
-        skills_text_parts: list[str] = []
-        skills_index = Path("skills/fl-studio/index.md")
-        if skills_index.exists():
-            skills_text_parts.append("## Skills Index\n" + read_text(skills_index))
-        # Default: include the first hand-written skill doc if it exists.
-        drum_skill = Path("skills/fl-studio/drum-pattern.md")
-        if drum_skill.exists():
-            skills_text_parts.append("## Skill: drum-pattern\n" + read_text(drum_skill))
-        skills_text = "\n\n".join(skills_text_parts).strip() or "No skills loaded."
+        skill_manifest_entries = build_skill_manifest()
+        routed_skill_entries = route_manifest_entries(task=task, entries=skill_manifest_entries, top_k=3)
+        skills_text = manifest_summaries_text(routed_skill_entries)
     else:
         skills_text = "No skills loaded."
     skills_system_block: dict[str, Any] = {"type": "text", "text": skills_text}
-    system_blocks = [base_system_block, skills_system_block]
+    skill_usage_block: dict[str, Any] = {
+        "type": "text",
+        "text": (
+            "Skills policy:\n"
+            "- You only have skill summaries at start.\n"
+            "- If a summary may help, call read_skill with that exact skill_ref to fetch full steps.\n"
+            "- Do not assume full skill contents without calling read_skill.\n"
+            "- Keep read_skill calls targeted; avoid reading every skill."
+        ),
+    }
+    system_blocks = [base_system_block, skills_system_block, skill_usage_block]
+
+    tools: list[dict[str, Any]] = [computer.to_tool_param()]
+    if load_skills:
+        tools.append(_read_skill_tool_param())
 
     betas = [computer_beta]
     if cfg.enable_prompt_caching:
@@ -186,6 +225,7 @@ def run_agent(
         "steps": 0,
         "load_skills": load_skills,
         "tool_actions": 0,
+        "skill_reads": 0,
         "tool_errors": 0,
         "usage": [],
     }
@@ -200,7 +240,7 @@ def run_agent(
                 model=model,
                 max_tokens=2048,
                 system=system_blocks,
-                tools=[computer.to_tool_param()],
+                tools=tools,
                 messages=messages,
                 betas=betas,
             )
@@ -213,7 +253,7 @@ def run_agent(
                     model=model,
                     max_tokens=2048,
                     system=system_blocks,
-                    tools=[computer.to_tool_param()],
+                    tools=tools,
                     messages=messages,
                     betas=betas,
                 )
@@ -240,9 +280,7 @@ def run_agent(
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
 
-            if tool_name != computer.name:
-                result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")
-            else:
+            if tool_name == computer.name:
                 metrics["tool_actions"] += 1
                 try:
                     tool_in = tool_input if isinstance(tool_input, dict) else {}
@@ -259,6 +297,22 @@ def run_agent(
                     result = ToolResult(error=f"Local tool exception: {type(e).__name__}: {e}")
                 if result.is_error():
                     metrics["tool_errors"] += 1
+            elif tool_name == READ_SKILL_TOOL_NAME:
+                metrics["skill_reads"] += 1
+                tool_in = tool_input if isinstance(tool_input, dict) else {}
+                skill_ref = tool_in.get("skill_ref")
+                if not isinstance(skill_ref, str):
+                    result = ToolResult(error=f"read_skill requires string skill_ref, got: {skill_ref!r}")
+                    metrics["tool_errors"] += 1
+                else:
+                    content, err = resolve_skill_content(skill_manifest_entries, skill_ref)
+                    if err:
+                        result = ToolResult(error=err)
+                        metrics["tool_errors"] += 1
+                    else:
+                        result = ToolResult(output=f"skill_ref: {skill_ref}\n\n{content}")
+            else:
+                result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")
 
             if result.base64_image_png:
                 img_path = _save_png_b64(paths.session_dir, name=f"step-{step:03d}.png", b64=result.base64_image_png)

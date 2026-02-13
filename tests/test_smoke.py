@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agent import build_system_prompt, _inject_prompt_caching
 from memory import ensure_session, write_event
+from skill_routing import build_skill_manifest, manifest_summaries_text, resolve_skill_content, route_manifest_entries
 
 
 class AgentPromptTests(unittest.TestCase):
@@ -57,6 +58,80 @@ class MemoryTests(unittest.TestCase):
                 self.assertEqual(len(lines), 1)
                 self.assertIn('"step": 1', lines[0])
                 self.assertIn('"ts":', lines[0])
+            finally:
+                os.chdir(cwd)
+
+
+class SkillRoutingTests(unittest.TestCase):
+    def test_build_manifest_from_legacy_markdown(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                (skills_root / "fl-studio").mkdir(parents=True, exist_ok=True)
+                (skills_root / "fl-studio" / "index.md").write_text("# Index\nIgnore me", encoding="utf-8")
+                (skills_root / "fl-studio" / "drum-pattern.md").write_text(
+                    "# Skill: Drum Pattern\n\nPlace kick on 1,5,9,13.\nUse F6 first.\nThen verify.",
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                self.assertEqual(len(manifest), 1)
+                self.assertEqual(manifest[0].skill_ref, "fl-studio/drum-pattern")
+                self.assertIn("Drum Pattern", manifest[0].title)
+            finally:
+                os.chdir(cwd)
+
+    def test_manifest_summaries_text_and_resolve(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                skill_path = skills_root / "fl-studio" / "drum-pattern" / "SKILL.md"
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text(
+                    "# Skill: Drum Pattern\n\nUse Channel Rack.\nClick 1,5,9,13.",
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                summary = manifest_summaries_text(manifest)
+                self.assertIn("Available skills", summary)
+                self.assertIn("fl-studio/drum-pattern", summary)
+                content, err = resolve_skill_content(manifest, "fl-studio/drum-pattern")
+                self.assertIsNone(err)
+                assert content is not None
+                self.assertIn("Skill: Drum Pattern", content)
+                _, err_missing = resolve_skill_content(manifest, "fl-studio/missing")
+                self.assertIsNotNone(err_missing)
+            finally:
+                os.chdir(cwd)
+
+    def test_route_manifest_entries_prefers_overlap(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                p1 = skills_root / "fl-studio" / "drum-pattern" / "SKILL.md"
+                p2 = skills_root / "fl-studio" / "mixing" / "SKILL.md"
+                p1.parent.mkdir(parents=True, exist_ok=True)
+                p2.parent.mkdir(parents=True, exist_ok=True)
+                p1.write_text("# Skill: Drum Pattern\n\nCreate four-on-the-floor kick pattern.", encoding="utf-8")
+                p2.write_text("# Skill: Mixer\n\nAdjust master volume fader.", encoding="utf-8")
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                routed = route_manifest_entries(task="create kick drum pattern", entries=manifest, top_k=1)
+                self.assertEqual(len(routed), 1)
+                self.assertEqual(routed[0].skill_ref, "fl-studio/drum-pattern")
             finally:
                 os.chdir(cwd)
 
