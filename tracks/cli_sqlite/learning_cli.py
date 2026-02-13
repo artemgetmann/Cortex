@@ -8,6 +8,28 @@ from typing import Any
 
 
 ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail"}
+REASON_LESSON_TEMPLATES: dict[str, tuple[str, str]] = {
+    "missing_required_pattern": (
+        "mistake",
+        "reason_code=missing_required_pattern; anti_pattern=missing mandatory SQL phases; "
+        "fix=execute required statements explicitly and verify contract before stopping.",
+    ),
+    "matched_forbidden_pattern": (
+        "mistake",
+        "reason_code=matched_forbidden_pattern; anti_pattern=using forbidden SQL operation; "
+        "fix=replace forbidden statements with safe transaction flow and rerun verify_contract.",
+    ),
+    "required_query_mismatch": (
+        "sql_detail",
+        "reason_code=required_query_mismatch; anti_pattern=final state does not satisfy required queries; "
+        "fix=run required verification queries and reconcile row counts before completion.",
+    ),
+    "too_many_errors": (
+        "shortcut",
+        "reason_code=too_many_errors; anti_pattern=continuing writes after repeated SQL errors; "
+        "fix=after first error, inspect schema/state and repair plan before next mutation.",
+    ),
+}
 
 
 def _tokenize(text: str) -> set[str]:
@@ -42,6 +64,33 @@ def _extract_json_array(raw: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _reason_evidence_steps(reason: str, events_tail: list[dict[str, Any]]) -> list[int]:
+    reason_lower = reason.lower()
+    steps: list[int] = []
+    for row in events_tail:
+        if not isinstance(row, dict):
+            continue
+        step = row.get("step")
+        if not isinstance(step, int) or step <= 0:
+            continue
+        if bool(row.get("ok", True)):
+            continue
+        error = str(row.get("error", "")).lower()
+        if reason_lower == "too_many_errors":
+            steps.append(step)
+            continue
+        if reason_lower == "required_query_mismatch" and ("constraint" in error or "parse error" in error):
+            steps.append(step)
+            continue
+        if reason_lower == "matched_forbidden_pattern" and ("forbidden" in error or "blocked" in error):
+            steps.append(step)
+            continue
+        if reason_lower == "missing_required_pattern" and ("missing" in error or "syntax" in error):
+            steps.append(step)
+            continue
+    return sorted(set(steps))[:8]
 
 
 @dataclass(frozen=True)
@@ -186,6 +235,9 @@ def generate_lessons(
     events_tail: list[dict[str, Any]],
     skill_refs_used: list[str],
 ) -> list[Lesson]:
+    # Client/model are kept in signature for backward compatibility with caller interface.
+    _ = client
+    _ = model
     passed = bool(eval_result.get("passed", False))
     try:
         score = float(eval_result.get("score", 0.0))
@@ -193,54 +245,28 @@ def generate_lessons(
         score = 0.0
     if passed and score >= 1.0:
         return []
-
-    system = (
-        "You are a post-run SQL learning critic.\n"
-        "Return STRICT JSON array only. Each item must match:\n"
-        '{"category":"mistake|insight|shortcut|sql_detail","lesson":"...","evidence_steps":[1,2]}\n'
-        "Rules:\n"
-        "- Be specific and short.\n"
-        "- Base lessons only on provided events and deterministic eval.\n"
-        "- 1 to 4 lessons total.\n"
-    )
-    user = (
-        f"TASK_ID:\n{task_id}\n\n"
-        f"TASK:\n{task}\n\n"
-        f"EVAL:\n{json.dumps(eval_result, ensure_ascii=True)}\n\n"
-        f"EVENTS_TAIL:\n{json.dumps(events_tail, ensure_ascii=True)}\n\n"
-        f"SKILLS_USED:\n{json.dumps(skill_refs_used, ensure_ascii=True)}"
-    )
-
-    try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=500,
-            system=system,
-            messages=[{"role": "user", "content": [{"type": "text", "text": user}]}],
-        )
-    except Exception:
-        return []
-
-    raw = ""
-    for block in response.content:
-        data = block.model_dump() if hasattr(block, "model_dump") else block  # type: ignore[attr-defined]
-        if isinstance(data, dict) and data.get("type") == "text":
-            raw += str(data.get("text", ""))
-
-    parsed = _extract_json_array(raw)
     now = datetime.now(timezone.utc).isoformat()
     lessons: list[Lesson] = []
-    for item in parsed[:4]:
-        if not isinstance(item, dict):
+
+    reasons = eval_result.get("reasons", [])
+    if not isinstance(reasons, list):
+        reasons = []
+    for reason in reasons[:4]:
+        if not isinstance(reason, str):
             continue
-        category = str(item.get("category", "insight")).strip().lower()
-        if category not in ALLOWED_CATEGORIES:
-            category = "insight"
-        lesson_text = " ".join(str(item.get("lesson", "")).split())
-        if not lesson_text:
+        template = REASON_LESSON_TEMPLATES.get(reason)
+        if template is None:
             continue
-        raw_steps = item.get("evidence_steps", [])
-        steps = [int(step) for step in raw_steps if isinstance(step, int) and step > 0][:8] if isinstance(raw_steps, list) else []
+        category, lesson_text = template
+        steps = _reason_evidence_steps(reason, events_tail)
+        if not steps:
+            # If no precise evidence mapping, still anchor lesson to recent failed steps.
+            recent_failed = [
+                int(row.get("step"))
+                for row in events_tail
+                if isinstance(row, dict) and isinstance(row.get("step"), int) and not bool(row.get("ok", True))
+            ]
+            steps = sorted(set(recent_failed))[:8]
         lessons.append(
             Lesson(
                 session_id=session_id,
@@ -255,4 +281,32 @@ def generate_lessons(
                 timestamp=now,
             )
         )
+    if lessons:
+        return lessons
+
+    # Fallback deterministic lesson for unknown reason codes.
+    fallback_steps = sorted(
+        {
+            int(row.get("step"))
+            for row in events_tail
+            if isinstance(row, dict) and isinstance(row.get("step"), int) and not bool(row.get("ok", True))
+        }
+    )[:8]
+    lessons.append(
+        Lesson(
+            session_id=session_id,
+            task_id=task_id,
+            task=task,
+            category="insight",
+            lesson=(
+                "reason_code=unknown_failure; anti_pattern=run ended without contract pass; "
+                "fix=run verify_contract, inspect failed checks, and apply minimal SQL correction before stopping."
+            ),
+            evidence_steps=fallback_steps,
+            eval_passed=passed,
+            eval_score=score,
+            skill_refs_used=skill_refs_used[:8],
+            timestamp=now,
+        )
+    )
     return lessons

@@ -353,6 +353,7 @@ def queue_skill_update_candidates(
     min_confidence: float = 0.7,
     max_skills: int = 2,
     evaluation: dict[str, Any] | None = None,
+    require_failed_evaluation: bool = True,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "attempted": bool(updates),
@@ -368,6 +369,10 @@ def queue_skill_update_candidates(
     if confidence < min_confidence:
         result["skipped_reason"] = f"low_confidence<{min_confidence}"
         return result
+    if require_failed_evaluation and isinstance(evaluation, dict):
+        if bool(evaluation.get("passed", False)):
+            result["skipped_reason"] = "evaluation_passed"
+            return result
 
     if queue_path.exists():
         try:

@@ -12,6 +12,10 @@ import re
 DOT_COMMAND_RE = re.compile(r"(?m)^\s*(\.[a-zA-Z]+)\b(.*)$")
 SHELL_ESCAPE_RE = re.compile(r"(?m)^\s*![^\n]*$")
 FORBIDDEN_DOT_COMMANDS = {".shell", ".system"}
+FIXTURE_MUTATION_RE = re.compile(
+    r'(?is)\b(insert\s+into|update|delete\s+from|drop\s+table|alter\s+table|truncate\s+table)\s+["`]?'
+    r'(fixture_seed|fixture_[a-z0-9_]+)["`]?\b'
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,8 @@ def validate_sql_safety(
     *,
     workdir: Path,
     allowed_read_paths: set[Path],
+    forbidden_sql_patterns: list[str] | None = None,
+    protect_fixture_tables: bool = True,
 ) -> str | None:
     text = sql.strip()
     if not text:
@@ -69,6 +75,20 @@ def validate_sql_safety(
             continue
         return f"Unsupported sqlite dot-command: {cmd}"
 
+    if protect_fixture_tables and FIXTURE_MUTATION_RE.search(text):
+        return "Mutating fixture_* tables is forbidden. Read-only access to fixture tables only."
+
+    if forbidden_sql_patterns:
+        for pattern in forbidden_sql_patterns:
+            if not isinstance(pattern, str) or not pattern.strip():
+                continue
+            try:
+                if re.search(pattern, text):
+                    return f"Blocked by contract forbidden_sql_pattern: {pattern}"
+            except re.error:
+                # Ignore malformed patterns to keep executor robust.
+                continue
+
     return None
 
 
@@ -78,11 +98,19 @@ def run_sqlite(
     sql: str,
     timeout_s: float = 5.0,
     allowed_read_paths: set[Path] | None = None,
+    forbidden_sql_patterns: list[str] | None = None,
+    protect_fixture_tables: bool = True,
 ) -> SqliteExecResult:
     started = time.time()
     workdir = db_path.parent.resolve()
     allowlist = {p.resolve() for p in (allowed_read_paths or set())}
-    safety_error = validate_sql_safety(sql, workdir=workdir, allowed_read_paths=allowlist)
+    safety_error = validate_sql_safety(
+        sql,
+        workdir=workdir,
+        allowed_read_paths=allowlist,
+        forbidden_sql_patterns=forbidden_sql_patterns,
+        protect_fixture_tables=protect_fixture_tables,
+    )
     if safety_error:
         return SqliteExecResult(
             ok=False,

@@ -9,7 +9,7 @@ from typing import Any
 import anthropic
 
 from config import CortexConfig
-from tracks.cli_sqlite.eval_cli import evaluate_cli_session
+from tracks.cli_sqlite.eval_cli import evaluate_cli_session, load_contract
 from tracks.cli_sqlite.executor import TaskWorkspace, prepare_task_workspace, run_sqlite, show_fixture_text
 from tracks.cli_sqlite.learning_cli import generate_lessons, load_relevant_lessons, store_lessons
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
@@ -49,6 +49,7 @@ OPUS_MODEL = "claude-opus-4-6"
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 RUN_SQLITE_TOOL_NAME = "run_sqlite"
+VERIFY_CONTRACT_TOOL_NAME = "verify_contract"
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,21 @@ def _show_fixture_tool_param(path_refs: list[str]) -> dict[str, Any]:
     }
 
 
+def _verify_contract_tool_param() -> dict[str, Any]:
+    return {
+        "name": VERIFY_CONTRACT_TOOL_NAME,
+        "description": "Run deterministic evaluator for current task state and return pass/score/reasons.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "note": {"type": "string", "description": "Optional note about what changed before this verification."}
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
+
+
 def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
     content: list[dict[str, str]] = []
     if result.output:
@@ -182,6 +198,7 @@ def _load_escalation_state(*, base_model: str) -> dict[str, Any]:
         "override_runs_remaining": 0,
         "low_score_streak": 0,
         "critic_no_updates_streak": 0,
+        "fail_streak": 0,
         "last_trigger": None,
     }
     if not ESCALATION_STATE_PATH.exists():
@@ -198,6 +215,7 @@ def _load_escalation_state(*, base_model: str) -> dict[str, Any]:
     merged["override_runs_remaining"] = max(0, int(merged.get("override_runs_remaining", 0) or 0))
     merged["low_score_streak"] = max(0, int(merged.get("low_score_streak", 0) or 0))
     merged["critic_no_updates_streak"] = max(0, int(merged.get("critic_no_updates_streak", 0) or 0))
+    merged["fail_streak"] = max(0, int(merged.get("fail_streak", 0) or 0))
     return merged
 
 
@@ -242,6 +260,10 @@ def _escalate_if_needed(
         state["low_score_streak"] = max(0, int(state.get("low_score_streak", 0))) + 1
     else:
         state["low_score_streak"] = 0
+    if not eval_passed:
+        state["fail_streak"] = max(0, int(state.get("fail_streak", 0))) + 1
+    else:
+        state["fail_streak"] = 0
 
     if (not eval_passed) and critic_no_updates:
         state["critic_no_updates_streak"] = max(0, int(state.get("critic_no_updates_streak", 0))) + 1
@@ -253,7 +275,8 @@ def _escalate_if_needed(
 
     low_trigger = int(state.get("low_score_streak", 0)) >= consecutive_runs
     no_update_trigger = int(state.get("critic_no_updates_streak", 0)) >= consecutive_runs
-    if not (low_trigger or no_update_trigger):
+    fail_trigger = int(state.get("fail_streak", 0)) >= consecutive_runs
+    if not (low_trigger or no_update_trigger or fail_trigger):
         return state
 
     current_tier = str(state.get("tier", _tier_from_model(base_model))).strip() or _tier_from_model(base_model)
@@ -266,7 +289,12 @@ def _escalate_if_needed(
     state["override_runs_remaining"] = 3
     state["low_score_streak"] = 0
     state["critic_no_updates_streak"] = 0
-    state["last_trigger"] = "low_score" if low_trigger else "critic_no_updates"
+    if fail_trigger:
+        state["last_trigger"] = "failed_runs"
+    elif low_trigger:
+        state["last_trigger"] = "low_score"
+    else:
+        state["last_trigger"] = "critic_no_updates"
     return state
 
 
@@ -283,6 +311,7 @@ def _build_system_prompt(
         "- You must read at least one routed skill with read_skill before run_sqlite.\n"
         "- Use read_skill whenever routed skill summaries are insufficient for exact execution.\n"
         "- Use show_fixture to inspect fixture/bootstrap files.\n"
+        "- Use verify_contract after major SQL changes and before stopping.\n"
         "- Keep SQL concise, deterministic, and verifiable.\n"
         "- Do not use unsupported sqlite shell actions.\n"
         f"- Active task_id: {task_id}\n\n"
@@ -308,6 +337,113 @@ def _load_skill_snapshots(
         digests[ref] = digest
         snapshots.append(f"skill_ref: {ref}\nskill_digest: {digest}\n{content}")
     return snapshots, digests
+
+
+def _collect_recent_reason_counts(
+    *,
+    task_id: str,
+    sessions_root: Path,
+    max_sessions: int = 12,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not sessions_root.exists():
+        return counts
+    session_dirs = sorted(
+        (path for path in sessions_root.iterdir() if path.is_dir() and path.name.startswith("session-")),
+        key=lambda path: int(path.name.split("-")[-1]) if path.name.split("-")[-1].isdigit() else 0,
+    )[-max_sessions:]
+    for session_dir in session_dirs:
+        metrics_path = session_dir / "metrics.json"
+        if not metrics_path.exists():
+            continue
+        try:
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(metrics, dict):
+            continue
+        if str(metrics.get("task_id", "")).strip() != task_id:
+            continue
+        reasons = metrics.get("eval_reasons", [])
+        if not isinstance(reasons, list):
+            continue
+        for reason in reasons:
+            if not isinstance(reason, str):
+                continue
+            counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _build_reason_based_updates(
+    *,
+    eval_result: dict[str, Any],
+    read_skill_refs: set[str],
+    routed_refs: list[str],
+    skill_digests: dict[str, str],
+    events: list[dict[str, Any]],
+) -> tuple[list[SkillUpdate], float]:
+    reasons = eval_result.get("reasons", [])
+    if not isinstance(reasons, list):
+        return [], 0.0
+    reason_set = [reason for reason in reasons if isinstance(reason, str)]
+    if not reason_set:
+        return [], 0.0
+
+    target_ref = ""
+    for ref in sorted(read_skill_refs):
+        if ref in skill_digests:
+            target_ref = ref
+            break
+    if not target_ref:
+        for ref in routed_refs:
+            if ref in skill_digests:
+                target_ref = ref
+                break
+    if not target_ref:
+        return [], 0.0
+
+    digest = skill_digests.get(target_ref, "")
+    if not digest:
+        return [], 0.0
+
+    error_steps = [
+        int(row.get("step"))
+        for row in events
+        if isinstance(row, dict) and isinstance(row.get("step"), int) and not bool(row.get("ok", True))
+    ]
+    evidence_steps = sorted(set(error_steps))[:8] or [1]
+
+    bullets: list[str] = []
+    for reason in reason_set:
+        if reason == "required_query_mismatch":
+            bullets.append(
+                "Before finishing, run verify_contract and reconcile every mismatched required query with minimal SQL edits."
+            )
+        elif reason == "matched_forbidden_pattern":
+            bullets.append(
+                "Never use forbidden SQL operations from the contract; prefer safe transaction rollbacks and allowed rewrites."
+            )
+        elif reason == "missing_required_pattern":
+            bullets.append(
+                "Ensure required SQL phases are explicit (transaction boundaries, mandatory writes, and required checkpoint tag)."
+            )
+        elif reason == "too_many_errors":
+            bullets.append(
+                "After the first SQL error, inspect schema/state and issue one corrective query before further mutations."
+            )
+    bullets = bullets[:3]
+    if not bullets:
+        return [], 0.0
+
+    update = SkillUpdate(
+        skill_ref=target_ref,
+        skill_digest=digest,
+        root_cause="Deterministic evaluator reasons indicate repeated contract-level execution failures.",
+        evidence_steps=evidence_steps,
+        replace_rules=[],
+        append_bullets=bullets,
+    )
+    return [update], 0.86
 
 
 def _is_skill_gate_satisfied(
@@ -345,6 +481,13 @@ def run_cli_agent(
     paths = ensure_session(session_id, sessions_root=SESSIONS_ROOT, reset_existing=True)
     task_workspace: TaskWorkspace = prepare_task_workspace(track_root=TRACK_ROOT, task_id=task_id, db_path=paths.db_path)
     allowed_read_paths = {path.resolve() for path in task_workspace.fixture_paths.values()}
+    contract, _ = load_contract(TASKS_ROOT, task_id)
+    signals = contract.get("signals", {}) if isinstance(contract.get("signals"), dict) else {}
+    forbidden_sql_patterns = [
+        str(pattern)
+        for pattern in signals.get("forbidden_sql_patterns", [])
+        if isinstance(pattern, str) and pattern.strip()
+    ]
 
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
     routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
@@ -364,12 +507,19 @@ def run_cli_agent(
             "\nSkill gate requirement:\n"
             f"- Before first run_sqlite call, read at least one of: {sorted(required_skill_refs)}\n"
         )
+    if forbidden_sql_patterns:
+        system_prompt += (
+            "\nContract forbidden SQL patterns:\n"
+            + "\n".join(f"- {pattern}" for pattern in forbidden_sql_patterns)
+            + "\n"
+        )
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
     tools = [
         _run_sqlite_tool_param(),
         _read_skill_tool_param(),
         _show_fixture_tool_param(sorted(task_workspace.fixture_paths.keys())),
+        _verify_contract_tool_param(),
     ]
 
     escalation_state = _load_escalation_state(base_model=model_critic)
@@ -387,6 +537,8 @@ def run_cli_agent(
         "tool_actions": 0,
         "tool_errors": 0,
         "skill_gate_blocks": 0,
+        "contract_verifications": 0,
+        "forced_continue_count": 0,
         "skill_reads": 0,
         "required_skill_refs": sorted(required_skill_refs),
         "require_skill_read": require_skill_read,
@@ -404,10 +556,12 @@ def run_cli_agent(
         "eval_passed": False,
         "critic_no_updates_streak": int(escalation_state.get("critic_no_updates_streak", 0)),
         "low_score_streak": int(escalation_state.get("low_score_streak", 0)),
+        "fail_streak": int(escalation_state.get("fail_streak", 0)),
         "escalation_state": {
             "tier": escalation_state.get("tier"),
             "override_runs_remaining": escalation_state.get("override_runs_remaining"),
             "last_trigger": escalation_state.get("last_trigger"),
+            "fail_streak": escalation_state.get("fail_streak"),
             "auto_escalate_critic": auto_escalate_critic,
         },
         "usage": [],
@@ -415,6 +569,7 @@ def run_cli_agent(
     }
 
     read_skill_refs: set[str] = set()
+    run_events: list[dict[str, Any]] = []
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
@@ -467,6 +622,7 @@ def run_cli_agent(
                         sql=sql,
                         timeout_s=5.0,
                         allowed_read_paths=allowed_read_paths,
+                        forbidden_sql_patterns=forbidden_sql_patterns,
                     )
                     if exec_result.ok:
                         payload = exec_result.output or "(ok)"
@@ -495,23 +651,32 @@ def run_cli_agent(
                         result = ToolResult(error=err)
                     else:
                         result = ToolResult(output=_clip_text(f"path_ref: {path_ref}\n\n{text}", max_chars=6000))
+            elif tool_name == VERIFY_CONTRACT_TOOL_NAME:
+                metrics["contract_verifications"] += 1
+                current_eval = evaluate_cli_session(
+                    task=task_text,
+                    task_id=task_id,
+                    events=run_events,
+                    db_path=task_workspace.db_path,
+                    tasks_root=TASKS_ROOT,
+                ).to_dict()
+                result = ToolResult(output=json.dumps(current_eval, ensure_ascii=True))
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")
 
             if result.is_error():
                 metrics["tool_errors"] += 1
 
-            write_event(
-                paths.events_path,
-                {
-                    "step": step,
-                    "tool": tool_name,
-                    "tool_input": tool_input,
-                    "ok": not result.is_error(),
-                    "error": result.error,
-                    "output": result.output,
-                },
-            )
+            event_row = {
+                "step": step,
+                "tool": tool_name,
+                "tool_input": tool_input,
+                "ok": not result.is_error(),
+                "error": result.error,
+                "output": result.output,
+            }
+            write_event(paths.events_path, event_row)
+            run_events.append(event_row)
 
             if verbose:
                 print(
@@ -522,12 +687,42 @@ def run_cli_agent(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
+            current_eval = evaluate_cli_session(
+                task=task_text,
+                task_id=task_id,
+                events=run_events,
+                db_path=task_workspace.db_path,
+                tasks_root=TASKS_ROOT,
+            ).to_dict()
+            if bool(current_eval.get("passed", False)) or step >= max_steps:
+                if verbose:
+                    print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
+                break
+            metrics["forced_continue_count"] += 1
             if verbose:
-                print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
-            break
+                print(
+                    f"[step {step:03d}] no tool call but contract not passed; forcing continue with reasons={current_eval.get('reasons')}.",
+                    flush=True,
+                )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Contract is not passed yet. Continue with tools. "
+                                f"Current reasons: {current_eval.get('reasons', [])}. "
+                                "Use verify_contract after corrections."
+                            ),
+                        }
+                    ],
+                }
+            )
+            continue
         messages.append({"role": "user", "content": tool_results})
 
-    events = read_events(paths.events_path)
+    events = run_events if run_events else read_events(paths.events_path)
     eval_result = evaluate_cli_session(
         task=task_text,
         task_id=task_id,
@@ -567,26 +762,43 @@ def run_cli_agent(
         )
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lessons)
 
-        proposed_updates, confidence, reflection_raw = propose_skill_updates(
-            client=client,
-            model=critic_model_for_run,
-            task=task_text,
-            metrics=metrics,
+        proposed_updates, confidence = _build_reason_based_updates(
             eval_result=eval_result,
-            events_tail=tail_events,
-            routed_skill_refs=routed_refs,
-            read_skill_refs=sorted(read_skill_refs),
-            skill_snapshots=skill_snapshots,
+            read_skill_refs=read_skill_refs,
+            routed_refs=routed_refs,
+            skill_digests=skill_digests,
+            events=events,
         )
+        update_source = "reason_based"
+        reflection_raw = ""
         if not proposed_updates:
-            parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
-            if parsed_updates:
-                proposed_updates = parsed_updates
-                confidence = parsed_confidence
+            update_source = "critic"
+            proposed_updates, confidence, reflection_raw = propose_skill_updates(
+                client=client,
+                model=critic_model_for_run,
+                task=task_text,
+                metrics=metrics,
+                eval_result=eval_result,
+                events_tail=tail_events,
+                routed_skill_refs=routed_refs,
+                read_skill_refs=sorted(read_skill_refs),
+                skill_snapshots=skill_snapshots,
+            )
+            if not proposed_updates:
+                parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
+                if parsed_updates:
+                    proposed_updates = parsed_updates
+                    confidence = parsed_confidence
 
         critic_no_updates = len(proposed_updates) == 0
         required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
-        allowed_refs = {update.skill_ref for update in proposed_updates}
+        allowed_refs = set(read_skill_refs) if read_skill_refs else set(routed_refs)
+        metrics["update_source"] = update_source
+
+        recent_reason_counts = _collect_recent_reason_counts(task_id=task_id, sessions_root=SESSIONS_ROOT, max_sessions=12)
+        reason_recurrence = max((recent_reason_counts.get(reason, 0) for reason in metrics["eval_reasons"]), default=0)
+        metrics["max_reason_recurrence"] = reason_recurrence
+        allow_queue = (not bool(metrics["eval_passed"])) and reason_recurrence >= 2
 
         if posttask_mode == "direct":
             patch_result = apply_skill_updates(
@@ -600,17 +812,26 @@ def run_cli_agent(
             )
             metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
         else:
-            patch_result = queue_skill_update_candidates(
-                queue_path=QUEUE_PATH,
-                updates=proposed_updates,
-                confidence=confidence,
-                session_id=session_id,
-                task_id=task_id,
-                required_skill_digests=required_digests,
-                allowed_skill_refs=allowed_refs,
-                evaluation=eval_result,
-            )
-            metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
+            if allow_queue:
+                patch_result = queue_skill_update_candidates(
+                    queue_path=QUEUE_PATH,
+                    updates=proposed_updates,
+                    confidence=confidence,
+                    session_id=session_id,
+                    task_id=task_id,
+                    required_skill_digests=required_digests,
+                    allowed_skill_refs=allowed_refs,
+                    evaluation=eval_result,
+                    require_failed_evaluation=True,
+                )
+                metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
+            else:
+                patch_result = {
+                    "attempted": False,
+                    "queued": 0,
+                    "skipped_reason": "reason_recurrence_below_threshold_or_eval_passed",
+                }
+                metrics["posttask_candidates_queued"] = 0
 
         write_event(
             paths.events_path,
@@ -624,6 +845,7 @@ def run_cli_agent(
                     {
                         "confidence": confidence,
                         "update_count": len(proposed_updates),
+                        "reason_recurrence": reason_recurrence,
                         "result": patch_result,
                     },
                     ensure_ascii=True,
@@ -670,10 +892,12 @@ def run_cli_agent(
 
     metrics["critic_no_updates_streak"] = int(escalation_state.get("critic_no_updates_streak", 0))
     metrics["low_score_streak"] = int(escalation_state.get("low_score_streak", 0))
+    metrics["fail_streak"] = int(escalation_state.get("fail_streak", 0))
     metrics["escalation_state"] = {
         "tier": escalation_state.get("tier"),
         "override_runs_remaining": escalation_state.get("override_runs_remaining"),
         "last_trigger": escalation_state.get("last_trigger"),
+        "fail_streak": escalation_state.get("fail_streak"),
         "auto_escalate_critic": auto_escalate_critic,
     }
     metrics["elapsed_s"] = round(time.time() - float(metrics["time_start"]), 3)

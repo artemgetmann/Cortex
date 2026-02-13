@@ -12,7 +12,7 @@ from unittest import mock
 from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
-from tracks.cli_sqlite.learning_cli import Lesson, load_relevant_lessons, store_lessons
+from tracks.cli_sqlite.learning_cli import Lesson, generate_lessons, load_relevant_lessons, store_lessons
 from tracks.cli_sqlite.memory_cli import ensure_session, write_event
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
@@ -79,6 +79,26 @@ class ExecutorTests(unittest.TestCase):
                     "SELECT event_id, category, amount, batch_id FROM fixture_seed ORDER BY event_id;"
                 ).fetchall()
             self.assertEqual(rows, [("e1", "drums", "5", "b1"), ("e2", "bass", "4", "b1")])
+
+    def test_executor_blocks_contract_forbidden_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "task.db"
+            result = run_sqlite(
+                db_path=db_path,
+                sql="DROP TABLE sales;",
+                forbidden_sql_patterns=[r"(?is)drop\s+table\s+sales"],
+            )
+            self.assertFalse(result.ok)
+            assert result.error is not None
+            self.assertIn("forbidden_sql_pattern", result.error)
+
+    def test_executor_blocks_fixture_table_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "task.db"
+            result = run_sqlite(db_path=db_path, sql="DELETE FROM fixture_seed;")
+            self.assertFalse(result.ok)
+            assert result.error is not None
+            self.assertIn("fixture_* tables", result.error)
 
 
 class SkillRoutingTests(unittest.TestCase):
@@ -270,6 +290,29 @@ class LearningAndPromotionTests(unittest.TestCase):
             self.assertEqual(loaded, 1)
             self.assertIn("order grouped rows", summary)
 
+    def test_generate_lessons_is_reason_coded_and_deterministic(self) -> None:
+        lessons = generate_lessons(
+            client=None,
+            model="unused",
+            session_id=11,
+            task_id="incremental_reconcile",
+            task="sqlite incremental reconcile with dedupe",
+            eval_result={
+                "passed": False,
+                "score": 0.833,
+                "reasons": ["required_query_mismatch", "too_many_errors"],
+            },
+            events_tail=[
+                {"step": 3, "tool": "run_sqlite", "ok": False, "error": "Parse error near line 2"},
+                {"step": 4, "tool": "run_sqlite", "ok": False, "error": "UNIQUE constraint failed"},
+            ],
+            skill_refs_used=["sqlite/incremental-reconcile"],
+        )
+        self.assertGreaterEqual(len(lessons), 2)
+        joined = " ".join(item.lesson for item in lessons)
+        self.assertIn("reason_code=required_query_mismatch", joined)
+        self.assertIn("reason_code=too_many_errors", joined)
+
     def test_promotion_gate_applies_only_when_trend_condition_met(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -314,6 +357,20 @@ class LearningAndPromotionTests(unittest.TestCase):
                 allowed_skill_refs={"sqlite/basics"},
             )
             self.assertEqual(queue_result["queued"], 1)
+
+            queue_skipped = queue_skill_update_candidates(
+                queue_path=queue_path,
+                updates=[update],
+                confidence=0.9,
+                session_id=21,
+                task_id="import_aggregate",
+                required_skill_digests={"sqlite/basics": digest},
+                allowed_skill_refs={"sqlite/basics"},
+                evaluation={"passed": True, "score": 1.0},
+                require_failed_evaluation=True,
+            )
+            self.assertEqual(queue_skipped["queued"], 0)
+            self.assertEqual(queue_skipped["skipped_reason"], "evaluation_passed")
 
             for idx, score in enumerate([0.8, 0.7, 0.75], start=1):
                 session_dir = sessions_root / f"session-{idx:03d}"
