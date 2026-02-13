@@ -12,7 +12,13 @@ import anthropic
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
 from memory import ensure_session, write_event, write_metrics
-from self_improve import apply_skill_updates, parse_reflection_response, skill_digest
+from run_eval import evaluate_drum_run
+from self_improve import (
+    apply_skill_updates,
+    parse_reflection_response,
+    queue_skill_update_candidates,
+    skill_digest,
+)
 from skill_routing import (
     SkillManifestEntry,
     build_skill_manifest,
@@ -150,6 +156,7 @@ def run_agent(
     allowed_actions: set[str] | None = None,
     load_skills: bool = True,
     posttask_learn: bool = True,
+    posttask_mode: str = "direct",
     verbose: bool = False,
 ) -> RunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
@@ -229,6 +236,7 @@ def run_agent(
         "posttask_learn": posttask_learn,
         "posttask_patch_attempted": False,
         "posttask_patch_applied": 0,
+        "posttask_candidates_queued": 0,
         "usage": [],
     }
     # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
@@ -374,11 +382,14 @@ def run_agent(
     if load_skills and posttask_learn and skill_manifest_entries:
         metrics["posttask_patch_attempted"] = True
         # Keep reflection payload compact and deterministic.
+        all_events: list[dict[str, Any]] = []
         tail_events = []
         try:
             ev_lines = paths.jsonl_path.read_text(encoding="utf-8").splitlines()
-            for ln in ev_lines[-20:]:
+            for ln in ev_lines:
                 ev = json.loads(ln)
+                all_events.append(ev)
+            for ev in all_events[-20:]:
                 tail_events.append(
                     {
                         "step": ev.get("step"),
@@ -389,7 +400,10 @@ def run_agent(
                     }
                 )
         except Exception:
+            all_events = []
             tail_events = []
+
+        drum_eval = evaluate_drum_run(task, all_events).to_dict()
 
         routed_refs = [e.skill_ref for e in routed_skill_entries]
         skill_texts: list[str] = []
@@ -425,6 +439,7 @@ def run_agent(
             "- Every update must include exact skill_digest for the skill snapshot.\n"
             "- Do not repeat guidance already present in the skill.\n"
             "- Prefer generic reusable lessons over one-off coordinates, unless coordinates expose a repeated failure pattern.\n"
+            "- Use DETERMINISTIC_EVAL as the primary failure signal. If eval says passed=true, return no updates.\n"
             "- Max 2 skills, max 3 bullets per skill.\n"
             "- Do not propose updates if signal is weak.\n"
         )
@@ -433,6 +448,8 @@ def run_agent(
             f"{task}\n\n"
             "METRICS:\n"
             f"{json.dumps(metrics, ensure_ascii=True)}\n\n"
+            "DETERMINISTIC_EVAL:\n"
+            f"{json.dumps(drum_eval, ensure_ascii=True)}\n\n"
             "EVENTS_TAIL:\n"
             f"{json.dumps(tail_events, ensure_ascii=True)}\n\n"
             "ROUTED_SKILLS:\n"
@@ -458,22 +475,34 @@ def run_agent(
                     raw += str(bd.get("text", ""))
             updates, confidence = parse_reflection_response(raw)
             valid_steps = {int(e.get("step")) for e in tail_events if isinstance(e.get("step"), int)}
-            patch_result = apply_skill_updates(
-                entries=skill_manifest_entries,
-                updates=updates,
-                confidence=confidence,
-                min_confidence=0.7,
-                valid_steps=valid_steps,
-                required_skill_digests=skill_digests,
-                allowed_skill_refs=read_skill_refs,
-            )
-            metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+            if posttask_mode == "candidate":
+                patch_result = queue_skill_update_candidates(
+                    updates=updates,
+                    confidence=confidence,
+                    session_id=session_id,
+                    required_skill_digests=skill_digests,
+                    allowed_skill_refs=read_skill_refs,
+                    min_confidence=0.7,
+                    evaluation=drum_eval,
+                )
+                metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
+            else:
+                patch_result = apply_skill_updates(
+                    entries=skill_manifest_entries,
+                    updates=updates,
+                    confidence=confidence,
+                    min_confidence=0.7,
+                    valid_steps=valid_steps,
+                    required_skill_digests=skill_digests,
+                    allowed_skill_refs=read_skill_refs,
+                )
+                metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
             write_event(
                 paths.jsonl_path,
                 {
                     "step": metrics["steps"],
                     "tool": "posttask_hook",
-                    "tool_input": {"routed_refs": routed_refs},
+                    "tool_input": {"routed_refs": routed_refs, "mode": posttask_mode},
                     "ok": True,
                     "error": None,
                     "output": patch_result,
@@ -487,7 +516,7 @@ def run_agent(
                 {
                     "step": metrics["steps"],
                     "tool": "posttask_hook",
-                    "tool_input": {"routed_refs": routed_refs},
+                    "tool_input": {"routed_refs": routed_refs, "mode": posttask_mode},
                     "ok": False,
                     "error": f"{type(exc).__name__}: {exc}",
                     "output": None,

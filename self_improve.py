@@ -289,3 +289,89 @@ def apply_skill_updates(
         build_skill_manifest()
 
     return result
+
+
+def _update_to_dict(upd: SkillUpdate) -> dict[str, Any]:
+    return {
+        "skill_ref": upd.skill_ref,
+        "skill_digest": upd.skill_digest,
+        "root_cause": upd.root_cause,
+        "evidence_steps": upd.evidence_steps,
+        "replace_rules": [{"find": rr.find, "replace": rr.replace} for rr in upd.replace_rules],
+        "append_bullets": upd.append_bullets,
+    }
+
+
+def queue_skill_update_candidates(
+    *,
+    updates: list[SkillUpdate],
+    confidence: float,
+    session_id: int,
+    required_skill_digests: dict[str, str] | None = None,
+    allowed_skill_refs: set[str] | None = None,
+    min_confidence: float = 0.7,
+    max_skills: int = 2,
+    evaluation: dict[str, Any] | None = None,
+    queue_path: Path = Path("learning/pending_skill_patches.json"),
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "attempted": bool(updates),
+        "queued": 0,
+        "confidence": confidence,
+        "queue_path": str(queue_path),
+        "queued_skill_refs": [],
+        "skipped_reason": None,
+    }
+
+    if not updates:
+        result["skipped_reason"] = "no_updates"
+        return result
+    if confidence < min_confidence:
+        result["skipped_reason"] = f"low_confidence<{min_confidence}"
+        return result
+
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    if queue_path.exists():
+        try:
+            raw = json.loads(queue_path.read_text(encoding="utf-8"))
+            queue = raw if isinstance(raw, list) else []
+        except Exception:
+            queue = []
+    else:
+        queue = []
+
+    queued_updates: list[dict[str, Any]] = []
+    for upd in updates[:max_skills]:
+        if allowed_skill_refs is not None and upd.skill_ref not in allowed_skill_refs:
+            continue
+        if required_skill_digests is not None:
+            expected = required_skill_digests.get(upd.skill_ref, "")
+            if not expected:
+                continue
+            if upd.skill_digest != expected.lower():
+                continue
+        if not upd.root_cause:
+            continue
+        if not upd.evidence_steps:
+            continue
+        queued_updates.append(_update_to_dict(upd))
+
+    if not queued_updates:
+        result["skipped_reason"] = "no_updates_after_gates"
+        return result
+
+    now = datetime.now(timezone.utc)
+    queue.append(
+        {
+            "id": f"{int(now.timestamp())}-{session_id}",
+            "created_at": now.isoformat(),
+            "session_id": session_id,
+            "confidence": confidence,
+            "evaluation": evaluation or {},
+            "updates": queued_updates,
+        }
+    )
+    queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+    result["queued"] = len(queued_updates)
+    result["queued_skill_refs"] = [u["skill_ref"] for u in queued_updates]
+    return result

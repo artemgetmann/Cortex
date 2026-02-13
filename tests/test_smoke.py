@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from agent import build_system_prompt, _inject_prompt_caching
 from memory import ensure_session, write_event
-from self_improve import SkillUpdate, apply_skill_updates, parse_reflection_response, skill_digest
+from run_eval import evaluate_drum_run
+from self_improve import (
+    SkillUpdate,
+    apply_skill_updates,
+    parse_reflection_response,
+    queue_skill_update_candidates,
+    skill_digest,
+)
 from skill_routing import build_skill_manifest, manifest_summaries_text, resolve_skill_content, route_manifest_entries
 
 
@@ -316,6 +324,53 @@ class SelfImproveTests(unittest.TestCase):
                 self.assertNotIn("Learned Updates", body)
             finally:
                 os.chdir(cwd)
+
+    def test_queue_skill_update_candidates_applies_digest_and_read_gates(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                upd = SkillUpdate(
+                    skill_ref="fl-studio/basics",
+                    skill_digest="deadbeef",
+                    root_cause="Selector strip misclick on step row.",
+                    evidence_steps=[5, 8],
+                    replace_rules=[],
+                    append_bullets=["Avoid selector strip; click inside step band only."],
+                )
+                qpath = Path("learning/pending_skill_patches.json")
+                result = queue_skill_update_candidates(
+                    updates=[upd],
+                    confidence=0.9,
+                    session_id=9901,
+                    required_skill_digests={"fl-studio/basics": "deadbeef"},
+                    allowed_skill_refs={"fl-studio/basics"},
+                    evaluation={"passed": False},
+                    queue_path=qpath,
+                )
+                self.assertEqual(result["queued"], 1)
+                data = json.loads(qpath.read_text(encoding="utf-8"))
+                self.assertEqual(len(data), 1)
+                self.assertEqual(data[0]["updates"][0]["skill_ref"], "fl-studio/basics")
+            finally:
+                os.chdir(cwd)
+
+
+class RunEvalTests(unittest.TestCase):
+    def test_evaluate_drum_run_flags_selector_misclick(self) -> None:
+        task = "Create a 4-on-the-floor kick drum pattern in FL Studio"
+        events = [
+            {"step": 3, "tool": "computer", "tool_input": {"action": "zoom"}},
+            {"step": 4, "tool": "computer", "tool_input": {"action": "zoom"}},
+            {"step": 5, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [411, 150]}},
+            {"step": 8, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [422, 150]}},
+            {"step": 10, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [492, 150]}},
+            {"step": 12, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [563, 150]}},
+        ]
+        evaluation = evaluate_drum_run(task, events).to_dict()
+        self.assertTrue(evaluation["applicable"])
+        self.assertFalse(evaluation["passed"])
+        self.assertIn("selector_zone_misclick", evaluation["reasons"])
 
 
 if __name__ == "__main__":
