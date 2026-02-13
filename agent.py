@@ -12,6 +12,7 @@ import anthropic
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
 from memory import ensure_session, write_event, write_metrics
+from self_improve import apply_skill_updates, parse_reflection_response
 from skill_routing import (
     SkillManifestEntry,
     build_skill_manifest,
@@ -148,6 +149,7 @@ def run_agent(
     model: str,
     allowed_actions: set[str] | None = None,
     load_skills: bool = True,
+    posttask_learn: bool = True,
     verbose: bool = False,
 ) -> RunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
@@ -224,6 +226,9 @@ def run_agent(
         "skill_reads": 0,
         "tool_errors": 0,
         "loop_guard_blocks": 0,
+        "posttask_learn": posttask_learn,
+        "posttask_patch_attempted": False,
+        "posttask_patch_applied": 0,
         "usage": [],
     }
     # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
@@ -363,6 +368,109 @@ def run_agent(
             break
 
         messages.append({"role": "user", "content": tool_results})
+
+    if load_skills and posttask_learn and skill_manifest_entries:
+        metrics["posttask_patch_attempted"] = True
+        # Keep reflection payload compact and deterministic.
+        tail_events = []
+        try:
+            ev_lines = paths.jsonl_path.read_text(encoding="utf-8").splitlines()
+            for ln in ev_lines[-20:]:
+                ev = json.loads(ln)
+                tail_events.append(
+                    {
+                        "step": ev.get("step"),
+                        "tool": ev.get("tool"),
+                        "tool_input": ev.get("tool_input"),
+                        "ok": ev.get("ok"),
+                        "error": ev.get("error"),
+                    }
+                )
+        except Exception:
+            tail_events = []
+
+        routed_refs = [e.skill_ref for e in routed_skill_entries]
+        skill_texts: list[str] = []
+        for ref in routed_refs[:3]:
+            content, err = resolve_skill_content(skill_manifest_entries, ref)
+            if err or content is None:
+                continue
+            skill_texts.append(f"skill_ref: {ref}\n{content}")
+
+        reflection_system = (
+            "You are PostTaskHook for autonomous skill maintenance.\n"
+            "Given task + tool trace + current skills, propose minimal reusable updates.\n"
+            "Return STRICT JSON only:\n"
+            "{\n"
+            '  "confidence": 0.0,\n'
+            '  "skill_updates": [\n'
+            '    {"skill_ref": "...", "append_bullets": ["..."]}\n'
+            "  ]\n"
+            "}\n"
+            "Rules:\n"
+            "- Prefer generic reusable lessons over task one-offs.\n"
+            "- Max 2 skills, max 3 bullets per skill.\n"
+            "- Do not propose updates if signal is weak.\n"
+        )
+        reflection_user = (
+            "TASK:\n"
+            f"{task}\n\n"
+            "METRICS:\n"
+            f"{json.dumps(metrics, ensure_ascii=True)}\n\n"
+            "EVENTS_TAIL:\n"
+            f"{json.dumps(tail_events, ensure_ascii=True)}\n\n"
+            "ROUTED_SKILLS:\n"
+            f"{json.dumps(routed_refs, ensure_ascii=True)}\n\n"
+            "SKILL_CONTENTS:\n"
+            + "\n\n".join(skill_texts)
+        )
+        try:
+            reflection = client.messages.create(
+                model=cfg.model_decider,
+                max_tokens=700,
+                system=reflection_system,
+                messages=[{"role": "user", "content": reflection_user}],
+            )
+            raw = ""
+            for b in reflection.content:
+                bd = b.model_dump() if hasattr(b, "model_dump") else b  # type: ignore[attr-defined]
+                if isinstance(bd, dict) and bd.get("type") == "text":
+                    raw += str(bd.get("text", ""))
+            updates, confidence = parse_reflection_response(raw)
+            patch_result = apply_skill_updates(
+                entries=skill_manifest_entries,
+                updates=updates,
+                confidence=confidence,
+                min_confidence=0.7,
+            )
+            metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+            write_event(
+                paths.jsonl_path,
+                {
+                    "step": metrics["steps"],
+                    "tool": "posttask_hook",
+                    "tool_input": {"routed_refs": routed_refs},
+                    "ok": True,
+                    "error": None,
+                    "output": patch_result,
+                    "screenshot": None,
+                    "usage": None,
+                },
+            )
+        except Exception as exc:
+            write_event(
+                paths.jsonl_path,
+                {
+                    "step": metrics["steps"],
+                    "tool": "posttask_hook",
+                    "tool_input": {"routed_refs": routed_refs},
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "output": None,
+                    "screenshot": None,
+                    "usage": None,
+                },
+            )
 
     metrics["time_end"] = time.time()
     metrics["elapsed_s"] = metrics["time_end"] - metrics["time_start"]

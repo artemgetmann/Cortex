@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agent import build_system_prompt, _inject_prompt_caching
 from memory import ensure_session, write_event
+from self_improve import SkillUpdate, apply_skill_updates, parse_reflection_response
 from skill_routing import build_skill_manifest, manifest_summaries_text, resolve_skill_content, route_manifest_entries
 
 
@@ -177,6 +178,53 @@ class SkillRoutingTests(unittest.TestCase):
                 routed = route_manifest_entries(task="Create kick pattern in FL Studio", entries=manifest, top_k=2)
                 routed_refs = [e.skill_ref for e in routed]
                 self.assertIn("fl-studio/basics", routed_refs)
+            finally:
+                os.chdir(cwd)
+
+
+class SelfImproveTests(unittest.TestCase):
+    def test_parse_reflection_response(self) -> None:
+        raw = """
+        {
+          "confidence": 0.84,
+          "skill_updates": [
+            {"skill_ref":"fl-studio/basics", "append_bullets":["Stop repeated zoom loops."]}
+          ]
+        }
+        """
+        updates, confidence = parse_reflection_response(raw)
+        self.assertAlmostEqual(confidence, 0.84, places=2)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].skill_ref, "fl-studio/basics")
+
+    def test_apply_skill_updates_appends_learned_updates(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                skill_path = skills_root / "fl-studio" / "basics" / "SKILL.md"
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-basics\n"
+                        "description: Use when task is in FL Studio.\n"
+                        "---\n\n"
+                        "# FL Studio Basics\n"
+                    ),
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                updates = [SkillUpdate(skill_ref="fl-studio/basics", append_bullets=["Prefer decisive clicks after two inspections."])]
+                result = apply_skill_updates(entries=manifest, updates=updates, confidence=0.9, min_confidence=0.7)
+                self.assertEqual(result["applied"], 1)
+                body = skill_path.read_text(encoding="utf-8")
+                self.assertIn("## Learned Updates", body)
+                self.assertIn("Prefer decisive clicks", body)
             finally:
                 os.chdir(cwd)
 

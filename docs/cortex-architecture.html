@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex — System Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0a0b0f;
+    --surface: #12141a;
+    --surface2: #1a1d26;
+    --border: #252830;
+    --border-hover: #3a3e4a;
+    --text: #e2e4ea;
+    --text-dim: #8b8f9e;
+    --text-muted: #5a5e6e;
+    --accent: #5bf0a5;
+    --accent-dim: rgba(91, 240, 165, 0.12);
+    --warn: #f0c85b;
+    --warn-dim: rgba(240, 200, 91, 0.12);
+    --danger: #f07b5b;
+    --danger-dim: rgba(240, 123, 91, 0.12);
+    --blue: #5ba8f0;
+    --blue-dim: rgba(91, 168, 240, 0.12);
+    --purple: #a05bf0;
+    --purple-dim: rgba(160, 91, 240, 0.12);
+    --determ: #5bf0a5;
+    --model: #a05bf0;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Header ── */
+  .header {
+    padding: 3rem 2rem 2rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(91,240,165,0.03) 0%, transparent 100%);
+  }
+  .header h1 {
+    font-family: var(--mono);
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--text);
+  }
+  .header h1 span { color: var(--accent); }
+  .header .subtitle {
+    font-size: clamp(0.85rem, 2vw, 1.05rem);
+    color: var(--text-dim);
+    margin-top: 0.5rem;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .header .tag {
+    display: inline-block;
+    margin-top: 1rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 0.3rem 0.8rem;
+    border-radius: 3px;
+    border: 1px solid rgba(91,240,165,0.2);
+  }
+
+  /* ── Nav ── */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,11,15,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.6rem 1rem;
+    display: flex;
+    gap: 0.3rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 0.35rem 0.65rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition: all 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .nav a:hover { color: var(--text); background: var(--surface2); }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  section {
+    padding: 3rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: clamp(1.2rem, 3vw, 1.6rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 1rem;
+  }
+
+  p.desc {
+    color: var(--text-dim);
+    max-width: 700px;
+    margin-bottom: 1.5rem;
+    font-size: 0.92rem;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+    padding: 0.8rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.8rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-dim);
+  }
+  .legend-swatch {
+    width: 28px;
+    height: 4px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .legend-swatch.dashed {
+    background: repeating-linear-gradient(90deg, var(--model) 0 6px, transparent 6px 10px);
+  }
+
+  /* ── SVG container ── */
+  .diagram-wrap {
+    width: 100%;
+    overflow-x: auto;
+    margin: 1rem 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .diagram-wrap svg {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* ── Data Contracts ── */
+  .contracts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+  .contract-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .contract-card .card-header {
+    padding: 0.7rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .contract-card .card-header .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .contract-card pre {
+    padding: 1rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .contract-card pre .key { color: var(--blue); }
+  .contract-card pre .str { color: var(--accent); }
+  .contract-card pre .num { color: var(--warn); }
+  .contract-card pre .bool { color: var(--purple); }
+  .contract-card pre .comment { color: var(--text-muted); font-style: italic; }
+
+  /* ── Table ── */
+  .fail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  .fail-table th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0.7rem 1rem;
+    border-bottom: 2px solid var(--border);
+    background: var(--surface);
+  }
+  .fail-table td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    vertical-align: top;
+  }
+  .fail-table tr:hover td { background: rgba(91,240,165,0.02); }
+  .severity {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .severity.high { color: var(--danger); background: var(--danger-dim); }
+  .severity.med { color: var(--warn); background: var(--warn-dim); }
+  .severity.low { color: var(--blue); background: var(--blue-dim); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+
+  /* ── Scope block ── */
+  .scope-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .scope-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+  }
+  .scope-card h3 {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    margin-bottom: 0.7rem;
+  }
+  .scope-card.now h3 { color: var(--accent); }
+  .scope-card.phase2 h3 { color: var(--warn); }
+  .scope-card ul {
+    margin: 0;
+    padding-left: 1rem;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
+  .scope-card li { margin-bottom: 0.35rem; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .container { padding: 0 1rem; }
+    section { padding: 2rem 0; }
+    .contracts-grid { grid-template-columns: 1fr; }
+    .legend { flex-direction: column; gap: 0.6rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<div class="header">
+  <h1><span>Cortex</span> Architecture</h1>
+  <p class="subtitle">Autonomous computer-use agent that gets better by writing reusable skills.</p>
+  <span class="tag">FL Studio · Computer Use · Persistent Memory</span>
+</div>
+
+<!-- ═══════════════════ NAV ═══════════════════ -->
+<div class="nav">
+  <a href="#scope">Scope</a>
+  <a href="#components">Components</a>
+  <a href="#flow-normal">Normal Flow</a>
+  <a href="#flow-stuck">Stuck / Escalation</a>
+  <a href="#contracts">Data Contracts</a>
+  <a href="#failures">Failure Modes</a>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════ SCOPE NOW VS PHASE 2 ═══════════════════ -->
+<section id="scope">
+  <div class="section-label">00</div>
+  <h2>Scope Now vs Phase 2</h2>
+  <p class="desc">Use this block to prevent architecture drift. Build Scope Now first, then add Phase 2 only after baseline reliability is proven.</p>
+  <div class="scope-grid">
+    <div class="scope-card now">
+      <h3>Scope Now (Hackathon Core)</h3>
+      <ul>
+        <li>Manifest summaries only in initial context (title + short description).</li>
+        <li>Deterministic pre-task routing and on-demand <code>read_skill(ref)</code>.</li>
+        <li>Main executor loop + stuck detector + recovery reroute.</li>
+        <li>Post-task skill update and manifest rebuild.</li>
+      </ul>
+    </div>
+    <div class="scope-card phase2">
+      <h3>Phase 2 (After Baseline)</h3>
+      <ul>
+        <li>Guardrailed research subagent for no-match or repeated-stuck cases.</li>
+        <li>Domain allowlist, retry caps, cooldowns, optional human review.</li>
+        <li>Richer long-term skill maintenance and cross-software scaling.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 1: COMPONENT DIAGRAM ═══════════════════ -->
+<section id="components">
+  <div class="section-label">01</div>
+  <h2>Component Diagram</h2>
+  <p class="desc">Two runtime paths: deterministic hooks/routers (green) handle control flow, while the model (purple) handles reasoning and execution. Skills are lazy-loaded — only summaries in memory, full content fetched on demand.</p>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--determ)"></div>Deterministic (code/policy)</div>
+    <div class="legend-item"><div class="legend-swatch dashed"></div>Model-decided (LLM)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--blue)"></div>Data store</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--warn)"></div>Guardrailed / gated</div>
+  </div>
+
+  <div class="diagram-wrap">
+    <svg viewBox="0 0 960 680" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+      <defs>
+        <marker id="ah-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#5bf0a5" stroke-width="1.2"/></marker>
+        <marker id="ah-p" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#a05bf0" stroke-width="1.2"/></marker>
+        <marker id="ah-b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#5ba8f0" stroke-width="1.2"/></marker>
+        <marker id="ah-y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#f0c85b" stroke-width="1.2"/></marker>
+        <filter id="glow-g"><feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#5bf0a5" flood-opacity="0.3"/></filter>
+        <filter id="glow-p"><feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#a05bf0" flood-opacity="0.3"/></filter>
+      </defs>
+
+      <!-- Background grid -->
+      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1a1d26" stroke-width="0.5"/>
+      </pattern>
+      <rect width="960" height="680" fill="url(#grid)"/>
+
+      <!-- USER INPUT -->
+      <rect x="380" y="20" width="200" height="44" rx="6" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1.5" filter="url(#glow-g)"/>
+      <text x="480" y="47" text-anchor="middle" fill="#5bf0a5" font-size="11" font-weight="600">User Input</text>
+
+      <!-- PRETASK HOOK -->
+      <rect x="370" y="100" width="220" height="52" rx="6" fill="#12141a" stroke="#5bf0a5" stroke-width="1.5"/>
+      <text x="480" y="122" text-anchor="middle" fill="#5bf0a5" font-size="10" font-weight="600">PreTaskHook</text>
+      <text x="480" y="140" text-anchor="middle" fill="#8b8f9e" font-size="8">deterministic · validate · set context</text>
+
+      <!-- Arrow: user → pretask -->
+      <line x1="480" y1="64" x2="480" y2="100" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+
+      <!-- SKILL MANIFEST STORE -->
+      <rect x="700" y="96" width="220" height="60" rx="6" fill="#12141a" stroke="#5ba8f0" stroke-width="1.2"/>
+      <text x="810" y="120" text-anchor="middle" fill="#5ba8f0" font-size="10" font-weight="600">skills_manifest.json</text>
+      <text x="810" y="136" text-anchor="middle" fill="#8b8f9e" font-size="8">title + short description</text>
+      <text x="810" y="148" text-anchor="middle" fill="#5a5e6e" font-size="7">summaries only · never full content</text>
+
+      <!-- Arrow: pretask → manifest -->
+      <line x1="590" y1="126" x2="700" y2="126" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+      <text x="645" y="120" text-anchor="middle" fill="#5a5e6e" font-size="7">load</text>
+
+      <!-- SKILL ROUTER -->
+      <rect x="370" y="188" width="220" height="52" rx="6" fill="#12141a" stroke="#5bf0a5" stroke-width="1.5"/>
+      <text x="480" y="210" text-anchor="middle" fill="#5bf0a5" font-size="10" font-weight="600">Deterministic Skill Router</text>
+      <text x="480" y="226" text-anchor="middle" fill="#8b8f9e" font-size="8">keyword overlap scoring</text>
+
+      <!-- Arrow: pretask → router -->
+      <line x1="480" y1="152" x2="480" y2="188" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+
+      <!-- TOOLS: list_skills + read_skill -->
+      <rect x="700" y="184" width="105" height="36" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="752" y="206" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="500">list_skills()</text>
+
+      <rect x="815" y="184" width="105" height="36" rx="4" fill="#1a1d26" stroke="#a05bf0" stroke-width="1"/>
+      <text x="867" y="206" text-anchor="middle" fill="#a05bf0" font-size="9" font-weight="500">read_skill(ref)</text>
+
+      <!-- Arrow: router → list_skills -->
+      <line x1="590" y1="206" x2="700" y2="200" stroke="#5bf0a5" stroke-width="1" marker-end="url(#ah-g)"/>
+
+      <!-- SKILL FILES STORE -->
+      <rect x="700" y="248" width="220" height="40" rx="6" fill="#12141a" stroke="#5ba8f0" stroke-width="1.2"/>
+      <text x="810" y="272" text-anchor="middle" fill="#5ba8f0" font-size="10" font-weight="600">skills/*.md  (on disk)</text>
+
+      <!-- Arrow: read_skill → files -->
+      <line x1="867" y1="220" x2="867" y2="248" stroke="#a05bf0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-p)"/>
+      <text x="886" y="238" fill="#5a5e6e" font-size="7">fetch</text>
+
+      <!-- MAIN EXECUTOR -->
+      <rect x="340" y="290" width="280" height="70" rx="8" fill="#12141a" stroke="#a05bf0" stroke-width="2" filter="url(#glow-p)"/>
+      <text x="480" y="316" text-anchor="middle" fill="#a05bf0" font-size="12" font-weight="700">Main Executor Agent</text>
+      <text x="480" y="334" text-anchor="middle" fill="#8b8f9e" font-size="8">screenshot → Opus API → action → Quartz CGEvent</text>
+      <text x="480" y="348" text-anchor="middle" fill="#5a5e6e" font-size="7">computer-use loop · keyboard-first · hint bar verify</text>
+
+      <!-- Arrow: router → executor -->
+      <line x1="480" y1="240" x2="480" y2="290" stroke="#a05bf0" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ah-p)"/>
+      <text x="500" y="270" fill="#5a5e6e" font-size="7">+ skills context</text>
+
+      <!-- FL STUDIO -->
+      <rect x="60" y="295" width="200" height="60" rx="8" fill="#1a1d26" stroke="#f0c85b" stroke-width="1.2"/>
+      <text x="160" y="321" text-anchor="middle" fill="#f0c85b" font-size="11" font-weight="600">FL Studio Desktop</text>
+      <text x="160" y="339" text-anchor="middle" fill="#8b8f9e" font-size="8">Quartz CGEvent · 1024×768 API space</text>
+
+      <!-- Arrows: executor ↔ FL -->
+      <line x1="340" y1="318" x2="260" y2="318" stroke="#f0c85b" stroke-width="1.2" marker-end="url(#ah-y)"/>
+      <line x1="260" y1="332" x2="340" y2="332" stroke="#f0c85b" stroke-width="1.2" marker-end="url(#ah-y)"/>
+      <text x="300" y="312" text-anchor="middle" fill="#5a5e6e" font-size="7">actions</text>
+      <text x="300" y="346" text-anchor="middle" fill="#5a5e6e" font-size="7">screenshots</text>
+
+      <!-- STUCK DETECTOR -->
+      <rect x="370" y="400" width="220" height="52" rx="6" fill="#12141a" stroke="#5bf0a5" stroke-width="1.5"/>
+      <text x="480" y="422" text-anchor="middle" fill="#5bf0a5" font-size="10" font-weight="600">Stuck Detector</text>
+      <text x="480" y="438" text-anchor="middle" fill="#8b8f9e" font-size="8">zoom-loop · repetition · ROI-no-progress</text>
+
+      <!-- Arrow: executor → stuck -->
+      <line x1="480" y1="360" x2="480" y2="400" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="498" y="384" fill="#5a5e6e" font-size="7">every N steps</text>
+
+      <!-- RECOVERY POLICY -->
+      <rect x="80" y="400" width="200" height="52" rx="6" fill="#12141a" stroke="#5bf0a5" stroke-width="1.5"/>
+      <text x="180" y="422" text-anchor="middle" fill="#5bf0a5" font-size="10" font-weight="600">Recovery Policy</text>
+      <text x="180" y="438" text-anchor="middle" fill="#8b8f9e" font-size="8">re-route to skills · undo · reset</text>
+
+      <!-- Arrow: stuck → recovery -->
+      <line x1="370" y1="426" x2="280" y2="426" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="325" y="420" text-anchor="middle" fill="#f07b5b" font-size="7">stuck = true</text>
+
+      <!-- Arrow: recovery → executor (back up) -->
+      <path d="M80,420 Q40,420 40,340 Q40,310 100,310" fill="none" stroke="#5bf0a5" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="24" y="368" fill="#5a5e6e" font-size="7" transform="rotate(-90,24,368)">retry</text>
+
+      <!-- Arrow: recovery → read_skill -->
+      <path d="M280,440 Q660,480 815,220" fill="none" stroke="#a05bf0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-p)"/>
+      <text x="540" y="468" fill="#5a5e6e" font-size="7">optional read_skill(ref)</text>
+
+      <!-- RESEARCH SUBAGENT -->
+      <rect x="680" y="400" width="240" height="60" rx="6" fill="#12141a" stroke="#f0c85b" stroke-width="1.5"/>
+      <text x="800" y="422" text-anchor="middle" fill="#f0c85b" font-size="10" font-weight="600">Research Subagent</text>
+      <text x="800" y="438" text-anchor="middle" fill="#8b8f9e" font-size="8">phase 2 only · domain allowlist</text>
+      <text x="800" y="450" text-anchor="middle" fill="#5a5e6e" font-size="7">retry caps · cooldowns · official docs first</text>
+
+      <!-- Arrow: stuck → research (conditional) -->
+      <line x1="590" y1="430" x2="680" y2="430" stroke="#f0c85b" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-y)"/>
+      <text x="636" y="424" text-anchor="middle" fill="#f07b5b" font-size="7">escalation</text>
+
+      <!-- Arrow: research → executor -->
+      <path d="M760,400 Q720,360 620,330" fill="none" stroke="#a05bf0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-p)"/>
+      <text x="700" y="364" fill="#5a5e6e" font-size="7">guidance</text>
+
+      <!-- POST TASK HOOK -->
+      <rect x="370" y="500" width="220" height="52" rx="6" fill="#12141a" stroke="#5bf0a5" stroke-width="1.5"/>
+      <text x="480" y="522" text-anchor="middle" fill="#5bf0a5" font-size="10" font-weight="600">PostTaskHook</text>
+      <text x="480" y="538" text-anchor="middle" fill="#8b8f9e" font-size="8">update/create skill · rebuild manifest</text>
+
+      <!-- Arrow: executor → posttask (on completion path) -->
+      <path d="M420,360 Q400,380 400,480 Q400,510 370,516" fill="none" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="386" y="480" fill="#5a5e6e" font-size="7">done</text>
+
+      <!-- Arrow: posttask → manifest -->
+      <path d="M590,516 Q700,500 810,288" fill="none" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+      <text x="710" y="420" fill="#5a5e6e" font-size="7" transform="rotate(-50,710,420)">write skill + rebuild</text>
+
+      <!-- SESSION LOGS + METRICS -->
+      <rect x="80" y="502" width="200" height="48" rx="6" fill="#12141a" stroke="#5ba8f0" stroke-width="1.2"/>
+      <text x="180" y="522" text-anchor="middle" fill="#5ba8f0" font-size="10" font-weight="600">Session Logs + Metrics</text>
+      <text x="180" y="536" text-anchor="middle" fill="#8b8f9e" font-size="8">JSONL · actions · errors · time</text>
+
+      <!-- Arrow: posttask → logs -->
+      <line x1="370" y1="526" x2="280" y2="526" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+
+      <!-- Arrow: executor → logs -->
+      <path d="M380,350 Q300,390 240,502" fill="none" stroke="#5ba8f0" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#ah-b)"/>
+      <text x="286" y="440" fill="#5a5e6e" font-size="7" transform="rotate(-55,286,440)">stream</text>
+
+      <!-- Labels -->
+      <text x="480" y="598" text-anchor="middle" fill="#252830" font-size="9" font-weight="600">CORTEX SYSTEM ARCHITECTURE v2.0</text>
+
+      <!-- Human review gate indicator -->
+      <rect x="590" y="504" width="14" height="14" rx="2" fill="none" stroke="#f0c85b" stroke-width="1"/>
+      <text x="597" y="514" text-anchor="middle" fill="#f0c85b" font-size="8">?</text>
+      <text x="618" y="514" fill="#5a5e6e" font-size="7">human-review gate (optional)</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 2: NORMAL FLOW ═══════════════════ -->
+<section id="flow-normal">
+  <div class="section-label">02</div>
+  <h2>Sequence: Normal Flow</h2>
+  <p class="desc">Task → manifest routing → lazy skill fetch → execution → user result → async post-task skill update. Full skill content is never preloaded — only fetched via explicit tool call when the router or agent needs it.</p>
+
+  <div class="diagram-wrap">
+    <svg viewBox="0 0 920 520" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+      <pattern id="grid2" width="20" height="20" patternUnits="userSpaceOnUse">
+        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1a1d26" stroke-width="0.5"/>
+      </pattern>
+      <rect width="920" height="520" fill="url(#grid2)"/>
+
+      <!-- Lifeline labels -->
+      <rect x="40" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="90" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">User</text>
+
+      <rect x="190" y="20" width="110" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="245" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">PreTaskHook</text>
+
+      <rect x="350" y="20" width="110" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="405" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">SkillRouter</text>
+
+      <rect x="510" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#5ba8f0" stroke-width="1"/>
+      <text x="560" y="39" text-anchor="middle" fill="#5ba8f0" font-size="9" font-weight="600">Manifest</text>
+
+      <rect x="660" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#a05bf0" stroke-width="1"/>
+      <text x="710" y="39" text-anchor="middle" fill="#a05bf0" font-size="9" font-weight="600">Executor</text>
+
+      <rect x="810" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="860" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">PostTask</text>
+
+      <!-- Lifelines -->
+      <line x1="90" y1="48" x2="90" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="245" y1="48" x2="245" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="405" y1="48" x2="405" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="560" y1="48" x2="560" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="710" y1="48" x2="710" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="860" y1="48" x2="860" y2="500" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+
+      <!-- Step 1 -->
+      <line x1="90" y1="85" x2="245" y2="85" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="168" y="80" text-anchor="middle" fill="#8b8f9e" font-size="8">1. task string</text>
+
+      <!-- Step 2 -->
+      <line x1="245" y1="120" x2="405" y2="120" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="325" y="115" text-anchor="middle" fill="#8b8f9e" font-size="8">2. normalized task + run policy</text>
+
+      <!-- Step 3 -->
+      <line x1="405" y1="155" x2="560" y2="155" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+      <text x="483" y="150" text-anchor="middle" fill="#8b8f9e" font-size="8">3. load summaries</text>
+
+      <!-- Step 4 return -->
+      <line x1="560" y1="180" x2="405" y2="180" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+      <text x="483" y="175" text-anchor="middle" fill="#8b8f9e" font-size="8">4. ranked skill refs</text>
+
+      <!-- Step 5 -->
+      <line x1="405" y1="215" x2="710" y2="215" stroke="#a05bf0" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ah-p)"/>
+      <text x="558" y="210" text-anchor="middle" fill="#8b8f9e" font-size="8">5. task + selected_skill_refs + summaries</text>
+
+      <!-- Step 6: executor decides to read skill -->
+      <rect x="660" y="240" width="100" height="30" rx="3" fill="rgba(160,91,240,0.08)" stroke="#a05bf0" stroke-width="0.8"/>
+      <text x="710" y="258" text-anchor="middle" fill="#a05bf0" font-size="7">read_skill(ref)</text>
+      <text x="710" y="268" text-anchor="middle" fill="#5a5e6e" font-size="6">model decides</text>
+
+      <!-- Step 6 label -->
+      <text x="640" y="252" text-anchor="end" fill="#8b8f9e" font-size="8">6.</text>
+
+      <!-- Step 7: execution loop -->
+      <rect x="655" y="290" width="110" height="80" rx="4" fill="rgba(160,91,240,0.05)" stroke="#a05bf0" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="710" y="310" text-anchor="middle" fill="#a05bf0" font-size="8" font-weight="500">Execution Loop</text>
+      <text x="710" y="326" text-anchor="middle" fill="#5a5e6e" font-size="7">screenshot</text>
+      <text x="710" y="338" text-anchor="middle" fill="#5a5e6e" font-size="7">→ API → action</text>
+      <text x="710" y="350" text-anchor="middle" fill="#5a5e6e" font-size="7">→ verify → log</text>
+
+      <text x="640" y="330" text-anchor="end" fill="#8b8f9e" font-size="8">7.</text>
+
+      <!-- Step 8: user gets response first -->
+      <line x1="710" y1="390" x2="90" y2="390" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="400" y="385" text-anchor="middle" fill="#8b8f9e" font-size="8">8. result returned to user</text>
+
+      <!-- Step 9: async post-task hook input -->
+      <line x1="710" y1="420" x2="860" y2="420" stroke="#5bf0a5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-g)"/>
+      <text x="785" y="415" text-anchor="middle" fill="#8b8f9e" font-size="8">9. async session_log + task_result</text>
+
+      <!-- Step 9: update skills -->
+      <rect x="805" y="410" width="110" height="30" rx="3" fill="rgba(91,240,165,0.08)" stroke="#5bf0a5" stroke-width="0.8"/>
+      <text x="860" y="428" text-anchor="middle" fill="#5bf0a5" font-size="7">generate skill patch</text>
+
+      <text x="792" y="428" text-anchor="end" fill="#8b8f9e" font-size="8">10.</text>
+
+      <!-- Step 10: write manifest -->
+      <line x1="860" y1="455" x2="560" y2="455" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-b)"/>
+      <text x="710" y="450" text-anchor="middle" fill="#8b8f9e" font-size="8">11. write skill.md + rebuild manifest</text>
+
+      <!-- Step 12: optional late metrics push -->
+      <line x1="860" y1="480" x2="90" y2="480" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g)"/>
+      <text x="475" y="475" text-anchor="middle" fill="#8b8f9e" font-size="8">12. optional metrics summary update</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 3: STUCK / ESCALATION FLOW ═══════════════════ -->
+<section id="flow-stuck">
+  <div class="section-label">03</div>
+  <h2>Sequence: Stuck &amp; Escalation</h2>
+  <p class="desc">When the Stuck Detector fires, control returns to deterministic code. Recovery tries skills first (cheap). If no skill matches AND stuck threshold is crossed, escalation to Research Subagent (guardrailed, phase 2).</p>
+
+  <div class="diagram-wrap">
+    <svg viewBox="0 0 920 540" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+      <defs>
+        <marker id="ah-g2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#5bf0a5" stroke-width="1.2"/></marker>
+        <marker id="ah-p2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#a05bf0" stroke-width="1.2"/></marker>
+        <marker id="ah-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#f07b5b" stroke-width="1.2"/></marker>
+        <marker id="ah-y2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#f0c85b" stroke-width="1.2"/></marker>
+      </defs>
+      <pattern id="grid3" width="20" height="20" patternUnits="userSpaceOnUse">
+        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1a1d26" stroke-width="0.5"/>
+      </pattern>
+      <rect width="920" height="540" fill="url(#grid3)"/>
+
+      <!-- Lifeline labels -->
+      <rect x="50" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#a05bf0" stroke-width="1"/>
+      <text x="100" y="39" text-anchor="middle" fill="#a05bf0" font-size="9" font-weight="600">Executor</text>
+
+      <rect x="220" y="20" width="120" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="280" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">StuckDetector</text>
+
+      <rect x="410" y="20" width="120" height="28" rx="4" fill="#1a1d26" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="470" y="39" text-anchor="middle" fill="#5bf0a5" font-size="9" font-weight="600">RecoveryPolicy</text>
+
+      <rect x="590" y="20" width="100" height="28" rx="4" fill="#1a1d26" stroke="#5ba8f0" stroke-width="1"/>
+      <text x="640" y="39" text-anchor="middle" fill="#5ba8f0" font-size="9" font-weight="600">Skills</text>
+
+      <rect x="760" y="20" width="120" height="28" rx="4" fill="#1a1d26" stroke="#f0c85b" stroke-width="1"/>
+      <text x="820" y="39" text-anchor="middle" fill="#f0c85b" font-size="9" font-weight="600">Research</text>
+
+      <!-- Lifelines -->
+      <line x1="100" y1="48" x2="100" y2="520" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="280" y1="48" x2="280" y2="520" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="470" y1="48" x2="470" y2="520" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="640" y1="48" x2="640" y2="520" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+      <line x1="820" y1="48" x2="820" y2="520" stroke="#252830" stroke-width="1" stroke-dasharray="3,4"/>
+
+      <!-- Execution loop -->
+      <rect x="50" y="70" width="100" height="50" rx="3" fill="rgba(160,91,240,0.05)" stroke="#a05bf0" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="100" y="92" text-anchor="middle" fill="#a05bf0" font-size="8">executing...</text>
+      <text x="100" y="108" text-anchor="middle" fill="#5a5e6e" font-size="7">zoom-loop detected</text>
+
+      <!-- 1. emit metrics -->
+      <line x1="100" y1="135" x2="280" y2="135" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g2)"/>
+      <text x="190" y="130" text-anchor="middle" fill="#8b8f9e" font-size="8">1. step_metrics (every N steps)</text>
+
+      <!-- 2. stuck signal -->
+      <rect x="230" y="150" width="100" height="26" rx="3" fill="rgba(240,123,91,0.1)" stroke="#f07b5b" stroke-width="0.8"/>
+      <text x="280" y="167" text-anchor="middle" fill="#f07b5b" font-size="8" font-weight="600">STUCK = true</text>
+
+      <!-- 3. hand to recovery -->
+      <line x1="280" y1="190" x2="470" y2="190" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g2)"/>
+      <text x="375" y="185" text-anchor="middle" fill="#8b8f9e" font-size="8">2. stuck_context + failure_log</text>
+
+      <!-- 4. try skills first -->
+      <line x1="470" y1="225" x2="640" y2="225" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="555" y="220" text-anchor="middle" fill="#8b8f9e" font-size="8">3. read_skill(best_ref)</text>
+
+      <!-- Return skill content -->
+      <line x1="640" y1="250" x2="470" y2="250" stroke="#5ba8f0" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="555" y="245" text-anchor="middle" fill="#8b8f9e" font-size="8">4. skill content (or null)</text>
+
+      <!-- Decision box -->
+      <rect x="415" y="270" width="110" height="40" rx="3" fill="rgba(91,240,165,0.06)" stroke="#5bf0a5" stroke-width="1"/>
+      <text x="470" y="288" text-anchor="middle" fill="#5bf0a5" font-size="8" font-weight="500">skill found?</text>
+      <text x="470" y="302" text-anchor="middle" fill="#5a5e6e" font-size="7">deterministic check</text>
+
+      <!-- YES path: back to executor -->
+      <line x1="415" y1="290" x2="100" y2="340" stroke="#5bf0a5" stroke-width="1.2" marker-end="url(#ah-g2)"/>
+      <text x="240" y="308" text-anchor="middle" fill="#5bf0a5" font-size="8" font-weight="500">YES → retry with skill</text>
+
+      <!-- Retry execution -->
+      <rect x="50" y="348" width="100" height="30" rx="3" fill="rgba(91,240,165,0.05)" stroke="#5bf0a5" stroke-width="0.8"/>
+      <text x="100" y="367" text-anchor="middle" fill="#5bf0a5" font-size="8">resume execution</text>
+
+      <!-- NO path: escalation -->
+      <line x1="525" y1="290" x2="820" y2="360" stroke="#f0c85b" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ah-y2)"/>
+      <text x="680" y="316" text-anchor="middle" fill="#f07b5b" font-size="8" font-weight="500">NO + threshold crossed</text>
+      <text x="680" y="330" text-anchor="middle" fill="#5a5e6e" font-size="7">→ ESCALATE to research</text>
+
+      <!-- Research guardrails box -->
+      <rect x="760" y="365" width="120" height="70" rx="4" fill="rgba(240,200,91,0.06)" stroke="#f0c85b" stroke-width="1"/>
+      <text x="820" y="384" text-anchor="middle" fill="#f0c85b" font-size="8" font-weight="500">Guardrailed</text>
+      <text x="820" y="398" text-anchor="middle" fill="#5a5e6e" font-size="7">domain allowlist</text>
+      <text x="820" y="410" text-anchor="middle" fill="#5a5e6e" font-size="7">retry cap: 3</text>
+      <text x="820" y="422" text-anchor="middle" fill="#5a5e6e" font-size="7">cooldown: 30s</text>
+      <text x="820" y="434" text-anchor="middle" fill="#5a5e6e" font-size="7">official docs first</text>
+
+      <!-- Research result back -->
+      <line x1="820" y1="450" x2="100" y2="450" stroke="#a05bf0" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ah-p2)"/>
+      <text x="460" y="445" text-anchor="middle" fill="#8b8f9e" font-size="8">5. concise guidance → inject into executor context</text>
+
+      <!-- Final resume -->
+      <rect x="50" y="468" width="100" height="30" rx="3" fill="rgba(160,91,240,0.05)" stroke="#a05bf0" stroke-width="0.8"/>
+      <text x="100" y="487" text-anchor="middle" fill="#a05bf0" font-size="8">continue execution</text>
+
+      <!-- Flow labels on side -->
+      <text x="15" y="230" fill="#5bf0a5" font-size="8" font-weight="600" transform="rotate(-90,15,230)">FLOW B: STUCK</text>
+      <text x="15" y="430" fill="#f0c85b" font-size="8" font-weight="600" transform="rotate(-90,15,430)">FLOW C: ESCALATION</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 4: DATA CONTRACTS ═══════════════════ -->
+<section id="contracts">
+  <div class="section-label">04</div>
+  <h2>Data Contracts</h2>
+  <p class="desc">JSON schemas for the three core data interfaces. Skills manifest entries are lightweight summaries — full content is never preloaded.</p>
+
+  <div class="contracts-grid">
+
+    <div class="contract-card">
+      <div class="card-header"><div class="dot"></div>skills_manifest.json entry</div>
+      <pre>{
+  <span class="key">"skill_ref"</span>: <span class="str">"fl-studio/drum-pattern"</span>,
+  <span class="key">"title"</span>: <span class="str">"Create Kick Drum Pattern"</span>,
+  <span class="key">"description"</span>: <span class="str">"Place kick hits on beats 1,2,3,4
+    in Channel Rack step sequencer.
+    Keyboard-first approach using F6."</span>,
+  <span class="key">"path"</span>: <span class="str">"skills/fl-studio/drum-pattern/SKILL.md"</span>,
+  <span class="key">"version"</span>: <span class="num">3</span>,
+  <span class="key">"last_updated"</span>: <span class="str">"2026-02-13T14:30:00Z"</span>,
+  <span class="key">"success_rate"</span>: <span class="num">0.85</span>,
+  <span class="key">"token_estimate"</span>: <span class="num">820</span>
+}</pre>
+    </div>
+
+    <div class="contract-card">
+      <div class="card-header"><div class="dot" style="background:var(--purple)"></div>read_skill request / response</div>
+      <pre><span class="comment">// Request (tool call from agent)</span>
+{
+  <span class="key">"tool"</span>: <span class="str">"read_skill"</span>,
+  <span class="key">"skill_ref"</span>: <span class="str">"fl-studio/drum-pattern"</span>
+}
+
+<span class="comment">// Response (injected into context)</span>
+{
+  <span class="key">"skill_ref"</span>: <span class="str">"fl-studio/drum-pattern"</span>,
+  <span class="key">"content"</span>: <span class="str">"# Skill: Create Kick Drum\n\n
+    ## Prerequisites\n- Channel Rack open (F6)\n
+    ## Steps\n1. Identify Kick row (first)
+    ..."</span>,
+  <span class="key">"token_count"</span>: <span class="num">820</span>,
+  <span class="key">"has_screenshots"</span>: <span class="bool">false</span>
+}</pre>
+    </div>
+
+    <div class="contract-card">
+      <div class="card-header"><div class="dot" style="background:var(--warn)"></div>post-task skill patch</div>
+      <pre>{
+  <span class="key">"action"</span>: <span class="str">"update"</span>, <span class="comment">// or "create"</span>
+  <span class="key">"skill_ref"</span>: <span class="str">"fl-studio/drum-pattern"</span>,
+  <span class="key">"patch"</span>: {
+    <span class="key">"append_to_mistakes"</span>: <span class="str">"Clap row is
+      directly below Kick — verify Hint Bar
+      before clicking."</span>,
+    <span class="key">"update_success_rate"</span>: <span class="num">0.90</span>,
+    <span class="key">"router_hint"</span>: <span class="str">"channel-rack verification"</span>,
+    <span class="key">"bump_version"</span>: <span class="bool">true</span>
+  },
+  <span class="key">"rebuild_manifest"</span>: <span class="bool">true</span>,
+  <span class="key">"human_review"</span>: <span class="bool">false</span>
+}</pre>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 5: FAILURE MODES ═══════════════════ -->
+<section id="failures">
+  <div class="section-label">05</div>
+  <h2>Failure Modes &amp; Mitigations</h2>
+
+  <div class="table-wrap">
+    <table class="fail-table">
+      <thead>
+        <tr>
+          <th style="width:18%">Failure</th>
+          <th style="width:8%">Severity</th>
+          <th style="width:24%">Detection</th>
+          <th style="width:26%">Mitigation</th>
+          <th style="width:24%">Fallback</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Zoom-loop: agent zooms in/out repeatedly without acting</td>
+          <td><span class="severity high">HIGH</span></td>
+          <td>StuckDetector counts consecutive zoom actions without a click/key between them. Threshold: 3.</td>
+          <td>Force exit zoom. Inject keyboard shortcut alternative. Decrement zoom budget for this subtask.</td>
+          <td>Emergency reset (Esc×5, Ctrl+Z×10, F6). Re-route from skill manifest.</td>
+        </tr>
+        <tr>
+          <td>Click misses: coordinate drift or window moved</td>
+          <td><span class="severity high">HIGH</span></td>
+          <td>Post-action screenshot diff shows no UI change. Hint Bar text doesn't match expected target.</td>
+          <td>Retry with Hint Bar verification. If 2nd miss: switch to keyboard-only path for this action.</td>
+          <td>Ctrl+Z, emergency_reset(), reload skill with semantic (not coordinate) targets.</td>
+        </tr>
+        <tr>
+          <td>FL Studio modal dialog traps agent</td>
+          <td><span class="severity med">MED</span></td>
+          <td>Screenshot analysis detects unfamiliar dialog overlay. Action sequence stalls (no UI progress for 3 steps).</td>
+          <td>Esc to dismiss. If persists: Ctrl+Z. Agent taught to screenshot and describe unexpected dialogs before acting.</td>
+          <td>Close FL Studio, reopen default.flp template. Log as new failure pattern for skill update.</td>
+        </tr>
+        <tr>
+          <td>Context bloat: too many skills/memories loaded</td>
+          <td><span class="severity med">MED</span></td>
+          <td>Token counter exceeds 50k threshold per step. Latency exceeds 8s per action.</td>
+          <td>Only manifest summaries in context. Full skills via read_skill() on demand. Limit to top-3 skill reads per task.</td>
+          <td>Flush non-essential context. Keep only: current skill + top-5 lessons + task description.</td>
+        </tr>
+        <tr>
+          <td>Session 2 not measurably better than Session 1</td>
+          <td><span class="severity high">HIGH</span></td>
+          <td>PostTaskHook compares session metrics: actions, errors, time. Improvement &lt;10%.</td>
+          <td>Engineered contrast: Session 1 gets zero skills. Session 2 gets prescriptive skill docs with exact procedures.</td>
+          <td>Hand-edit skill doc to be more explicit. Add exact coordinates + Hint Bar text for every step.</td>
+        </tr>
+        <tr>
+          <td>Research subagent returns irrelevant/harmful guidance</td>
+          <td><span class="severity low">LOW</span></td>
+          <td>Domain allowlist rejects URL. Content relevance score (deterministic keyword check) below threshold.</td>
+          <td>Domain allowlist: image-line.com, FL Studio manual, official forums only. Max 200 tokens injected. Retry cap: 3.</td>
+          <td>Discard research result. Fall back to emergency_reset() + existing skills only.</td>
+        </tr>
+        <tr>
+          <td>Window focus lost (notification, Finder overlay)</td>
+          <td><span class="severity med">MED</span></td>
+          <td>Screenshot doesn't contain FL Studio UI elements (deterministic pixel check on known regions).</td>
+          <td>osascript activate FL Studio before every action. Do Not Disturb mode mandatory.</td>
+          <td>Pause execution, activate FL Studio, take fresh screenshot, resume.</td>
+        </tr>
+        <tr>
+          <td>Skill file corruption (bad write from PostTaskHook)</td>
+          <td><span class="severity low">LOW</span></td>
+          <td>Manifest rebuild fails JSON validation. Skill markdown fails basic structure check (no # header, no ## Steps).</td>
+          <td>Write to .tmp first, validate, then atomic rename. Git-style versioning: keep previous version as .bak.</td>
+          <td>Restore from .bak. Log corruption event. Flag for human review on next PostTaskHook.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div><!-- container -->
+
+<!-- Footer -->
+<div style="text-align:center; padding:2rem; color:var(--text-muted); font-family:var(--mono); font-size:0.7rem; border-top:1px solid var(--border);">
+  Cortex v2.0 · Built with Opus 4.6 · Feb 2026
+</div>
+
+</body>
+</html>
