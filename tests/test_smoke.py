@@ -188,7 +188,14 @@ class SelfImproveTests(unittest.TestCase):
         {
           "confidence": 0.84,
           "skill_updates": [
-            {"skill_ref":"fl-studio/basics", "append_bullets":["Stop repeated zoom loops."]}
+            {
+              "skill_ref":"fl-studio/basics",
+              "skill_digest":"abc123",
+              "root_cause":"Repeated non-productive zoom actions delayed decisive clicks.",
+              "evidence_steps":[6,7,8],
+              "replace_rules":[{"find":"Use at most one zoom on the menu list if needed.","replace":"Use at most one zoom before deciding and clicking the target."}],
+              "append_bullets":["After two zoom checks, click or use a key action immediately."]
+            }
           ]
         }
         """
@@ -196,6 +203,9 @@ class SelfImproveTests(unittest.TestCase):
         self.assertAlmostEqual(confidence, 0.84, places=2)
         self.assertEqual(len(updates), 1)
         self.assertEqual(updates[0].skill_ref, "fl-studio/basics")
+        self.assertEqual(updates[0].skill_digest, "abc123")
+        self.assertEqual(updates[0].evidence_steps, [6, 7, 8])
+        self.assertEqual(len(updates[0].replace_rules), 1)
 
     def test_apply_skill_updates_appends_learned_updates(self) -> None:
         cwd = Path.cwd()
@@ -219,8 +229,35 @@ class SelfImproveTests(unittest.TestCase):
                     skills_root=skills_root,
                     manifest_path=skills_root / "skills_manifest.json",
                 )
-                updates = [SkillUpdate(skill_ref="fl-studio/basics", append_bullets=["Prefer decisive clicks after two inspections."])]
-                result = apply_skill_updates(entries=manifest, updates=updates, confidence=0.9, min_confidence=0.7)
+                updates = [
+                    SkillUpdate(
+                        skill_ref="fl-studio/basics",
+                        skill_digest="",
+                        root_cause="Agent overused inspection actions before clicking.",
+                        evidence_steps=[5, 6],
+                        replace_rules=[],
+                        append_bullets=["Prefer decisive clicks after two inspections."],
+                    )
+                ]
+                from self_improve import skill_digest as _skill_digest
+
+                digest = _skill_digest(skill_path.read_text(encoding="utf-8"))
+                updates[0] = SkillUpdate(
+                    skill_ref=updates[0].skill_ref,
+                    skill_digest=digest,
+                    root_cause=updates[0].root_cause,
+                    evidence_steps=updates[0].evidence_steps,
+                    replace_rules=updates[0].replace_rules,
+                    append_bullets=updates[0].append_bullets,
+                )
+                result = apply_skill_updates(
+                    entries=manifest,
+                    updates=updates,
+                    confidence=0.9,
+                    min_confidence=0.7,
+                    valid_steps={5, 6, 7},
+                    required_skill_digests={"fl-studio/basics": digest},
+                )
                 self.assertEqual(result["applied"], 1)
                 body = skill_path.read_text(encoding="utf-8")
                 self.assertIn("## Learned Updates", body)

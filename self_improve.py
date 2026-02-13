@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,10 +10,36 @@ from typing import Any
 from skill_routing import SkillManifestEntry, build_skill_manifest
 
 
+def _tokenize(text: str) -> set[str]:
+    return {t for t in "".join(ch.lower() if ch.isalnum() else " " for ch in text).split() if t}
+
+
+def _jaccard(a: str, b: str) -> float:
+    ta = _tokenize(a)
+    tb = _tokenize(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / float(len(ta | tb))
+
+
+@dataclass(frozen=True)
+class ReplaceRule:
+    find: str
+    replace: str
+
+
 @dataclass(frozen=True)
 class SkillUpdate:
     skill_ref: str
+    skill_digest: str
+    root_cause: str
+    evidence_steps: list[int]
+    replace_rules: list[ReplaceRule]
     append_bullets: list[str]
+
+
+def skill_digest(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _extract_json_object(raw: str) -> dict[str, Any] | None:
@@ -52,9 +79,39 @@ def parse_reflection_response(raw: str) -> tuple[list[SkillUpdate], float]:
         if not isinstance(item, dict):
             continue
         skill_ref = item.get("skill_ref")
+        skill_digest_value = item.get("skill_digest", "")
+        root_cause = item.get("root_cause", "")
+        evidence_steps = item.get("evidence_steps", [])
+        replace_rules_raw = item.get("replace_rules", [])
         append_bullets = item.get("append_bullets")
         if not isinstance(skill_ref, str):
             continue
+        if not isinstance(skill_digest_value, str):
+            continue
+        if not isinstance(root_cause, str):
+            continue
+        if not isinstance(evidence_steps, list):
+            continue
+        clean_steps: list[int] = []
+        for s in evidence_steps:
+            if isinstance(s, int) and s > 0:
+                clean_steps.append(s)
+        clean_steps = clean_steps[:8]
+        if not isinstance(replace_rules_raw, list):
+            continue
+        replace_rules: list[ReplaceRule] = []
+        for rr in replace_rules_raw[:5]:
+            if not isinstance(rr, dict):
+                continue
+            find = rr.get("find")
+            replace = rr.get("replace")
+            if not isinstance(find, str) or not isinstance(replace, str):
+                continue
+            find = " ".join(find.strip().split())
+            replace = " ".join(replace.strip().split())
+            if not find or not replace:
+                continue
+            replace_rules.append(ReplaceRule(find=find, replace=replace))
         if not isinstance(append_bullets, list):
             continue
         cleaned: list[str] = []
@@ -67,8 +124,17 @@ def parse_reflection_response(raw: str) -> tuple[list[SkillUpdate], float]:
             if len(b) > 220:
                 b = b[:217] + "..."
             cleaned.append(b)
-        if cleaned:
-            updates.append(SkillUpdate(skill_ref=skill_ref.strip(), append_bullets=cleaned[:5]))
+        if cleaned or replace_rules:
+            updates.append(
+                SkillUpdate(
+                    skill_ref=skill_ref.strip(),
+                    skill_digest=skill_digest_value.strip().lower(),
+                    root_cause=" ".join(root_cause.strip().split())[:400],
+                    evidence_steps=clean_steps,
+                    replace_rules=replace_rules,
+                    append_bullets=cleaned[:5],
+                )
+            )
     return updates, confidence
 
 
@@ -79,6 +145,8 @@ def apply_skill_updates(
     confidence: float,
     min_confidence: float = 0.7,
     max_skills: int = 2,
+    valid_steps: set[int] | None = None,
+    required_skill_digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "attempted": bool(updates),
@@ -102,28 +170,59 @@ def apply_skill_updates(
         entry = by_ref.get(upd.skill_ref)
         if entry is None:
             continue
+        if required_skill_digests is not None:
+            expected = required_skill_digests.get(upd.skill_ref, "")
+            if not expected:
+                continue
+            if upd.skill_digest != expected.lower():
+                continue
+        if not upd.root_cause:
+            continue
+        if not upd.evidence_steps:
+            continue
+        if valid_steps is not None and not any(step in valid_steps for step in upd.evidence_steps):
+            continue
         p = Path(entry.path)
         if not p.exists():
             continue
 
         text = p.read_text(encoding="utf-8")
+        if required_skill_digests is not None:
+            actual = skill_digest(text)
+            expected = required_skill_digests.get(upd.skill_ref, "")
+            if expected and actual.lower() != expected.lower():
+                continue
+        original_text = text
+        existing_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        changed = False
+
+        # First, let model patch existing rules when it pinpoints an insufficient rule.
+        for rr in upd.replace_rules:
+            if rr.find in text and rr.replace not in text:
+                text = text.replace(rr.find, rr.replace, 1)
+                changed = True
+
         section = "## Learned Updates"
         if section not in text:
             if not text.endswith("\n"):
                 text += "\n"
             text += f"\n{section}\n"
 
-        changed = False
         for bullet in upd.append_bullets:
+            # Reject near-duplicate generic advice.
+            if any(_jaccard(bullet, existing) >= 0.55 for existing in existing_lines):
+                continue
+            evidence_suffix = ", ".join(str(s) for s in sorted(set(upd.evidence_steps))[:4])
+            bullet_line = f"{bullet} (evidence steps: {evidence_suffix})"
             line = f"- [{stamp}] {bullet}"
-            if line in text:
+            if line in text or bullet_line in text:
                 continue
             if not text.endswith("\n"):
                 text += "\n"
-            text += line + "\n"
+            text += f"- [{stamp}] {bullet_line}\n"
             changed = True
 
-        if changed:
+        if changed and text != original_text:
             backup = p.with_suffix(p.suffix + ".bak")
             if not backup.exists():
                 backup.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")

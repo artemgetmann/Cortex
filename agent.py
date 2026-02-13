@@ -12,7 +12,7 @@ import anthropic
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
 from memory import ensure_session, write_event, write_metrics
-from self_improve import apply_skill_updates, parse_reflection_response
+from self_improve import apply_skill_updates, parse_reflection_response, skill_digest
 from skill_routing import (
     SkillManifestEntry,
     build_skill_manifest,
@@ -391,24 +391,38 @@ def run_agent(
 
         routed_refs = [e.skill_ref for e in routed_skill_entries]
         skill_texts: list[str] = []
+        skill_digests: dict[str, str] = {}
         for ref in routed_refs[:3]:
             content, err = resolve_skill_content(skill_manifest_entries, ref)
             if err or content is None:
                 continue
-            skill_texts.append(f"skill_ref: {ref}\n{content}")
+            digest = skill_digest(content)
+            skill_digests[ref] = digest
+            skill_texts.append(f"skill_ref: {ref}\nskill_digest: {digest}\n{content}")
 
         reflection_system = (
             "You are PostTaskHook for autonomous skill maintenance.\n"
-            "Given task + tool trace + current skills, propose minimal reusable updates.\n"
+            "Given task + tool trace + current skills, propose grounded updates.\n"
             "Return STRICT JSON only:\n"
             "{\n"
             '  "confidence": 0.0,\n'
             '  "skill_updates": [\n'
-            '    {"skill_ref": "...", "append_bullets": ["..."]}\n'
+            "    {\n"
+            '      "skill_ref": "...",\n'
+            '      "skill_digest": "...",\n'
+            '      "root_cause": "...",\n'
+            '      "evidence_steps": [5, 8],\n'
+            '      "replace_rules": [{"find":"...","replace":"..."}],\n'
+            '      "append_bullets": ["..."]\n'
+            "    }\n"
             "  ]\n"
             "}\n"
             "Rules:\n"
-            "- Prefer generic reusable lessons over task one-offs.\n"
+            "- Prefer fixing/rewriting weak existing rules via replace_rules before appending new bullets.\n"
+            "- Every update must include concrete root_cause and evidence_steps from provided events.\n"
+            "- Every update must include exact skill_digest for the skill snapshot.\n"
+            "- Do not repeat guidance already present in the skill.\n"
+            "- Prefer generic reusable lessons over one-off coordinates, unless coordinates expose a repeated failure pattern.\n"
             "- Max 2 skills, max 3 bullets per skill.\n"
             "- Do not propose updates if signal is weak.\n"
         )
@@ -421,6 +435,8 @@ def run_agent(
             f"{json.dumps(tail_events, ensure_ascii=True)}\n\n"
             "ROUTED_SKILLS:\n"
             f"{json.dumps(routed_refs, ensure_ascii=True)}\n\n"
+            "SKILL_DIGESTS:\n"
+            f"{json.dumps(skill_digests, ensure_ascii=True)}\n\n"
             "SKILL_CONTENTS:\n"
             + "\n\n".join(skill_texts)
         )
@@ -437,11 +453,14 @@ def run_agent(
                 if isinstance(bd, dict) and bd.get("type") == "text":
                     raw += str(bd.get("text", ""))
             updates, confidence = parse_reflection_response(raw)
+            valid_steps = {int(e.get("step")) for e in tail_events if isinstance(e.get("step"), int)}
             patch_result = apply_skill_updates(
                 entries=skill_manifest_entries,
                 updates=updates,
                 confidence=confidence,
                 min_confidence=0.7,
+                valid_steps=valid_steps,
+                required_skill_digests=skill_digests,
             )
             metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
             write_event(
