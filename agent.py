@@ -363,6 +363,11 @@ def run_agent(
         # Cache after stable context blocks so repeated runs can reuse prefix tokens.
         skills_system_block["cache_control"] = {"type": "ephemeral"}
         lessons_system_block["cache_control"] = {"type": "ephemeral"}
+    # Anthropic limit: max 4 cache_control blocks total in a request.
+    # We currently use 2 on system blocks (skills + lessons), so user-turn cache
+    # breakpoints must be capped to keep requests valid.
+    system_cache_blocks = int("cache_control" in skills_system_block) + int("cache_control" in lessons_system_block)
+    user_cache_breakpoints = max(0, 4 - system_cache_blocks)
     # Reduce screenshot/tool payload overhead when supported.
     # If unsupported by the model, the API will 400; we'll disable if that happens.
     betas.append(cfg.token_efficient_tools_beta)
@@ -396,7 +401,7 @@ def run_agent(
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
         if cfg.enable_prompt_caching:
-            _inject_prompt_caching(messages)
+            _inject_prompt_caching(messages, breakpoints=user_cache_breakpoints)
 
         try:
             resp = client.beta.messages.create(
