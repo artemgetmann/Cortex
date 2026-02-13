@@ -72,6 +72,27 @@ class MemoryTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_ensure_session_resets_previous_artifacts(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                first = ensure_session(9)
+                write_event(first.jsonl_path, {"step": 1, "ok": True})
+                first.metrics_path.write_text('{"steps": 1}', encoding="utf-8")
+                (first.session_dir / "step-001.png").write_bytes(b"fakepng")
+                self.assertTrue(first.jsonl_path.exists())
+                self.assertTrue(first.metrics_path.exists())
+                self.assertTrue((first.session_dir / "step-001.png").exists())
+
+                second = ensure_session(9)
+                self.assertEqual(second.session_dir, first.session_dir)
+                self.assertFalse(second.jsonl_path.exists())
+                self.assertFalse(second.metrics_path.exists())
+                self.assertFalse((second.session_dir / "step-001.png").exists())
+            finally:
+                os.chdir(cwd)
+
 
 class SkillRoutingTests(unittest.TestCase):
     def test_build_manifest_from_skill_md_frontmatter(self) -> None:

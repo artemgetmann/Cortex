@@ -14,12 +14,23 @@ class SessionPaths:
     metrics_path: Path
 
 
-def ensure_session(session_id: int) -> SessionPaths:
+def ensure_session(session_id: int, *, reset_existing: bool = True) -> SessionPaths:
     session_dir = Path("sessions") / f"session-{session_id:03d}"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     jsonl_path = session_dir / "events.jsonl"
     metrics_path = session_dir / "metrics.json"
+    if reset_existing:
+        if jsonl_path.exists():
+            jsonl_path.unlink()
+        if metrics_path.exists():
+            metrics_path.unlink()
+        for shot in session_dir.glob("step-*.png"):
+            try:
+                shot.unlink()
+            except OSError:
+                # Keep run startup resilient if a screenshot is temporarily locked.
+                pass
 
     return SessionPaths(session_dir=session_dir, jsonl_path=jsonl_path, metrics_path=metrics_path)
 
@@ -38,4 +49,3 @@ def write_metrics(metrics_path: Path, metrics: dict[str, Any]) -> None:
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
-
