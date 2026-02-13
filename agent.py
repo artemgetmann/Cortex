@@ -11,11 +11,13 @@ import anthropic
 
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
+from learning import generate_lessons, load_relevant_lessons, store_lessons
 from memory import ensure_session, write_event, write_metrics
 from run_eval import evaluate_drum_run
 from self_improve import (
     SkillUpdate,
     apply_skill_updates,
+    auto_promote_queued_candidates,
     parse_reflection_response,
     queue_skill_update_candidates,
     skill_digest,
@@ -334,6 +336,11 @@ def run_agent(
     else:
         skills_text = "No skills loaded."
     skills_system_block: dict[str, Any] = {"type": "text", "text": skills_text}
+    if posttask_learn:
+        lessons_text, lessons_loaded = load_relevant_lessons(task, max_lessons=10, max_sessions=5)
+    else:
+        lessons_text, lessons_loaded = ("No prior lessons loaded.", 0)
+    lessons_system_block: dict[str, Any] = {"type": "text", "text": lessons_text}
     skill_usage_block: dict[str, Any] = {
         "type": "text",
         "text": (
@@ -344,7 +351,7 @@ def run_agent(
             "- Keep read_skill calls targeted; avoid reading every skill."
         ),
     }
-    system_blocks = [base_system_block, skills_system_block, skill_usage_block]
+    system_blocks = [base_system_block, skills_system_block, lessons_system_block, skill_usage_block]
 
     tools: list[dict[str, Any]] = [computer.to_tool_param()]
     if load_skills:
@@ -353,14 +360,16 @@ def run_agent(
     betas = [computer_beta]
     if cfg.enable_prompt_caching:
         betas.append(PROMPT_CACHING_BETA_FLAG)
-        # Cache after skills block so it can be reused across loop turns.
+        # Cache after stable context blocks so repeated runs can reuse prefix tokens.
         skills_system_block["cache_control"] = {"type": "ephemeral"}
+        lessons_system_block["cache_control"] = {"type": "ephemeral"}
     # Reduce screenshot/tool payload overhead when supported.
     # If unsupported by the model, the API will 400; we'll disable if that happens.
     betas.append(cfg.token_efficient_tools_beta)
 
     metrics: dict[str, Any] = {
         "session_id": session_id,
+        "task": task,
         "model": model,
         "time_start": time.time(),
         "steps": 0,
@@ -373,6 +382,10 @@ def run_agent(
         "posttask_patch_attempted": False,
         "posttask_patch_applied": 0,
         "posttask_candidates_queued": 0,
+        "lessons_loaded": lessons_loaded,
+        "lessons_generated": 0,
+        "auto_promotion_applied": 0,
+        "auto_promotion_reason": None,
         "usage": [],
     }
     # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
@@ -540,6 +553,11 @@ def run_agent(
             tail_events = []
 
         drum_eval = evaluate_drum_run(task, all_events).to_dict()
+        eval_passed = bool(drum_eval.get("passed"))
+        try:
+            eval_score = float(drum_eval.get("score", 0.0))
+        except (TypeError, ValueError):
+            eval_score = 0.0
 
         routed_refs = [e.skill_ref for e in routed_skill_entries]
         skill_texts: list[str] = []
@@ -602,6 +620,21 @@ def run_agent(
             + "\n\n".join(skill_texts)
         )
         try:
+            # Lessons are append-only memory: generated only for imperfect outcomes.
+            if (not eval_passed) or eval_score < 1.0:
+                lessons = generate_lessons(
+                    client=client,
+                    model=cfg.model_critic,
+                    session_id=session_id,
+                    task=task,
+                    eval_result=drum_eval,
+                    events_tail=tail_events,
+                    skill_refs_used=routed_refs,
+                )
+                metrics["lessons_generated"] = store_lessons(lessons)
+            else:
+                metrics["lessons_generated"] = 0
+
             reflection_content: list[dict[str, Any]] = [{"type": "text", "text": reflection_user}]
             shot_labels: list[str] = []
             for step_id, shot_path in _select_reflection_screenshots(all_events, max_images=3):
@@ -631,7 +664,7 @@ def run_agent(
                 if isinstance(bd, dict) and bd.get("type") == "text":
                     raw += str(bd.get("text", ""))
             updates, confidence = parse_reflection_response(raw)
-            if (not updates) and (not bool(drum_eval.get("passed"))):
+            if (not updates) and (not eval_passed):
                 fallback_updates, fallback_conf = _build_fallback_updates(
                     eval_result=drum_eval,
                     read_skill_refs=read_skill_refs,
@@ -663,6 +696,29 @@ def run_agent(
                     allowed_skill_refs=read_skill_refs,
                 )
                 metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+
+            if posttask_mode == "candidate":
+                promotion = auto_promote_queued_candidates(
+                    entries=skill_manifest_entries,
+                    min_runs=3,
+                    min_delta=0.2,
+                    max_sessions=8,
+                )
+                metrics["auto_promotion_applied"] = int(promotion.get("applied", 0))
+                metrics["auto_promotion_reason"] = promotion.get("reason")
+                write_event(
+                    paths.jsonl_path,
+                    {
+                        "step": metrics["steps"],
+                        "tool": "promotion_gate",
+                        "tool_input": {"mode": "candidate"},
+                        "ok": bool(promotion.get("applied", 0) > 0),
+                        "error": None if promotion.get("applied", 0) else str(promotion.get("reason")),
+                        "output": promotion,
+                        "screenshot": None,
+                        "usage": None,
+                    },
+                )
             write_event(
                 paths.jsonl_path,
                 {

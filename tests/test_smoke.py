@@ -7,11 +7,13 @@ import unittest
 from pathlib import Path
 
 from agent import build_system_prompt, _inject_prompt_caching
+from learning import Lesson, load_relevant_lessons, store_lessons
 from memory import ensure_session, write_event
 from run_eval import evaluate_drum_run
 from self_improve import (
     SkillUpdate,
     apply_skill_updates,
+    auto_promote_queued_candidates,
     parse_reflection_response,
     queue_skill_update_candidates,
     skill_digest,
@@ -371,6 +373,147 @@ class RunEvalTests(unittest.TestCase):
         self.assertTrue(evaluation["applicable"])
         self.assertFalse(evaluation["passed"])
         self.assertIn("selector_zone_misclick", evaluation["reasons"])
+
+
+class LearningLoopTests(unittest.TestCase):
+    def test_store_and_load_relevant_lessons(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                lessons = [
+                    Lesson(
+                        session_id=9801,
+                        task="Create a 4-on-the-floor kick drum pattern in FL Studio",
+                        category="mistake",
+                        lesson="Selector strip is not the step band; move right before clicking.",
+                        evidence_steps=[5, 8],
+                        eval_passed=False,
+                        eval_score=0.5,
+                        skill_refs_used=["fl-studio/drum-pattern"],
+                        timestamp="2026-02-13T00:00:00+00:00",
+                    )
+                ]
+                written = store_lessons(lessons)
+                self.assertEqual(written, 1)
+                block, count = load_relevant_lessons("Create kick drum pattern in FL Studio")
+                self.assertEqual(count, 1)
+                self.assertIn("Selector strip", block)
+            finally:
+                os.chdir(cwd)
+
+    def test_auto_promote_queued_candidates_requires_score_improvement(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                # Skill target
+                skills_root = Path("skills")
+                skill_path = skills_root / "fl-studio" / "basics" / "SKILL.md"
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-basics\n"
+                        "description: Base FL Studio navigation and controls.\n"
+                        "version: 1\n"
+                        "---\n\n"
+                        "# FL Studio Basics\n"
+                    ),
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                digest = skill_digest(skill_path.read_text(encoding="utf-8"))
+
+                # Queue one candidate update.
+                qpath = Path("learning/pending_skill_patches.json")
+                qpath.parent.mkdir(parents=True, exist_ok=True)
+                qpath.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "id": "cand-1",
+                                "created_at": "2026-02-13T00:00:00+00:00",
+                                "session_id": 9805,
+                                "confidence": 0.9,
+                                "evaluation": {"passed": False, "score": 0.5},
+                                "updates": [
+                                    {
+                                        "skill_ref": "fl-studio/basics",
+                                        "skill_digest": digest,
+                                        "root_cause": "Repeated selector-zone misclicks on step row.",
+                                        "evidence_steps": [5, 8],
+                                        "replace_rules": [],
+                                        "append_bullets": [
+                                            "If Hint Bar shows Select/UpDown while targeting a step, move right into the step band before clicking."
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+                # Create 3 synthetic drum sessions with improving deterministic scores.
+                sessions_root = Path("sessions")
+                for sid, events in [
+                    (
+                        9701,
+                        [
+                            {"step": 1, "tool": "computer", "tool_input": {"action": "zoom"}},
+                            {"step": 2, "tool": "computer", "tool_input": {"action": "zoom"}},
+                            {"step": 3, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [410, 150]}},
+                        ],
+                    ),
+                    (
+                        9702,
+                        [
+                            {"step": 1, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [410, 150]}},
+                            {"step": 2, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [480, 150]}},
+                            {"step": 3, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [550, 150]}},
+                            {"step": 4, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [620, 150]}},
+                        ],
+                    ),
+                    (
+                        9703,
+                        [
+                            {"step": 1, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [430, 150]}},
+                            {"step": 2, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [500, 150]}},
+                            {"step": 3, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [570, 150]}},
+                            {"step": 4, "tool": "computer", "tool_input": {"action": "left_click", "coordinate": [640, 150]}},
+                        ],
+                    ),
+                ]:
+                    sdir = sessions_root / f"session-{sid:03d}"
+                    sdir.mkdir(parents=True, exist_ok=True)
+                    with (sdir / "events.jsonl").open("w", encoding="utf-8") as f:
+                        for ev in events:
+                            f.write(json.dumps(ev) + "\n")
+                    (sdir / "metrics.json").write_text(
+                        json.dumps({"task": "Create a 4-on-the-floor kick drum pattern in FL Studio"}),
+                        encoding="utf-8",
+                    )
+
+                promotion = auto_promote_queued_candidates(
+                    entries=manifest,
+                    queue_path=qpath,
+                    sessions_root=sessions_root,
+                    min_runs=3,
+                    min_delta=0.2,
+                    max_sessions=8,
+                )
+                self.assertEqual(promotion["applied"], 1)
+                self.assertEqual(promotion["promoted_id"], "cand-1")
+                body = skill_path.read_text(encoding="utf-8")
+                self.assertIn("## Learned Updates", body)
+                self.assertIn("version: 2", body)
+            finally:
+                os.chdir(cwd)
 
 
 if __name__ == "__main__":

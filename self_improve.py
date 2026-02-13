@@ -375,3 +375,228 @@ def queue_skill_update_candidates(
     result["queued"] = len(queued_updates)
     result["queued_skill_refs"] = [u["skill_ref"] for u in queued_updates]
     return result
+
+
+def _candidate_update_to_model(item: dict[str, Any]) -> SkillUpdate | None:
+    if not isinstance(item, dict):
+        return None
+    skill_ref = item.get("skill_ref")
+    digest = item.get("skill_digest")
+    root_cause = item.get("root_cause")
+    evidence_steps = item.get("evidence_steps")
+    if not isinstance(skill_ref, str) or not isinstance(digest, str) or not isinstance(root_cause, str):
+        return None
+    if not isinstance(evidence_steps, list):
+        return None
+    clean_steps = [int(s) for s in evidence_steps if isinstance(s, int) and s > 0][:8]
+    if not clean_steps:
+        return None
+
+    replace_rules_raw = item.get("replace_rules", [])
+    replace_rules: list[ReplaceRule] = []
+    if isinstance(replace_rules_raw, list):
+        for rr in replace_rules_raw[:5]:
+            if not isinstance(rr, dict):
+                continue
+            find = rr.get("find")
+            replace = rr.get("replace")
+            if isinstance(find, str) and isinstance(replace, str):
+                find = " ".join(find.split())
+                replace = " ".join(replace.split())
+                if find and replace:
+                    replace_rules.append(ReplaceRule(find=find, replace=replace))
+
+    append_raw = item.get("append_bullets", [])
+    append_bullets: list[str] = []
+    if isinstance(append_raw, list):
+        for bullet in append_raw[:5]:
+            if not isinstance(bullet, str):
+                continue
+            normalized = " ".join(bullet.split())
+            if normalized:
+                append_bullets.append(normalized)
+    if not append_bullets and not replace_rules:
+        return None
+
+    return SkillUpdate(
+        skill_ref=skill_ref.strip(),
+        skill_digest=digest.strip().lower(),
+        root_cause=" ".join(root_cause.split())[:400],
+        evidence_steps=clean_steps,
+        replace_rules=replace_rules,
+        append_bullets=append_bullets,
+    )
+
+
+def _read_session_events(jsonl_path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if not jsonl_path.exists():
+        return events
+    for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            events.append(row)
+    return events
+
+
+def _collect_recent_drum_scores(
+    *,
+    sessions_root: Path,
+    max_sessions: int,
+) -> list[dict[str, Any]]:
+    # Local import avoids widening module dependencies for non-learning paths.
+    from run_eval import evaluate_drum_run
+
+    rows: list[dict[str, Any]] = []
+    if not sessions_root.exists():
+        return rows
+    dirs = sorted(
+        (
+            p
+            for p in sessions_root.iterdir()
+            if p.is_dir() and p.name.startswith("session-") and p.name[8:].isdigit()
+        ),
+        key=lambda p: int(p.name[8:]),
+    )
+    for d in dirs:
+        session_id = int(d.name[8:])
+        events = _read_session_events(d / "events.jsonl")
+        if not events:
+            continue
+        task = "Create a 4-on-the-floor kick drum pattern in FL Studio"
+        metrics_path = d / "metrics.json"
+        if metrics_path.exists():
+            try:
+                metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+                if isinstance(metrics, dict):
+                    mt = metrics.get("task")
+                    if isinstance(mt, str) and mt.strip():
+                        task = mt
+            except Exception:
+                pass
+        ev = evaluate_drum_run(task, events)
+        if not ev.applicable:
+            continue
+        rows.append({"session_id": session_id, "score": ev.score, "passed": ev.passed})
+    return rows[-max_sessions:]
+
+
+def _scores_improving(rows: list[dict[str, Any]], *, min_runs: int, min_delta: float) -> bool:
+    if len(rows) < min_runs:
+        return False
+    recent = rows[-min_runs:]
+    scores = [float(r.get("score", 0.0)) for r in recent]
+    non_decreasing = all(scores[i] <= scores[i + 1] for i in range(len(scores) - 1))
+    delta_ok = (scores[-1] - scores[0]) >= min_delta
+    return non_decreasing and delta_ok
+
+
+def auto_promote_queued_candidates(
+    *,
+    entries: list[SkillManifestEntry],
+    queue_path: Path = Path("learning/pending_skill_patches.json"),
+    promoted_path: Path = Path("learning/promoted_skill_patches.json"),
+    sessions_root: Path = Path("sessions"),
+    min_runs: int = 3,
+    min_delta: float = 0.2,
+    max_sessions: int = 8,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "attempted": True,
+        "applied": 0,
+        "promoted_id": None,
+        "reason": None,
+        "gate_scores": [],
+    }
+
+    if not queue_path.exists():
+        result["reason"] = "no_queue"
+        return result
+    try:
+        raw = json.loads(queue_path.read_text(encoding="utf-8"))
+        queue = raw if isinstance(raw, list) else []
+    except Exception:
+        queue = []
+    if not queue:
+        result["reason"] = "empty_queue"
+        return result
+
+    score_rows = _collect_recent_drum_scores(sessions_root=sessions_root, max_sessions=max_sessions)
+    result["gate_scores"] = score_rows
+    if len(score_rows) < min_runs:
+        result["reason"] = "insufficient_runs_for_promotion"
+        return result
+    if not _scores_improving(score_rows, min_runs=min_runs, min_delta=min_delta):
+        result["reason"] = "score_not_improving"
+        return result
+
+    ranked = sorted(
+        (c for c in queue if isinstance(c, dict)),
+        key=lambda c: (float(c.get("confidence", 0.0)), int(c.get("session_id", 0))),
+        reverse=True,
+    )
+    if not ranked:
+        result["reason"] = "no_valid_candidates"
+        return result
+    candidate = ranked[0]
+    updates_raw = candidate.get("updates", [])
+    updates: list[SkillUpdate] = []
+    if isinstance(updates_raw, list):
+        for item in updates_raw:
+            upd = _candidate_update_to_model(item)
+            if upd is not None:
+                updates.append(upd)
+    if not updates:
+        result["reason"] = "candidate_has_no_updates"
+        return result
+
+    required_digests = {u.skill_ref: u.skill_digest for u in updates if u.skill_ref and u.skill_digest}
+    allowed_refs = {u.skill_ref for u in updates if u.skill_ref}
+    applied = apply_skill_updates(
+        entries=entries,
+        updates=updates,
+        confidence=float(candidate.get("confidence", 0.0)),
+        min_confidence=0.7,
+        required_skill_digests=required_digests,
+        allowed_skill_refs=allowed_refs,
+    )
+    result["applied"] = int(applied.get("applied", 0))
+    result["reason"] = applied.get("skipped_reason")
+    if result["applied"] <= 0:
+        return result
+
+    cid = str(candidate.get("id", ""))
+    result["promoted_id"] = cid
+
+    # Remove promoted candidate from queue and persist.
+    remaining = [c for c in queue if not (isinstance(c, dict) and str(c.get("id", "")) == cid)]
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    queue_path.write_text(json.dumps(remaining, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Append promotion audit trail.
+    promoted_path.parent.mkdir(parents=True, exist_ok=True)
+    if promoted_path.exists():
+        try:
+            old = json.loads(promoted_path.read_text(encoding="utf-8"))
+            promoted_rows = old if isinstance(old, list) else []
+        except Exception:
+            promoted_rows = []
+    else:
+        promoted_rows = []
+    promoted_rows.append(
+        {
+            "id": cid,
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
+            "candidate": candidate,
+            "gate_scores": score_rows,
+            "apply_result": applied,
+        }
+    )
+    promoted_path.write_text(json.dumps(promoted_rows, indent=2, ensure_ascii=False), encoding="utf-8")
+    return result
