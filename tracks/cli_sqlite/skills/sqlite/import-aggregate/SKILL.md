@@ -24,3 +24,9 @@ Use this when a task asks for CSV import and grouped totals.
 - Missing one fixture row.
 - Incorrect numeric parsing for `amount`.
 - Forgetting `ORDER BY`, causing unstable output.
+
+## Tool Reference
+
+- `dispatch(sql="...")` — executes SQL against the task database.
+- `probe(skill_ref="...")` — reads a skill document by reference key.
+- `catalog(path_ref="...")` — shows fixture or bootstrap data by path reference.

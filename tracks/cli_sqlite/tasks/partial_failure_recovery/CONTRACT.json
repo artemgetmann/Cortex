@@ -1,0 +1,72 @@
+{
+  "id": "cli-sqlite-partial-failure-recovery-v1",
+  "task_match": {
+    "all": [
+      "sqlite"
+    ],
+    "any": [
+      "partial",
+      "failure",
+      "recovery",
+      "error"
+    ]
+  },
+  "setup": {
+    "bootstrap_sql_path": "bootstrap.sql",
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_sql_patterns": [
+      "(?is)insert\\s+into\\s+transactions",
+      "(?is)insert\\s+into\\s+error_log"
+    ],
+    "forbidden_sql_patterns": [
+      "(?is)drop\\s+table\\s+transactions",
+      "(?is)drop\\s+table\\s+error_log"
+    ],
+    "required_queries": [
+      {
+        "id": "valid_txn_count",
+        "sql": "SELECT COUNT(*) FROM transactions;",
+        "expected_rows": [
+          [
+            "4"
+          ]
+        ]
+      },
+      {
+        "id": "error_count",
+        "sql": "SELECT COUNT(*) FROM error_log;",
+        "expected_rows": [
+          [
+            "2"
+          ]
+        ]
+      },
+      {
+        "id": "txn_totals",
+        "sql": "SELECT account, SUM(amount) AS total FROM transactions GROUP BY account ORDER BY account;",
+        "expected_rows": [
+          [
+            "checking",
+            "650"
+          ],
+          [
+            "savings",
+            "500"
+          ]
+        ]
+      }
+    ],
+    "max_error_count": 3
+  },
+  "pass_rule": "all_required && no_forbidden && required_queries_match && errors_within_budget",
+  "reason_codes": [
+    "missing_required_pattern",
+    "matched_forbidden_pattern",
+    "required_query_mismatch",
+    "too_many_errors"
+  ]
+}

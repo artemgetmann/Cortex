@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,14 +122,21 @@ def load_lessons(path: Path) -> list[Lesson]:
     return lessons
 
 
-def store_lessons(*, path: Path, lessons: list[Lesson]) -> int:
+def store_lessons(*, path: Path, lessons: list[Lesson], dedup_threshold: float = 0.65) -> int:
     if not lessons:
         return 0
+    existing = load_lessons(path) if path.exists() else []
+    stored = 0
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         for lesson in lessons:
+            existing_for_task = [ex for ex in existing if ex.task_id == lesson.task_id]
+            if any(_jaccard(lesson.lesson, ex.lesson) >= dedup_threshold for ex in existing_for_task):
+                continue
             f.write(json.dumps(lesson.to_dict(), ensure_ascii=True) + "\n")
-    return len(lessons)
+            existing.append(lesson)
+            stored += 1
+    return stored
 
 
 def load_relevant_lessons(
@@ -175,6 +183,84 @@ def load_relevant_lessons(
     return "\n".join(lines), len(selected)
 
 
+_GENERIC_PATTERNS = re.compile(
+    r"(?i)\b("
+    r"always read the skill|"
+    r"be careful|"
+    r"remember to|"
+    r"don'?t forget|"
+    r"make sure to read|"
+    r"always check|"
+    r"read the documentation|"
+    r"pay attention to|"
+    r"take care when|"
+    r"be mindful"
+    r")\b"
+)
+
+_SQL_KEYWORDS = re.compile(
+    r"(?i)\b("
+    r"SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK|"
+    r"ON CONFLICT|GROUP BY|ORDER BY|WHERE|JOIN|PRIMARY KEY|FOREIGN KEY|"
+    r"INTEGER|TEXT|REAL|BLOB|NULL|NOT NULL|UNIQUE|INDEX|TRANSACTION|"
+    r"SUM|COUNT|AVG|MAX|MIN|HAVING|DISTINCT|UNION|EXCEPT|INTERSECT|"
+    r"VALUES|INTO|FROM|TABLE|VIEW|TRIGGER|"
+    r"fixture_seed|ledger|rejects|checkpoint_log|sales|error_log|inventory"
+    r")\b"
+)
+
+_STEP_REFERENCE = re.compile(r"(?i)\b(?:step\s*\d+|at step|steps?\s*[\d,]+)\b")
+_ERROR_REFERENCE = re.compile(r"(?i)(?:error|exception|failed|missing|duplicate|mismatch|constraint|violation)")
+
+
+def _lesson_quality_score(lesson: Lesson) -> float:
+    text = lesson.lesson
+    if _GENERIC_PATTERNS.search(text):
+        return 0.0
+    score = 0.0
+    sql_matches = len(_SQL_KEYWORDS.findall(text))
+    score += min(sql_matches * 0.15, 0.45)
+    if _STEP_REFERENCE.search(text):
+        score += 0.2
+    if _ERROR_REFERENCE.search(text):
+        score += 0.2
+    if lesson.evidence_steps:
+        score += 0.15
+    return min(score, 1.0)
+
+
+def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15) -> list[Lesson]:
+    return [lesson for lesson in lessons if _lesson_quality_score(lesson) >= min_quality]
+
+
+def prune_lessons(path: Path, *, max_per_task: int = 20) -> int:
+    all_lessons = load_lessons(path)
+    if not all_lessons:
+        return 0
+    by_task: dict[str, list[Lesson]] = {}
+    for lesson in all_lessons:
+        by_task.setdefault(lesson.task_id, []).append(lesson)
+
+    pruned = False
+    kept: list[Lesson] = []
+    for task_id, task_lessons in by_task.items():
+        if len(task_lessons) <= max_per_task:
+            kept.extend(task_lessons)
+        else:
+            scored = sorted(task_lessons, key=_lesson_quality_score, reverse=True)
+            kept.extend(scored[:max_per_task])
+            pruned = True
+
+    if not pruned:
+        return 0
+    removed = len(all_lessons) - len(kept)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for lesson in kept:
+            f.write(json.dumps(lesson.to_dict(), ensure_ascii=True) + "\n")
+    return removed
+
+
 def generate_lessons(
     *,
     client: Any,
@@ -199,7 +285,10 @@ def generate_lessons(
         "Return STRICT JSON array only. Each item must match:\n"
         '{"category":"mistake|insight|shortcut|sql_detail","lesson":"...","evidence_steps":[1,2]}\n'
         "Rules:\n"
-        "- Be specific and short.\n"
+        "- Each lesson MUST reference at least one of: exact SQL fragment, error message, step number, or column/table name.\n"
+        "- REJECT generic advice like 'always read the skill', 'be careful with SQL', 'remember to check'.\n"
+        "- Good: 'INSERT INTO ledger missed ON CONFLICT for event_id causing duplicate at step 4'\n"
+        "- Bad: 'Always read the skill document before executing SQL'\n"
         "- Base lessons only on provided events and deterministic eval.\n"
         "- 1 to 4 lessons total.\n"
     )
@@ -255,4 +344,4 @@ def generate_lessons(
                 timestamp=now,
             )
         )
-    return lessons
+    return filter_lessons(lessons)

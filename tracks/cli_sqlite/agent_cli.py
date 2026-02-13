@@ -11,7 +11,7 @@ import anthropic
 from config import CortexConfig
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.executor import TaskWorkspace, prepare_task_workspace, run_sqlite, show_fixture_text
-from tracks.cli_sqlite.learning_cli import generate_lessons, load_relevant_lessons, store_lessons
+from tracks.cli_sqlite.learning_cli import generate_lessons, load_relevant_lessons, prune_lessons, store_lessons
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
@@ -22,6 +22,7 @@ from tracks.cli_sqlite.self_improve_cli import (
     queue_skill_update_candidates,
     skill_digest,
 )
+from tracks.cli_sqlite.tool_aliases import build_alias_map, get_tool_api_name, get_tool_description
 from tracks.cli_sqlite.skill_routing_cli import (
     SkillManifestEntry,
     build_skill_manifest,
@@ -92,13 +93,37 @@ def _default_task_text(task_id: str) -> str:
             "- Read relevant skills before SQL execution.\n"
             "- Keep SQL deterministic and transaction-safe.\n"
         )
+    if task_id == "idempotent_rerun":
+        return (
+            "SQLite task: idempotent_rerun.\n"
+            "Goal:\n"
+            "1) Import rows from `fixture.csv` into `inventory(sku, product, quantity)`.\n"
+            "2) The fixture contains duplicate rows — use idempotent insert to handle them.\n"
+            "3) Verify exactly 3 unique rows exist with correct data.\n"
+            "Constraints:\n"
+            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
+            "- Read relevant skills before SQL execution.\n"
+            "- Keep SQL deterministic and concise.\n"
+        )
+    if task_id == "partial_failure_recovery":
+        return (
+            "SQLite task: partial_failure_recovery.\n"
+            "Goal:\n"
+            "1) Import valid rows from `fixture.csv` into `transactions(txn_id, account, amount)`.\n"
+            "2) Some rows have non-numeric amounts — route those to `error_log(txn_id, reason)`.\n"
+            "3) Verify: 4 valid transactions, 2 error log entries, correct aggregates.\n"
+            "Constraints:\n"
+            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
+            "- Read relevant skills before SQL execution.\n"
+            "- Keep SQL deterministic and concise.\n"
+        )
     return f"SQLite task id: {task_id}. Use run_sqlite to complete the task."
 
 
-def _run_sqlite_tool_param() -> dict[str, Any]:
+def _run_sqlite_tool_param(*, opaque: bool = False) -> dict[str, Any]:
     return {
-        "name": RUN_SQLITE_TOOL_NAME,
-        "description": "Execute SQL against task-local sqlite database. No shell escapes. Dot-commands are restricted.",
+        "name": get_tool_api_name("run_sqlite", opaque),
+        "description": get_tool_description("run_sqlite", opaque),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -110,10 +135,10 @@ def _run_sqlite_tool_param() -> dict[str, Any]:
     }
 
 
-def _read_skill_tool_param() -> dict[str, Any]:
+def _read_skill_tool_param(*, opaque: bool = False) -> dict[str, Any]:
     return {
-        "name": READ_SKILL_TOOL_NAME,
-        "description": "Read full contents of a skill document by stable skill_ref.",
+        "name": get_tool_api_name("read_skill", opaque),
+        "description": get_tool_description("read_skill", opaque),
         "input_schema": {
             "type": "object",
             "properties": {"skill_ref": {"type": "string"}},
@@ -123,11 +148,13 @@ def _read_skill_tool_param() -> dict[str, Any]:
     }
 
 
-def _show_fixture_tool_param(path_refs: list[str]) -> dict[str, Any]:
+def _show_fixture_tool_param(path_refs: list[str], *, opaque: bool = False) -> dict[str, Any]:
     refs_text = ", ".join(path_refs) if path_refs else "(none)"
+    base_desc = get_tool_description("show_fixture", opaque)
+    desc = f"{base_desc} Available refs: {refs_text}."
     return {
-        "name": SHOW_FIXTURE_TOOL_NAME,
-        "description": f"Read task fixture/bootstrap file by stable path_ref. Available refs: {refs_text}.",
+        "name": get_tool_api_name("show_fixture", opaque),
+        "description": desc,
         "input_schema": {
             "type": "object",
             "properties": {"path_ref": {"type": "string"}},
@@ -337,7 +364,9 @@ def run_cli_agent(
     escalation_consecutive_runs: int = 2,
     promotion_min_runs: int = 3,
     promotion_min_delta: float = 0.2,
+    promotion_max_regressions: int = 1,
     require_skill_read: bool = True,
+    opaque_tools: bool = False,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     task_text = task.strip() if isinstance(task, str) and task.strip() else _default_task_text(task_id)
@@ -364,12 +393,18 @@ def run_cli_agent(
             "\nSkill gate requirement:\n"
             f"- Before first run_sqlite call, read at least one of: {sorted(required_skill_refs)}\n"
         )
+    if opaque_tools:
+        system_prompt += (
+            "\nTool names are opaque. Read your routed skills for usage semantics.\n"
+        )
+
+    alias_map = build_alias_map(opaque=opaque_tools)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
     tools = [
-        _run_sqlite_tool_param(),
-        _read_skill_tool_param(),
-        _show_fixture_tool_param(sorted(task_workspace.fixture_paths.keys())),
+        _run_sqlite_tool_param(opaque=opaque_tools),
+        _read_skill_tool_param(opaque=opaque_tools),
+        _show_fixture_tool_param(sorted(task_workspace.fixture_paths.keys()), opaque=opaque_tools),
     ]
 
     escalation_state = _load_escalation_state(base_model=model_critic)
@@ -440,13 +475,14 @@ def run_cli_agent(
         for block in assistant_blocks:
             if not (isinstance(block, dict) and block.get("type") == "tool_use"):
                 continue
-            tool_name = str(block.get("name", ""))
+            tool_name_raw = str(block.get("name", ""))
+            canonical_name = alias_map.get(tool_name_raw, tool_name_raw)
             tool_use_id = str(block.get("id", ""))
             tool_input = block.get("input", {})
             tool_input = tool_input if isinstance(tool_input, dict) else {}
             metrics["tool_actions"] += 1
 
-            if tool_name == RUN_SQLITE_TOOL_NAME:
+            if canonical_name == RUN_SQLITE_TOOL_NAME:
                 sql = tool_input.get("sql")
                 if not isinstance(sql, str):
                     result = ToolResult(error=f"run_sqlite requires string sql, got {sql!r}")
@@ -473,7 +509,7 @@ def run_cli_agent(
                         result = ToolResult(output=_clip_text(payload))
                     else:
                         result = ToolResult(error=exec_result.error)
-            elif tool_name == READ_SKILL_TOOL_NAME:
+            elif canonical_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 skill_ref = tool_input.get("skill_ref")
                 if not isinstance(skill_ref, str):
@@ -485,7 +521,7 @@ def run_cli_agent(
                     else:
                         read_skill_refs.add(skill_ref)
                         result = ToolResult(output=_clip_text(f"skill_ref: {skill_ref}\n\n{content}", max_chars=6000))
-            elif tool_name == SHOW_FIXTURE_TOOL_NAME:
+            elif canonical_name == SHOW_FIXTURE_TOOL_NAME:
                 path_ref = tool_input.get("path_ref")
                 if not isinstance(path_ref, str):
                     result = ToolResult(error=f"show_fixture requires string path_ref, got {path_ref!r}")
@@ -496,7 +532,7 @@ def run_cli_agent(
                     else:
                         result = ToolResult(output=_clip_text(f"path_ref: {path_ref}\n\n{text}", max_chars=6000))
             else:
-                result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")
+                result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
 
             if result.is_error():
                 metrics["tool_errors"] += 1
@@ -505,7 +541,7 @@ def run_cli_agent(
                 paths.events_path,
                 {
                     "step": step,
-                    "tool": tool_name,
+                    "tool": canonical_name,
                     "tool_input": tool_input,
                     "ok": not result.is_error(),
                     "error": result.error,
@@ -515,7 +551,7 @@ def run_cli_agent(
 
             if verbose:
                 print(
-                    f"[step {step:03d}] tool={tool_name} ok={not result.is_error()} error={result.error!r}",
+                    f"[step {step:03d}] tool={canonical_name} ok={not result.is_error()} error={result.error!r}",
                     flush=True,
                 )
 
@@ -566,6 +602,7 @@ def run_cli_agent(
             skill_refs_used=sorted(read_skill_refs),
         )
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lessons)
+        prune_lessons(LESSONS_PATH, max_per_task=20)
 
         proposed_updates, confidence, reflection_raw = propose_skill_updates(
             client=client,
@@ -641,6 +678,7 @@ def run_cli_agent(
             manifest_path=MANIFEST_PATH,
             min_runs=promotion_min_runs,
             min_delta=promotion_min_delta,
+            max_regressions=promotion_max_regressions,
         )
         metrics["auto_promotion_applied"] = int(promotion_result.get("applied", 0))
         metrics["auto_promotion_reason"] = promotion_result.get("reason")

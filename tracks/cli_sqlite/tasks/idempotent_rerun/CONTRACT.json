@@ -1,0 +1,69 @@
+{
+  "id": "cli-sqlite-idempotent-rerun-v1",
+  "task_match": {
+    "all": [
+      "sqlite"
+    ],
+    "any": [
+      "idempotent",
+      "rerun",
+      "duplicate"
+    ]
+  },
+  "setup": {
+    "bootstrap_sql_path": "bootstrap.sql",
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_sql_patterns": [
+      "(?is)insert\\s+(or\\s+ignore\\s+)?into\\s+inventory",
+      "(?is)(on\\s+conflict|or\\s+ignore)"
+    ],
+    "forbidden_sql_patterns": [
+      "(?is)drop\\s+table\\s+inventory",
+      "(?is)delete\\s+from\\s+inventory"
+    ],
+    "required_queries": [
+      {
+        "id": "inventory_count",
+        "sql": "SELECT COUNT(*) FROM inventory;",
+        "expected_rows": [
+          [
+            "3"
+          ]
+        ]
+      },
+      {
+        "id": "inventory_totals",
+        "sql": "SELECT sku, product, quantity FROM inventory ORDER BY sku;",
+        "expected_rows": [
+          [
+            "SKU-001",
+            "Widget A",
+            "10"
+          ],
+          [
+            "SKU-002",
+            "Widget B",
+            "25"
+          ],
+          [
+            "SKU-003",
+            "Widget C",
+            "15"
+          ]
+        ]
+      }
+    ],
+    "max_error_count": 2
+  },
+  "pass_rule": "all_required && no_forbidden && required_queries_match && errors_within_budget",
+  "reason_codes": [
+    "missing_required_pattern",
+    "matched_forbidden_pattern",
+    "required_query_mismatch",
+    "too_many_errors"
+  ]
+}
