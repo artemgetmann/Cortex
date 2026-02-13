@@ -24,8 +24,10 @@ The Channel Rack is a grid. Each row is one instrument:
    - If unsure, hover the channel name (left side) and check Hint Bar.
    - Once confirmed, proceed to clicking step buttons. Do not re-verify repeatedly.
 3. Click the 4 step buttons in the Kick row: step 1, step 5, step 9, step 13.
+   - Once the Kick row is visible, click immediately. Do not run extra Hint Bar checks for step buttons.
    - Click each button once. Do not verify between clicks.
-   - Step buttons show time elapsed in Hint Bar, not channel name. That is expected.
+   - Step buttons show time elapsed in Hint Bar, not channel name. That is expected and not an error.
+   - Do not spam zoom on the step row. At most one zoom is allowed before the click sequence.
    - After all 4 clicks, take one screenshot to verify all 4 are lit.
    - If a click is wrong, press `Cmd+Z` and retry that step.
 4. Press `Space` to start playback and verify the kick plays on every beat.

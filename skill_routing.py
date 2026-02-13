@@ -168,9 +168,23 @@ def route_manifest_entries(
     if top_k <= 0:
         return []
 
-    task_tokens = set(_TOKEN_RE.findall(task.lower()))
+    task_lower = task.lower()
+    task_tokens = set(_TOKEN_RE.findall(task_lower))
+    is_fl_studio_task = "fl studio" in task_lower or {"fl", "studio"}.issubset(task_tokens)
+    selected: list[SkillManifestEntry] = []
+    selected_refs: set[str] = set()
+
+    # Always include FL Studio basics when the task is in FL Studio.
+    if is_fl_studio_task:
+        basics = next((e for e in entries if e.skill_ref == "fl-studio/basics"), None)
+        if basics is not None and len(selected) < top_k:
+            selected.append(basics)
+            selected_refs.add(basics.skill_ref)
+
     scored: list[tuple[float, SkillManifestEntry]] = []
     for e in entries:
+        if e.skill_ref in selected_refs:
+            continue
         hay = f"{e.title} {e.description} {e.skill_ref}".lower()
         tokens = set(_TOKEN_RE.findall(hay))
         overlap = len(task_tokens & tokens) if task_tokens else 0
@@ -179,11 +193,13 @@ def route_manifest_entries(
         scored.append((score, e))
 
     scored.sort(key=lambda pair: (-pair[0], pair[1].skill_ref))
-    chosen = [entry for _, entry in scored[:top_k]]
-    # If all scores are zero, keep deterministic first K by ref to avoid empty routing.
-    if all(score <= 0.0 for score, _ in scored):
+    remaining = max(0, top_k - len(selected))
+    selected.extend(entry for _, entry in scored[:remaining])
+
+    # If all scores are zero and nothing pre-selected, keep deterministic first K by ref.
+    if not selected and all(score <= 0.0 for score, _ in scored):
         return sorted(entries, key=lambda e: e.skill_ref)[:top_k]
-    return chosen
+    return selected[:top_k]
 
 
 def resolve_skill_content(entries: list[SkillManifestEntry], skill_ref: str) -> tuple[str | None, str | None]:

@@ -9,8 +9,16 @@
   },
   {
     "confidence": 0.7,
+    "description": "Use when any task is executed in FL Studio; provides universal UI rules (Hint Bar usage, Channel Rack orientation, numeric entry, and anti-loop behavior).",
+    "last_updated": "2026-02-13T14:24:39.882881+00:00",
+    "path": "skills/fl-studio/basics/SKILL.md",
+    "skill_ref": "fl-studio/basics",
+    "title": "fl-studio-basics"
+  },
+  {
+    "confidence": 0.7,
     "description": "Use when the task is to create a 4-on-the-floor kick pattern in FL Studio Channel Rack (steps 1,5,9,13) with keyboard-first verification.",
-    "last_updated": "2026-02-13T13:36:31.960338+00:00",
+    "last_updated": "2026-02-13T14:24:54.578438+00:00",
     "path": "skills/fl-studio/drum-pattern/SKILL.md",
     "skill_ref": "fl-studio/drum-pattern",
     "title": "fl-studio-drum-pattern"

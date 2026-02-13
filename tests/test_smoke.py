@@ -142,6 +142,44 @@ class SkillRoutingTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_route_manifest_entries_includes_fl_studio_basics(self) -> None:
+        cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                skills_root = Path("skills")
+                p_basics = skills_root / "fl-studio" / "basics" / "SKILL.md"
+                p_drum = skills_root / "fl-studio" / "drum-pattern" / "SKILL.md"
+                p_basics.parent.mkdir(parents=True, exist_ok=True)
+                p_drum.parent.mkdir(parents=True, exist_ok=True)
+                p_basics.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-basics\n"
+                        "description: Use when any task is executed in FL Studio.\n"
+                        "---\n"
+                    ),
+                    encoding="utf-8",
+                )
+                p_drum.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-drum-pattern\n"
+                        "description: Use when creating a drum pattern in FL Studio.\n"
+                        "---\n"
+                    ),
+                    encoding="utf-8",
+                )
+                manifest = build_skill_manifest(
+                    skills_root=skills_root,
+                    manifest_path=skills_root / "skills_manifest.json",
+                )
+                routed = route_manifest_entries(task="Create kick pattern in FL Studio", entries=manifest, top_k=2)
+                routed_refs = [e.skill_ref for e in routed]
+                self.assertIn("fl-studio/basics", routed_refs)
+            finally:
+                os.chdir(cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

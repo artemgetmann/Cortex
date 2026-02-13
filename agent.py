@@ -25,16 +25,10 @@ BASE_SYSTEM_PROMPT = """You are controlling FL Studio Desktop on macOS via scree
 
 Rules:
 - Keyboard first. Prefer shortcuts over clicking whenever possible.
-- Hint Bar verification: hover the target, take a screenshot, read the Hint Bar text at the top-left of the FL Studio window.
-  Once the Hint Bar confirms the expected element, immediately act (click, type, etc.). Do not re-verify.
-  If 2 hover attempts fail to confirm, skip verification and use visual recognition. Never loop on hover-zoom-read.
-- After every action, verify the UI changed as expected. If not, undo (Cmd+Z) and try an alternative.
-- Numeric field strategy (tempo/BPM/value boxes): use direct value entry first.
-  Click the value field, type the target value, press Enter, then verify. Do not right-click value fields unless the user asks.
-  Do not perform repeated scroll loops on numeric fields; if one direct entry attempt fails, try one alternate click-focus attempt, then move on.
-- Popup/menu selection strategy: after opening a context menu or dropdown, do one zoom focused on the menu list,
-  click the target item, then verify the resulting value. Do not spam repeated zooms on the same menu region
-  unless the click failed verification.
+- Keep verification lightweight. Confirm ambiguous targets once, then act.
+- Do not loop on inspection actions. If two inspections fail to increase confidence, switch to a decisive action.
+- After every action, verify the UI changed as expected. If not, try one alternative and move on.
+- Use app-specific skills for UI conventions and domain workflows.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
 """
@@ -59,6 +53,8 @@ def build_system_prompt(*, tool_api_type: str) -> str:
 
 PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 READ_SKILL_TOOL_NAME = "read_skill"
+NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
+RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
@@ -227,8 +223,12 @@ def run_agent(
         "tool_actions": 0,
         "skill_reads": 0,
         "tool_errors": 0,
+        "loop_guard_blocks": 0,
         "usage": [],
     }
+    # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
+    non_productive_streak = 0
+    loop_guard_enabled = computer_api_type == "computer_20251124"
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
@@ -285,13 +285,27 @@ def run_agent(
                 try:
                     tool_in = tool_input if isinstance(tool_input, dict) else {}
                     action = tool_in.get("action")
-                    if allowed_actions is not None:
+                    if loop_guard_enabled and action in NON_PRODUCTIVE_ACTIONS and non_productive_streak >= 2:
+                        result = ToolResult(
+                            error=(
+                                "Loop guard: too many consecutive zoom/mouse_move actions without progress. "
+                                "Next action must be decisive: left_click or key."
+                            )
+                        )
+                        metrics["loop_guard_blocks"] += 1
+                    elif allowed_actions is not None:
                         if not isinstance(action, str) or action not in allowed_actions:
                             result = ToolResult(error=f"Action not allowed in this run: {action!r}")
                         else:
                             result = computer.run(tool_in)
                     else:
                         result = computer.run(tool_in)
+
+                    if action in NON_PRODUCTIVE_ACTIONS and not result.is_error():
+                        non_productive_streak += 1
+                    elif action in RESET_NON_PRODUCTIVE_ACTIONS and not result.is_error():
+                        non_productive_streak = 0
+
                 except Exception as e:
                     # Don't crash the loop on unexpected local tool errors; surface it to the model.
                     result = ToolResult(error=f"Local tool exception: {type(e).__name__}: {e}")
