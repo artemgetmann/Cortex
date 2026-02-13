@@ -1,0 +1,58 @@
+{
+  "id": "cli-sqlite-import-aggregate-v1",
+  "task_match": {
+    "all": [
+      "sqlite"
+    ],
+    "any": [
+      "import",
+      "aggregate",
+      "group"
+    ]
+  },
+  "setup": {
+    "bootstrap_sql_path": "bootstrap.sql",
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_sql_patterns": [
+      "(?is)create\\s+table\\s+sales",
+      "(?is)insert\\s+into\\s+sales",
+      "(?is)group\\s+by\\s+category",
+      "(?is)order\\s+by\\s+category"
+    ],
+    "forbidden_sql_patterns": [
+      "(?is)drop\\s+table\\s+sales"
+    ],
+    "required_queries": [
+      {
+        "id": "aggregate_rows",
+        "sql": "SELECT category, SUM(amount) AS total FROM sales GROUP BY category ORDER BY category;",
+        "expected_rows": [
+          [
+            "bass",
+            "9"
+          ],
+          [
+            "drums",
+            "13"
+          ],
+          [
+            "lead",
+            "8"
+          ]
+        ]
+      }
+    ],
+    "max_error_count": 1
+  },
+  "pass_rule": "all_required && no_forbidden && required_queries_match && errors_within_budget",
+  "reason_codes": [
+    "missing_required_pattern",
+    "matched_forbidden_pattern",
+    "required_query_mismatch",
+    "too_many_errors"
+  ]
+}

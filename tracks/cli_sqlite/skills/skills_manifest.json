@@ -1,0 +1,20 @@
+[
+  {
+    "confidence": 0.7,
+    "description": "Baseline SQL workflow for deterministic sqlite3 CLI tasks.",
+    "last_updated": "1970-01-01T00:00:00+00:00",
+    "path": "tracks/cli_sqlite/skills/sqlite/basics/SKILL.md",
+    "skill_ref": "sqlite/basics",
+    "title": "sqlite-basics",
+    "version": 1
+  },
+  {
+    "confidence": 0.7,
+    "description": "Procedure for importing fixture rows and computing grouped totals.",
+    "last_updated": "1970-01-01T00:00:00+00:00",
+    "path": "tracks/cli_sqlite/skills/sqlite/import-aggregate/SKILL.md",
+    "skill_ref": "sqlite/import-aggregate",
+    "title": "sqlite-import-aggregate",
+    "version": 1
+  }
+]
