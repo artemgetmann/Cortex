@@ -14,6 +14,7 @@ from computer_use import ComputerTool, ToolResult
 from memory import ensure_session, write_event, write_metrics
 from run_eval import evaluate_drum_run
 from self_improve import (
+    SkillUpdate,
     apply_skill_updates,
     parse_reflection_response,
     queue_skill_update_candidates,
@@ -138,6 +139,141 @@ def _save_png_b64(session_dir: Path, *, name: str, b64: str) -> Path:
     out = session_dir / name
     out.write_bytes(base64.b64decode(b64))
     return out
+
+
+def _image_block_from_file(path: Path) -> dict[str, Any] | None:
+    try:
+        data = base64.b64encode(path.read_bytes()).decode("ascii")
+    except Exception:
+        return None
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": data,
+        },
+    }
+
+
+def _select_reflection_screenshots(
+    events: list[dict[str, Any]],
+    *,
+    max_images: int = 3,
+) -> list[tuple[int, Path]]:
+    candidates: list[tuple[int, Path]] = []
+    for ev in events:
+        shot = ev.get("screenshot")
+        step = ev.get("step")
+        if not isinstance(shot, str) or not shot:
+            continue
+        if not isinstance(step, int):
+            continue
+        p = Path(shot)
+        if p.exists():
+            candidates.append((step, p))
+    if not candidates:
+        return []
+
+    # Pick representative frames: early, middle, late.
+    picks: list[tuple[int, Path]] = []
+    indexes = sorted({0, len(candidates) // 2, len(candidates) - 1})
+    for idx in indexes:
+        picks.append(candidates[idx])
+    # Keep stable ordering and max bound.
+    seen: set[str] = set()
+    deduped: list[tuple[int, Path]] = []
+    for step, p in picks:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((step, p))
+    return deduped[:max_images]
+
+
+def _load_fl_reference_snippet(*, max_chars: int = 1600) -> str:
+    p = Path("docs/FL-STUDIO-REFERENCE.md")
+    if not p.exists():
+        return ""
+    try:
+        text = p.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    text = " ".join(text.split())
+    return text[:max_chars]
+
+
+def _build_fallback_updates(
+    *,
+    eval_result: dict[str, Any],
+    read_skill_refs: set[str],
+    skill_digests: dict[str, str],
+) -> tuple[list[SkillUpdate], float]:
+    reasons = eval_result.get("reasons")
+    if not isinstance(reasons, list):
+        return [], 0.0
+    reason_set = {r for r in reasons if isinstance(r, str)}
+    if not reason_set:
+        return [], 0.0
+
+    target_ref = "fl-studio/drum-pattern"
+    if target_ref not in read_skill_refs:
+        return [], 0.0
+    digest = skill_digests.get(target_ref, "")
+    if not digest:
+        return [], 0.0
+
+    evidence_steps: list[int] = []
+    clicks = eval_result.get("clicks", [])
+    if isinstance(clicks, list):
+        for item in clicks[:4]:
+            if isinstance(item, dict):
+                s = item.get("step")
+                if isinstance(s, int) and s > 0:
+                    evidence_steps.append(s)
+    if not evidence_steps:
+        evidence_steps = [1]
+
+    bullets: list[str] = []
+    replace_rules = []
+    root_parts: list[str] = []
+
+    if "selector_zone_misclick" in reason_set:
+        root_parts.append("First step clicks entered selector strip instead of the step-button band.")
+        bullets.append(
+            "When clicking kick steps, avoid the selector strip near channel name; if Hint Bar shows Select/UpDown, move right and retry."
+        )
+    if "inspection_loop" in reason_set:
+        root_parts.append("Run spent too many inspection actions before decisive clicks.")
+        replace_rules.append(
+            {
+                "find": "Do not spam zoom on the step row. At most one zoom is allowed before the click sequence.",
+                "replace": "Do at most one zoom before the click sequence; then execute the four clicks without additional zoom.",
+            }
+        )
+    if "insufficient_step_clicks" in reason_set:
+        root_parts.append("Run ended before four kick-step clicks were completed.")
+        bullets.append("Do not stop early: complete exactly four kick-step clicks (1,5,9,13) before any final verification.")
+
+    if not bullets and not replace_rules:
+        return [], 0.0
+
+    rr_objs = []
+    from self_improve import ReplaceRule  # local import to avoid widening global import list
+
+    for rr in replace_rules[:2]:
+        rr_objs.append(ReplaceRule(find=rr["find"], replace=rr["replace"]))
+
+    update = SkillUpdate(
+        skill_ref=target_ref,
+        skill_digest=digest,
+        root_cause=" ".join(root_parts)[:400],
+        evidence_steps=sorted(set(evidence_steps))[:6],
+        replace_rules=rr_objs,
+        append_bullets=bullets[:3],
+    )
+    return [update], 0.8
 
 
 @dataclass
@@ -416,9 +552,10 @@ def run_agent(
             skill_digests[ref] = digest
             skill_texts.append(f"skill_ref: {ref}\nskill_digest: {digest}\n{content}")
 
+        reference_doc = _load_fl_reference_snippet()
         reflection_system = (
             "You are PostTaskHook for autonomous skill maintenance.\n"
-            "Given task + tool trace + current skills, propose grounded updates.\n"
+            "Given task + tool trace + screenshots + current skills + reference docs, propose grounded updates.\n"
             "Return STRICT JSON only:\n"
             "{\n"
             '  "confidence": 0.0,\n'
@@ -440,6 +577,7 @@ def run_agent(
             "- Do not repeat guidance already present in the skill.\n"
             "- Prefer generic reusable lessons over one-off coordinates, unless coordinates expose a repeated failure pattern.\n"
             "- Use DETERMINISTIC_EVAL as the primary failure signal. If eval says passed=true, return no updates.\n"
+            "- Use screenshot evidence and reference docs to justify root cause and proposed rules.\n"
             "- Max 2 skills, max 3 bullets per skill.\n"
             "- Do not propose updates if signal is weak.\n"
         )
@@ -458,15 +596,34 @@ def run_agent(
             f"{json.dumps(sorted(read_skill_refs), ensure_ascii=True)}\n\n"
             "SKILL_DIGESTS:\n"
             f"{json.dumps(skill_digests, ensure_ascii=True)}\n\n"
+            "REFERENCE_DOC_SNIPPET:\n"
+            f"{reference_doc}\n\n"
             "SKILL_CONTENTS:\n"
             + "\n\n".join(skill_texts)
         )
         try:
+            reflection_content: list[dict[str, Any]] = [{"type": "text", "text": reflection_user}]
+            shot_labels: list[str] = []
+            for step_id, shot_path in _select_reflection_screenshots(all_events, max_images=3):
+                blk = _image_block_from_file(shot_path)
+                if blk is None:
+                    continue
+                shot_labels.append(f"step-{step_id}: {shot_path}")
+                reflection_content.append(blk)
+            if shot_labels:
+                reflection_content.insert(
+                    1,
+                    {
+                        "type": "text",
+                        "text": "SCREENSHOTS_INCLUDED:\n" + "\n".join(shot_labels),
+                    },
+                )
+
             reflection = client.messages.create(
-                model=cfg.model_decider,
+                model=cfg.model_critic,
                 max_tokens=700,
                 system=reflection_system,
-                messages=[{"role": "user", "content": reflection_user}],
+                messages=[{"role": "user", "content": reflection_content}],
             )
             raw = ""
             for b in reflection.content:
@@ -474,6 +631,15 @@ def run_agent(
                 if isinstance(bd, dict) and bd.get("type") == "text":
                     raw += str(bd.get("text", ""))
             updates, confidence = parse_reflection_response(raw)
+            if (not updates) and (not bool(drum_eval.get("passed"))):
+                fallback_updates, fallback_conf = _build_fallback_updates(
+                    eval_result=drum_eval,
+                    read_skill_refs=read_skill_refs,
+                    skill_digests=skill_digests,
+                )
+                if fallback_updates:
+                    updates = fallback_updates
+                    confidence = max(confidence, fallback_conf)
             valid_steps = {int(e.get("step")) for e in tail_events if isinstance(e.get("step"), int)}
             if posttask_mode == "candidate":
                 patch_result = queue_skill_update_candidates(

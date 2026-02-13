@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
 INSPECTION_ACTIONS = {"zoom", "mouse_move"}
 DECISIVE_ACTIONS = {"left_click", "key"}
+DEFAULT_DRUM_CONTRACT_PATH = Path("skills/fl-studio/drum-pattern/CONTRACT.json")
 
 
 @dataclass(frozen=True)
@@ -17,6 +20,7 @@ class DrumRunEvaluation:
     clicks: list[dict[str, int]]
     zoom_count: int
     decisive_count: int
+    contract_path: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -27,23 +31,83 @@ class DrumRunEvaluation:
             "clicks": self.clicks,
             "zoom_count": self.zoom_count,
             "decisive_count": self.decisive_count,
+            "contract_path": self.contract_path,
         }
 
 
-def _looks_like_drum_task(task: str) -> bool:
-    t = task.lower()
-    hints = [
-        "fl studio",
-        "drum",
-        "kick",
-        "4-on-the-floor",
-        "channel rack",
-    ]
-    return sum(1 for h in hints if h in t) >= 2
+def _default_drum_contract() -> dict[str, Any]:
+    return {
+        "id": "fl-studio-drum-pattern-v1",
+        "task_match": {
+            "all": ["fl studio"],
+            "any": ["drum", "kick", "4-on-the-floor", "channel rack"],
+        },
+        "signals": {
+            "click_band": {"y_min": 130, "y_max": 170, "required_clicks": 4},
+            "selector_strip": {"x_lt": 420},
+            "step_spacing": {
+                "diff_min": [40, 55, 55],
+                "diff_max": [90, 90, 90],
+                "require_monotonic_x": True,
+            },
+            "inspection_ratio": {"max_zoom_per_decisive": 1.0},
+        },
+        "required_outcomes": [
+            "enough_clicks",
+            "monotonic_step_order",
+            "spacing_in_range",
+        ],
+        "forbidden_patterns": [
+            "selector_zone_misclick",
+            "inspection_loop",
+        ],
+        "pass_rule": "required_outcomes && no_forbidden",
+        "reason_codes": [
+            "insufficient_step_clicks",
+            "selector_zone_misclick",
+            "non_monotonic_step_order",
+            "step_spacing_out_of_range",
+            "inspection_loop",
+        ],
+        "reference_images": [],
+    }
 
 
-def evaluate_drum_run(task: str, events: list[dict[str, Any]]) -> DrumRunEvaluation:
-    if not _looks_like_drum_task(task):
+def load_contract(path: Path = DEFAULT_DRUM_CONTRACT_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return _default_drum_contract()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return raw
+    except Exception:
+        pass
+    return _default_drum_contract()
+
+
+def _task_matches(task: str, contract: dict[str, Any]) -> bool:
+    tm = contract.get("task_match", {})
+    if not isinstance(tm, dict):
+        return False
+    lower = task.lower()
+    all_terms = [str(t).lower() for t in tm.get("all", []) if str(t).strip()]
+    any_terms = [str(t).lower() for t in tm.get("any", []) if str(t).strip()]
+    if all_terms and not all(t in lower for t in all_terms):
+        return False
+    if any_terms and not any(t in lower for t in any_terms):
+        return False
+    return True
+
+
+def evaluate_drum_run(
+    task: str,
+    events: list[dict[str, Any]],
+    *,
+    contract_path: Path = DEFAULT_DRUM_CONTRACT_PATH,
+) -> DrumRunEvaluation:
+    contract = load_contract(contract_path)
+    cpath = str(contract_path)
+    if not _task_matches(task, contract):
         return DrumRunEvaluation(
             applicable=False,
             passed=False,
@@ -52,7 +116,30 @@ def evaluate_drum_run(task: str, events: list[dict[str, Any]]) -> DrumRunEvaluat
             clicks=[],
             zoom_count=0,
             decisive_count=0,
+            contract_path=cpath,
         )
+
+    signals = contract.get("signals", {}) if isinstance(contract.get("signals"), dict) else {}
+    click_band = signals.get("click_band", {}) if isinstance(signals.get("click_band"), dict) else {}
+    selector_strip = signals.get("selector_strip", {}) if isinstance(signals.get("selector_strip"), dict) else {}
+    step_spacing = signals.get("step_spacing", {}) if isinstance(signals.get("step_spacing"), dict) else {}
+    inspection = signals.get("inspection_ratio", {}) if isinstance(signals.get("inspection_ratio"), dict) else {}
+
+    y_min = int(click_band.get("y_min", 130))
+    y_max = int(click_band.get("y_max", 170))
+    required_clicks = int(click_band.get("required_clicks", 4))
+    selector_x_lt = int(selector_strip.get("x_lt", 420))
+    ratio_max = float(inspection.get("max_zoom_per_decisive", 1.0))
+    require_monotonic_x = bool(step_spacing.get("require_monotonic_x", True))
+
+    diff_min_raw = step_spacing.get("diff_min", [40, 55, 55])
+    diff_max_raw = step_spacing.get("diff_max", [90, 90, 90])
+    diff_min = [int(v) for v in diff_min_raw] if isinstance(diff_min_raw, list) else [40, 55, 55]
+    diff_max = [int(v) for v in diff_max_raw] if isinstance(diff_max_raw, list) else [90, 90, 90]
+    if len(diff_min) < 3:
+        diff_min = (diff_min + [55, 55, 55])[:3]
+    if len(diff_max) < 3:
+        diff_max = (diff_max + [90, 90, 90])[:3]
 
     clicks: list[dict[str, int]] = []
     zoom_count = 0
@@ -80,34 +167,53 @@ def evaluate_drum_run(task: str, events: list[dict[str, Any]]) -> DrumRunEvaluat
             continue
         x = int(x_raw)
         y = int(y_raw)
-        # Channel Rack top row where kick pattern clicks happen in our runs.
-        if 130 <= y <= 170:
+        if y_min <= y <= y_max:
             clicks.append({"step": int(ev.get("step", 0) or 0), "x": x, "y": y})
 
-    first4 = clicks[:4]
+    first = clicks[:required_clicks]
+    xs = [c["x"] for c in first]
     reasons: list[str] = []
-    xs = [c["x"] for c in first4]
+    outcomes = {
+        "enough_clicks": len(first) >= required_clicks,
+        "monotonic_step_order": True,
+        "spacing_in_range": True,
+    }
 
-    if len(first4) < 4:
+    if len(first) < required_clicks:
         reasons.append("insufficient_step_clicks")
+        outcomes["monotonic_step_order"] = False
+        outcomes["spacing_in_range"] = False
     else:
-        # Selector strip is to the left of the step band.
-        if any(x < 420 for x in xs):
+        if any(x < selector_x_lt for x in xs):
             reasons.append("selector_zone_misclick")
-        if xs != sorted(xs):
+        if require_monotonic_x and xs != sorted(xs):
             reasons.append("non_monotonic_step_order")
+            outcomes["monotonic_step_order"] = False
 
         diffs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
-        # For 1/5/9/13 pattern spacing should be roughly even for last three clicks.
         if len(diffs) == 3:
-            if not (40 <= diffs[0] <= 90 and 55 <= diffs[1] <= 90 and 55 <= diffs[2] <= 90):
+            bounds_ok = all(diff_min[i] <= diffs[i] <= diff_max[i] for i in range(3))
+            if not bounds_ok:
                 reasons.append("step_spacing_out_of_range")
+                outcomes["spacing_in_range"] = False
 
-    if decisive_count > 0 and (zoom_count / float(decisive_count)) > 1.0:
+    if decisive_count > 0 and (zoom_count / float(decisive_count)) > ratio_max:
         reasons.append("inspection_loop")
 
+    required_outcomes = contract.get("required_outcomes", [])
+    if isinstance(required_outcomes, list):
+        for name in required_outcomes:
+            if isinstance(name, str) and name in outcomes and not outcomes[name]:
+                # Reason tags already set above for our current outcome set.
+                pass
+
+    forbidden_patterns = contract.get("forbidden_patterns", [])
+    forbidden_set = {x for x in forbidden_patterns if isinstance(x, str)}
     unique_reasons = sorted(set(reasons))
-    passed = len(unique_reasons) == 0
+    has_forbidden = any(r in forbidden_set for r in unique_reasons)
+    all_outcomes_ok = all(outcomes.values())
+    passed = all_outcomes_ok and not has_forbidden and len(unique_reasons) == 0
+
     score = max(0.0, 1.0 - (0.25 * len(unique_reasons)))
     if passed:
         score = 1.0
@@ -117,8 +223,9 @@ def evaluate_drum_run(task: str, events: list[dict[str, Any]]) -> DrumRunEvaluat
         passed=passed,
         score=round(score, 3),
         reasons=unique_reasons,
-        clicks=first4,
+        clicks=first,
         zoom_count=zoom_count,
         decisive_count=decisive_count,
+        contract_path=cpath,
     )
 

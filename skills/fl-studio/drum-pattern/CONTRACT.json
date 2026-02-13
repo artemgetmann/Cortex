@@ -1,0 +1,58 @@
+{
+  "id": "fl-studio-drum-pattern-v1",
+  "task_match": {
+    "all": [
+      "fl studio"
+    ],
+    "any": [
+      "drum",
+      "kick",
+      "4-on-the-floor",
+      "channel rack"
+    ]
+  },
+  "signals": {
+    "click_band": {
+      "y_min": 130,
+      "y_max": 170,
+      "required_clicks": 4
+    },
+    "selector_strip": {
+      "x_lt": 420
+    },
+    "step_spacing": {
+      "diff_min": [
+        40,
+        55,
+        55
+      ],
+      "diff_max": [
+        90,
+        90,
+        90
+      ],
+      "require_monotonic_x": true
+    },
+    "inspection_ratio": {
+      "max_zoom_per_decisive": 1.0
+    }
+  },
+  "required_outcomes": [
+    "enough_clicks",
+    "monotonic_step_order",
+    "spacing_in_range"
+  ],
+  "forbidden_patterns": [
+    "selector_zone_misclick",
+    "inspection_loop"
+  ],
+  "pass_rule": "required_outcomes && no_forbidden",
+  "reason_codes": [
+    "insufficient_step_clicks",
+    "selector_zone_misclick",
+    "non_monotonic_step_order",
+    "step_spacing_out_of_range",
+    "inspection_loop"
+  ],
+  "reference_images": []
+}
