@@ -32,15 +32,42 @@ def _derive_skill_ref(path: Path) -> str:
     return "/".join(parts)
 
 
+def _extract_frontmatter(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return {}
+
+    meta: dict[str, str] = {}
+    for raw in lines[1:end]:
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip().strip('"').strip("'")
+        if key in {"name", "title", "description"} and value:
+            meta[key] = value
+    return meta
+
+
 def _extract_title_and_description(text: str) -> tuple[str, str]:
     lines = [ln.rstrip() for ln in text.splitlines()]
+    meta = _extract_frontmatter(text)
 
-    title = "Untitled Skill"
-    for line in lines:
-        s = line.strip()
-        if s.startswith("#"):
-            title = s.lstrip("#").strip()
-            break
+    title = meta.get("title") or meta.get("name") or "Untitled Skill"
+    if title == "Untitled Skill":
+        for line in lines:
+            s = line.strip()
+            if s.startswith("#"):
+                title = s.lstrip("#").strip()
+                break
 
     desc_lines: list[str] = []
     i = 0
@@ -68,25 +95,16 @@ def _extract_title_and_description(text: str) -> tuple[str, str]:
             i += 1
         break
 
-    description = " ".join(desc_lines).strip()
+    description = meta.get("description", "").strip()
+    if not description:
+        description = " ".join(desc_lines).strip()
     if not description:
         description = "No description provided."
     return title, description
 
 
 def discover_skill_files(skills_root: Path) -> list[Path]:
-    files: list[Path] = []
-    files.extend(sorted(skills_root.glob("**/SKILL.md")))
-    if not files:
-        # Backward compatibility with legacy flat markdown skills.
-        files.extend(
-            sorted(
-                p
-                for p in skills_root.glob("**/*.md")
-                if p.name.lower() not in {"index.md", "skill.md"}
-            )
-        )
-    return files
+    return sorted(skills_root.glob("**/SKILL.md"))
 
 
 def build_skill_manifest(
@@ -131,7 +149,7 @@ def build_skill_manifest(
 def manifest_summaries_text(entries: list[SkillManifestEntry]) -> str:
     if not entries:
         return "No skills available."
-    lines = ["Available skills (summary only):"]
+    lines = ["Available skills (title + description only):"]
     for e in entries:
         lines.append(f"- ref: {e.skill_ref}")
         lines.append(f"  title: {e.title}")

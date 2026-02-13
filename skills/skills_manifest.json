@@ -1,10 +1,18 @@
 [
   {
     "confidence": 0.7,
-    "description": "Program a basic house/techno kick pattern in FL Studio's Channel Rack.",
-    "last_updated": "2026-02-13T12:53:35.765629+00:00",
-    "path": "skills/fl-studio/drum-pattern.md",
+    "description": "Create or update local skills in this repo using strict SKILL.md folder format with concise metadata-first design.",
+    "last_updated": "2026-02-13T13:17:19.486600+00:00",
+    "path": "skills/core/skill-creator/SKILL.md",
+    "skill_ref": "core/skill-creator",
+    "title": "skill-creator"
+  },
+  {
+    "confidence": 0.7,
+    "description": "Create a basic 4-on-the-floor kick pattern in FL Studio Channel Rack using a keyboard-first, verify-once workflow.",
+    "last_updated": "2026-02-13T13:17:19.484894+00:00",
+    "path": "skills/fl-studio/drum-pattern/SKILL.md",
     "skill_ref": "fl-studio/drum-pattern",
-    "title": "Skill: Create a 4-on-the-Floor Kick Pattern"
+    "title": "fl-studio-drum-pattern"
   }
 ]

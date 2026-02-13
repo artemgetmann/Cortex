@@ -93,10 +93,7 @@ def run_thinking_agent(
 
     # Load skills
     skills_text_parts: list[str] = []
-    skills_index = Path("skills/fl-studio/index.md")
-    if skills_index.exists():
-        skills_text_parts.append("## Skills Index\n" + read_text(skills_index))
-    drum_skill = Path("skills/fl-studio/drum-pattern.md")
+    drum_skill = Path("skills/fl-studio/drum-pattern/SKILL.md")
     if drum_skill.exists():
         skills_text_parts.append("## Skill: drum-pattern\n" + read_text(drum_skill))
     skills_text = "\n\n".join(skills_text_parts).strip() or "No skills loaded."

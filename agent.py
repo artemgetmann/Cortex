@@ -66,14 +66,14 @@ def _read_skill_tool_param() -> dict[str, Any]:
         "name": READ_SKILL_TOOL_NAME,
         "description": (
             "Read full contents of a skill document by stable skill_ref. "
-            "Use this only when manifest summaries are not enough."
+            "Use this only when title/description metadata is not enough."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "skill_ref": {
                     "type": "string",
-                    "description": "Stable skill reference from manifest summaries.",
+                    "description": "Stable skill reference from skill metadata list.",
                 }
             },
             "required": ["skill_ref"],
@@ -197,8 +197,8 @@ def run_agent(
         "type": "text",
         "text": (
             "Skills policy:\n"
-            "- You only have skill summaries at start.\n"
-            "- If a summary may help, call read_skill with that exact skill_ref to fetch full steps.\n"
+            "- You only have skill titles and descriptions at start.\n"
+            "- If a listed skill may help, call read_skill with that exact skill_ref to fetch full steps.\n"
             "- Do not assume full skill contents without calling read_skill.\n"
             "- Keep read_skill calls targeted; avoid reading every skill."
         ),

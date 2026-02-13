@@ -63,16 +63,22 @@ class MemoryTests(unittest.TestCase):
 
 
 class SkillRoutingTests(unittest.TestCase):
-    def test_build_manifest_from_legacy_markdown(self) -> None:
+    def test_build_manifest_from_skill_md_frontmatter(self) -> None:
         cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as tmp:
             os.chdir(tmp)
             try:
                 skills_root = Path("skills")
-                (skills_root / "fl-studio").mkdir(parents=True, exist_ok=True)
-                (skills_root / "fl-studio" / "index.md").write_text("# Index\nIgnore me", encoding="utf-8")
-                (skills_root / "fl-studio" / "drum-pattern.md").write_text(
-                    "# Skill: Drum Pattern\n\nPlace kick on 1,5,9,13.\nUse F6 first.\nThen verify.",
+                skill_path = skills_root / "fl-studio" / "drum-pattern" / "SKILL.md"
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text(
+                    (
+                        "---\n"
+                        "name: fl-studio-drum-pattern\n"
+                        "description: Place kick hits on 1, 5, 9, 13 in Channel Rack.\n"
+                        "---\n\n"
+                        "# Drum Pattern\n\nUse F6 first."
+                    ),
                     encoding="utf-8",
                 )
                 manifest = build_skill_manifest(
@@ -81,7 +87,8 @@ class SkillRoutingTests(unittest.TestCase):
                 )
                 self.assertEqual(len(manifest), 1)
                 self.assertEqual(manifest[0].skill_ref, "fl-studio/drum-pattern")
-                self.assertIn("Drum Pattern", manifest[0].title)
+                self.assertEqual(manifest[0].title, "fl-studio-drum-pattern")
+                self.assertIn("Place kick hits", manifest[0].description)
             finally:
                 os.chdir(cwd)
 
