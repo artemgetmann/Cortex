@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied
+from tracks.cli_sqlite.agent_cli import _is_likely_mutating_sql, _is_skill_gate_satisfied
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
 from tracks.cli_sqlite.learning_cli import Lesson, generate_lessons, load_relevant_lessons, store_lessons
@@ -260,6 +260,13 @@ class SkillGateTests(unittest.TestCase):
                 required_skill_refs={"sqlite/incremental-reconcile"},
             )
         )
+
+    def test_mutation_sql_detector(self) -> None:
+        self.assertTrue(_is_likely_mutating_sql("INSERT INTO ledger(event_id) VALUES ('e1');"))
+        self.assertTrue(_is_likely_mutating_sql("BEGIN TRANSACTION;"))
+        self.assertTrue(_is_likely_mutating_sql(".read fixture.sql"))
+        self.assertFalse(_is_likely_mutating_sql("SELECT * FROM ledger ORDER BY event_id;"))
+        self.assertFalse(_is_likely_mutating_sql("  "))
 
 
 class LearningAndPromotionTests(unittest.TestCase):

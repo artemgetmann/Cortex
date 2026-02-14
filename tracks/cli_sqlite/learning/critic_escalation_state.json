@@ -1,0 +1,8 @@
+{
+  "tier": "opus",
+  "override_runs_remaining": 2,
+  "low_score_streak": 0,
+  "critic_no_updates_streak": 0,
+  "fail_streak": 0,
+  "last_trigger": "failed_runs"
+}

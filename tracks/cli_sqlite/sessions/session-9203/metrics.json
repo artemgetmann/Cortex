@@ -1,0 +1,118 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "insufficient_runs_for_promotion",
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "elapsed_s": 24.713,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": false,
+  "eval_reasons": [
+    "required_query_mismatch"
+  ],
+  "eval_score": 0.917,
+  "executor_model": "claude-haiku-4-5",
+  "lessons_generated": 3,
+  "lessons_loaded": 8,
+  "low_score_streak": 0,
+  "posttask_candidates_queued": 1,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "require_skill_read": true,
+  "required_skill_refs": [
+    "sqlite/incremental-reconcile"
+  ],
+  "session_id": 9203,
+  "skill_gate_blocks": 0,
+  "skill_reads": 1,
+  "steps": 6,
+  "task": "SQLite task: incremental_reconcile.\nGoal:\n1) Ingest rows from the fixture into `ledger`.\n2) Deduplicate by `event_id` and store duplicate rows in `rejects`.\n3) Write checkpoint metadata in `checkpoint_log`.\n4) Return deterministic aggregate totals by category.\nConstraints:\n- Use only run_sqlite, read_skill, and show_fixture tools.\n- Read relevant skills before SQL execution.\n- Keep SQL deterministic and transaction-safe.\n",
+  "task_id": "incremental_reconcile",
+  "time_start": 1771013423.097546,
+  "tool_actions": 7,
+  "tool_errors": 1,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1689,
+      "output_tokens": 167,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2461,
+      "output_tokens": 336,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2857,
+      "output_tokens": 348,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 3218,
+      "output_tokens": 459,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 3690,
+      "output_tokens": 226,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 4057,
+      "output_tokens": 297,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}

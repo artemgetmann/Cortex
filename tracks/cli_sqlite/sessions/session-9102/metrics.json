@@ -1,0 +1,100 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "insufficient_runs_for_promotion",
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "elapsed_s": 18.134,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": false,
+  "eval_reasons": [
+    "required_query_mismatch"
+  ],
+  "eval_score": 0.857,
+  "executor_model": "claude-haiku-4-5",
+  "lessons_generated": 4,
+  "lessons_loaded": 0,
+  "low_score_streak": 0,
+  "posttask_candidates_queued": 1,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "session_id": 9102,
+  "skill_reads": 1,
+  "steps": 5,
+  "task": "SQLite task: import_aggregate.\nGoal:\n1) Build table `sales(category TEXT, amount INTEGER)`.\n2) Import the CSV rows from `fixture.csv` into `sales`.\n3) Return grouped totals ordered by category:\n   SELECT category, SUM(amount) AS total FROM sales GROUP BY category ORDER BY category;\nConstraints:\n- Use only run_sqlite, read_skill, and show_fixture tools.\n- Keep SQL deterministic and concise.\n",
+  "task_id": "import_aggregate",
+  "time_start": 1771012653.445427,
+  "tool_actions": 5,
+  "tool_errors": 1,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1031,
+      "output_tokens": 123,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1438,
+      "output_tokens": 188,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1675,
+      "output_tokens": 165,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1863,
+      "output_tokens": 92,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1978,
+      "output_tokens": 148,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}

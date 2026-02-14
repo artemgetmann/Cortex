@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,12 @@ READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 RUN_SQLITE_TOOL_NAME = "run_sqlite"
 VERIFY_CONTRACT_TOOL_NAME = "verify_contract"
+MUTATION_SQL_RE = re.compile(
+    r"(?is)\b("
+    r"insert|update|delete|drop|alter|create|replace|truncate|begin|commit|rollback|"
+    r"vacuum|attach|detach|reindex|analyze|pragma"
+    r")\b"
+)
 
 
 @dataclass(frozen=True)
@@ -171,6 +178,15 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _is_likely_mutating_sql(sql: str) -> bool:
+    text = sql.strip()
+    if not text:
+        return False
+    if text.lstrip().startswith("."):
+        return True
+    return bool(MUTATION_SQL_RE.search(text))
 
 
 def _tier_from_model(model_name: str) -> str:
@@ -537,6 +553,8 @@ def run_cli_agent(
         "tool_actions": 0,
         "tool_errors": 0,
         "skill_gate_blocks": 0,
+        "circuit_breaker_activations": 0,
+        "circuit_breaker_blocks": 0,
         "contract_verifications": 0,
         "forced_continue_count": 0,
         "skill_reads": 0,
@@ -570,6 +588,8 @@ def run_cli_agent(
 
     read_skill_refs: set[str] = set()
     run_events: list[dict[str, Any]] = []
+    circuit_breaker_active = False
+    circuit_breaker_verified = False
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
@@ -616,7 +636,16 @@ def run_cli_agent(
                             f"Required refs: {sorted(required_skill_refs)}"
                         )
                     )
+                elif circuit_breaker_active and _is_likely_mutating_sql(sql) and not circuit_breaker_verified:
+                    metrics["circuit_breaker_blocks"] += 1
+                    result = ToolResult(
+                        error=(
+                            "Circuit breaker active: call verify_contract before further mutating SQL. "
+                            "Read-only inspection queries are allowed."
+                        )
+                    )
                 else:
+                    mutating_sql = _is_likely_mutating_sql(sql)
                     exec_result = run_sqlite(
                         db_path=task_workspace.db_path,
                         sql=sql,
@@ -627,8 +656,18 @@ def run_cli_agent(
                     if exec_result.ok:
                         payload = exec_result.output or "(ok)"
                         result = ToolResult(output=_clip_text(payload))
+                        # Breaker exit condition: model verified contract after error, then made
+                        # one successful mutating repair query.
+                        if circuit_breaker_active and circuit_breaker_verified and mutating_sql:
+                            circuit_breaker_active = False
+                            circuit_breaker_verified = False
                     else:
                         result = ToolResult(error=exec_result.error)
+                        # First SQL error activates breaker; subsequent SQL errors keep it active.
+                        if not circuit_breaker_active:
+                            metrics["circuit_breaker_activations"] += 1
+                        circuit_breaker_active = True
+                        circuit_breaker_verified = False
             elif tool_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 skill_ref = tool_input.get("skill_ref")
@@ -660,6 +699,8 @@ def run_cli_agent(
                     db_path=task_workspace.db_path,
                     tasks_root=TASKS_ROOT,
                 ).to_dict()
+                if circuit_breaker_active:
+                    circuit_breaker_verified = True
                 result = ToolResult(output=json.dumps(current_eval, ensure_ascii=True))
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name!r}")

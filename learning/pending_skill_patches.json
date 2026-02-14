@@ -1,0 +1,115 @@
+[
+  {
+    "id": "1771006000-9805",
+    "created_at": "2026-02-13T18:06:40.244914+00:00",
+    "session_id": 9805,
+    "confidence": 0.8,
+    "evaluation": {
+      "applicable": true,
+      "passed": false,
+      "score": 0.75,
+      "reasons": [
+        "selector_zone_misclick"
+      ],
+      "clicks": [
+        {
+          "step": 5,
+          "x": 408,
+          "y": 150
+        },
+        {
+          "step": 6,
+          "x": 486,
+          "y": 150
+        },
+        {
+          "step": 7,
+          "x": 564,
+          "y": 150
+        },
+        {
+          "step": 8,
+          "x": 642,
+          "y": 150
+        }
+      ],
+      "zoom_count": 5,
+      "decisive_count": 5,
+      "contract_path": "skills/fl-studio/drum-pattern/CONTRACT.json"
+    },
+    "updates": [
+      {
+        "skill_ref": "fl-studio/drum-pattern",
+        "skill_digest": "1bf20210f47582e4f69649c27ae5b0e0f2b6544fab481fcce088ea305f8f245a",
+        "root_cause": "First step clicks entered selector strip instead of the step-button band.",
+        "evidence_steps": [
+          5,
+          6,
+          7,
+          8
+        ],
+        "replace_rules": [],
+        "append_bullets": [
+          "When clicking kick steps, avoid the selector strip near channel name; if Hint Bar shows Select/UpDown, move right and retry."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "1771010124-9810",
+    "created_at": "2026-02-13T19:15:24.039067+00:00",
+    "session_id": 9810,
+    "confidence": 0.8,
+    "evaluation": {
+      "applicable": true,
+      "passed": false,
+      "score": 0.5,
+      "reasons": [
+        "selector_zone_misclick",
+        "step_spacing_out_of_range"
+      ],
+      "clicks": [
+        {
+          "step": 5,
+          "x": 411,
+          "y": 150
+        },
+        {
+          "step": 9,
+          "x": 433,
+          "y": 150
+        },
+        {
+          "step": 11,
+          "x": 501,
+          "y": 150
+        },
+        {
+          "step": 12,
+          "x": 569,
+          "y": 150
+        }
+      ],
+      "zoom_count": 5,
+      "decisive_count": 6,
+      "contract_path": "skills/fl-studio/drum-pattern/CONTRACT.json"
+    },
+    "updates": [
+      {
+        "skill_ref": "fl-studio/drum-pattern",
+        "skill_digest": "1bf20210f47582e4f69649c27ae5b0e0f2b6544fab481fcce088ea305f8f245a",
+        "root_cause": "First step clicks entered selector strip instead of the step-button band.",
+        "evidence_steps": [
+          5,
+          9,
+          11,
+          12
+        ],
+        "replace_rules": [],
+        "append_bullets": [
+          "When clicking kick steps, avoid the selector strip near channel name; if Hint Bar shows Select/UpDown, move right and retry."
+        ]
+      }
+    ]
+  }
+]
