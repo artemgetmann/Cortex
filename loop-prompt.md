@@ -174,3 +174,19 @@ The key metric is delta between first 3 runs and last 3 runs.
 - Don't change the LLM judge logic (unless no meaningful improvements emerge)
 - Keep gridtool's actual behavior the same (correct syntax should always work)
 - `ANTHROPIC_API_KEY` must be set in `.env` to run experiments
+
+## Open Research Questions (from developer)
+
+1. **Cross-domain transferability**: Do the lessons transfer across domains? Can the same architecture work for FL Studio with computer use, learning over time like it does for gridtool?
+
+2. **Did we succeed?**: Per the success criteria in this document, we achieved: Score trajectory 0.25 → 0.25 → 1.00 → 0.25 → 0.50 → 1.00 → 1.00 → 0.50 → 1.00 → 1.00 (delta +0.75). Does this count as success? The curve is noisy but the trend is clear.
+
+3. **AGI-like generalization**: Are the learnings generalizable? Could you give this system a completely new domain (e.g., FL Studio via computer use) and have it figure things out over time?
+
+4. **Lesson scalability and pruning**: What happens as lessons accumulate? Currently max_lessons=8 and prune keeps max 20 per task. Is there a multi-step pruning mechanism? What about temporal decay — lessons from a month ago vs yesterday? Do old task lessons get foggy as new task lessons pile up?
+
+5. **Lesson retrieval intelligence**: How exactly are lessons retrieved? Is it intelligent semantic matching, pattern matching, or graph-based? Which lessons get loaded and which get dropped?
+
+6. **Cross-task regression**: If the agent learns task A really well, then switches to task B and accumulates lessons for that, does it slowly lose task A knowledge? Human brains work this way (skills decay without practice). Is there a mechanism to handle this?
+
+7. **Pruning roadmap**: Ideal multi-step pruning: Step 1 prunes after ~20 memories, Step 2 prunes after 1-2 months of staleness. What does the current system do vs what should it do?
