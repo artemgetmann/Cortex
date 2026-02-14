@@ -146,6 +146,7 @@ def load_relevant_lessons(
     task: str,
     max_lessons: int = 8,
     max_sessions: int = 5,
+    domain_keywords: re.Pattern[str] | None = None,
 ) -> tuple[str, int]:
     all_lessons = load_lessons(path)
     # Filter out known-incorrect lessons that would poison future runs
@@ -158,6 +159,9 @@ def load_relevant_lessons(
         score = _jaccard(task, lesson.task) + (0.6 * _jaccard(task, lesson.lesson))
         if lesson.task_id == task_id:
             score += 0.3
+        # Boost lessons with higher quality (specific syntax, error refs, etc.)
+        quality = _lesson_quality_score(lesson, domain_keywords=domain_keywords)
+        score += 0.2 * quality
         if score > 0:
             scored.append((score, lesson))
     scored.sort(key=lambda item: (item[0], item[1].timestamp), reverse=True)
@@ -175,13 +179,11 @@ def load_relevant_lessons(
     if not selected:
         return "No prior lessons loaded.", 0
 
-    lines = ["Lessons from previous sessions — apply these to avoid repeating past mistakes:"]
+    lines = [
+        "CRITICAL lessons from previous sessions — follow these rules to avoid wasting steps:",
+    ]
     for lesson in selected:
-        step_text = ",".join(str(step) for step in lesson.evidence_steps[:4]) if lesson.evidence_steps else "-"
-        lines.append(
-            f"- [{lesson.category}] {lesson.lesson} "
-            f"(task_id={lesson.task_id}, session={lesson.session_id}, score={lesson.eval_score:.2f}, steps={step_text})"
-        )
+        lines.append(f"- [{lesson.category}] {lesson.lesson}")
     return "\n".join(lines), len(selected)
 
 
@@ -314,7 +316,7 @@ def generate_lessons(
             f"- Good example for gridtool: 'TALLY groups with arrow syntax: TALLY col -> alias=func(agg_col), functions must be lowercase (sum, count, avg)'\n"
             f"- Good example: 'LOAD requires quoted path: LOAD \"file.csv\", KEEP/TOSS use word operators: eq, neq, gt, lt, gte, lte'\n"
             "- Bad: 'The agent completed the task successfully'\n"
-            "- 1 to 3 lessons total. Be concise.\n"
+            "- 2 to 5 lessons total. Extract EACH distinct syntax rule used.\n"
         )
     else:
         system = (
@@ -322,14 +324,17 @@ def generate_lessons(
             "Return STRICT JSON array only. Each item must match:\n"
             '{"category":"mistake|insight|shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
             "Rules:\n"
-            "- Each lesson MUST reference at least one of: exact command/code fragment, error message, step number, or column/table name.\n"
+            "- For each error in the events, extract the CORRECT syntax from the error hint.\n"
+            "- Each lesson MUST include: what went wrong + the correct syntax to use instead.\n"
             "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
             "- Focus on SPECIFIC syntax errors and their fixes.\n"
-            f"- Good for gridtool: 'TALLY requires arrow syntax with alias: TALLY col -> alias=func(agg_col), not GROUP BY. Error at step 3.'\n"
-            f"- Good: 'Functions must be lowercase: use sum() not SUM(). Error at step 4.'\n"
+            f"- Good for gridtool: 'TALLY requires arrow syntax: TALLY group_col -> alias=func(agg_col). The agent used GROUP BY instead.'\n"
+            f"- Good: 'LOAD path must be in double quotes: LOAD \"file.csv\". The agent wrote LOAD file.csv without quotes.'\n"
+            f"- Good: 'Functions are case-sensitive, must be lowercase: sum, count, avg, min, max. The agent used SUM.'\n"
             "- Bad: 'Always read the skill document before executing commands'\n"
+            "- Bad: 'TALLY only supports one aggregation' — this is WRONG, TALLY supports comma-separated multiple aggregations.\n"
             "- Base lessons only on provided events and deterministic eval.\n"
-            "- 1 to 4 lessons total.\n"
+            "- 2 to 5 lessons total.\n"
         )
     user = (
         f"TASK_ID:\n{task_id}\n\n"
@@ -358,7 +363,7 @@ def generate_lessons(
     parsed = _extract_json_array(raw)
     now = datetime.now(timezone.utc).isoformat()
     lessons: list[Lesson] = []
-    for item in parsed[:4]:
+    for item in parsed[:6]:
         if not isinstance(item, dict):
             continue
         category = str(item.get("category", "insight")).strip().lower()

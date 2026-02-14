@@ -301,18 +301,23 @@ def run_cli_agent(
         routed_entries: list[SkillManifestEntry] = []
         routed_refs: list[str] = []
         required_skill_refs: set[str] = set()
-        skills_text = "(bootstrap mode — no skill docs available. Learn from trial, error messages, and prior lessons.)"
+        skills_text = (
+            "(bootstrap mode — no skill docs available, ignore any task instructions about reading skills. "
+            "Learn from trial, error messages, and prior lessons below.)"
+        )
     else:
         routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
         routed_refs = [entry.skill_ref for entry in routed_entries]
         required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
         skills_text = manifest_summaries_text(routed_entries)
+    domain_keywords = adapter.quality_keywords()
     lessons_text, lessons_loaded = load_relevant_lessons(
         path=LESSONS_PATH,
         task_id=task_id,
         task=task_text,
         max_lessons=12,
         max_sessions=8,
+        domain_keywords=domain_keywords,
     )
 
     domain_fragment = adapter.system_prompt_fragment()
