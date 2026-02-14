@@ -3,7 +3,7 @@
     "confidence": 0.7,
     "description": "Complete reference for the gridtool data processing CLI",
     "last_updated": "2026-02-14T00:47:19.552102+00:00",
-    "path": "tracks/cli_sqlite/skills/gridtool/basics/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/gridtool/basics/SKILL.md",
     "skill_ref": "gridtool/basics",
     "title": "gridtool-basics",
     "version": 1
@@ -12,7 +12,7 @@
     "confidence": 0.7,
     "description": "Baseline SQL workflow for deterministic sqlite3 CLI tasks.",
     "last_updated": "2026-02-13T20:34:41.761451+00:00",
-    "path": "tracks/cli_sqlite/skills/sqlite/basics/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/sqlite/basics/SKILL.md",
     "skill_ref": "sqlite/basics",
     "title": "sqlite-basics",
     "version": 1
@@ -21,7 +21,7 @@
     "confidence": 0.7,
     "description": "Idempotent import pattern using ON CONFLICT for duplicate-safe ingestion.",
     "last_updated": "2026-02-13T20:34:57.325027+00:00",
-    "path": "tracks/cli_sqlite/skills/sqlite/idempotent-rerun/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/sqlite/idempotent-rerun/SKILL.md",
     "skill_ref": "sqlite/idempotent-rerun",
     "title": "sqlite-idempotent-rerun",
     "version": 1
@@ -30,7 +30,7 @@
     "confidence": 0.7,
     "description": "Procedure for importing fixture rows and computing grouped totals.",
     "last_updated": "2026-02-13T20:34:46.830908+00:00",
-    "path": "tracks/cli_sqlite/skills/sqlite/import-aggregate/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/sqlite/import-aggregate/SKILL.md",
     "skill_ref": "sqlite/import-aggregate",
     "title": "sqlite-import-aggregate",
     "version": 1
@@ -39,7 +39,7 @@
     "confidence": 0.7,
     "description": "Stateful ingest workflow with dedupe, rejects, and checkpoint logging.",
     "last_updated": "2026-02-13T20:34:51.746194+00:00",
-    "path": "tracks/cli_sqlite/skills/sqlite/incremental-reconcile/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/sqlite/incremental-reconcile/SKILL.md",
     "skill_ref": "sqlite/incremental-reconcile",
     "title": "sqlite-incremental-reconcile",
     "version": 1
@@ -48,7 +48,7 @@
     "confidence": 0.7,
     "description": "Handle bad data rows by routing errors to error_log while importing valid rows.",
     "last_updated": "2026-02-13T20:35:03.111816+00:00",
-    "path": "tracks/cli_sqlite/skills/sqlite/partial-failure-recovery/SKILL.md",
+    "path": "/Users/user/Programming_Projects/Cortex/.worktrees/cli-learning-lab/tracks/cli_sqlite/skills/sqlite/partial-failure-recovery/SKILL.md",
     "skill_ref": "sqlite/partial-failure-recovery",
     "title": "sqlite-partial-failure-recovery",
     "version": 1

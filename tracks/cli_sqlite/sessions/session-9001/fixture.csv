@@ -1,0 +1,11 @@
+region,product,amount,quantity
+North,Alpha,1200,5
+South,Beta,800,3
+North,Beta,950,4
+East,Alpha,1100,6
+South,Alpha,1500,7
+East,Gamma,600,2
+North,Gamma,750,3
+South,Gamma,900,4
+East,Beta,1050,5
+North,Alpha,1300,6
