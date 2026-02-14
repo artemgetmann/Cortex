@@ -233,8 +233,22 @@ def _lesson_quality_score(lesson: Lesson, *, domain_keywords: re.Pattern[str] | 
     return min(score, 1.0)
 
 
+_KNOWN_WRONG_PATTERNS = re.compile(
+    r"(?i)("
+    r"TALLY.*(?:only one|single|does not support multiple) aggregat|"
+    r"cannot.*multiple aggregat|"
+    r"read_skill.*(?:failed|unknown|not (?:found|available|valid|have))|"
+    r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))"
+    r")"
+)
+
+
 def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15, domain_keywords: re.Pattern[str] | None = None) -> list[Lesson]:
-    return [lesson for lesson in lessons if _lesson_quality_score(lesson, domain_keywords=domain_keywords) >= min_quality]
+    return [
+        lesson for lesson in lessons
+        if _lesson_quality_score(lesson, domain_keywords=domain_keywords) >= min_quality
+        and not _KNOWN_WRONG_PATTERNS.search(lesson.lesson)
+    ]
 
 
 def prune_lessons(path: Path, *, max_per_task: int = 20, domain_keywords: re.Pattern[str] | None = None) -> int:
