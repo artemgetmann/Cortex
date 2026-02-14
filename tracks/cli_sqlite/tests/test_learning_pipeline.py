@@ -412,6 +412,71 @@ def test_load_lesson_objects():
         assert not any("does not use arrow" in o.lesson for o in objs)
 
 
+def test_cross_task_lesson_loading():
+    """Section 10: load_lesson_objects includes cross-task lessons for error hints."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lessons_path = Path(tmpdir) / "lessons.jsonl"
+
+        # Store lessons with task_id=aggregate_report
+        store_lessons(path=lessons_path, lessons=[
+            _make_lesson('LOAD requires quoted path: LOAD "file.csv".', session_id=9501),
+            _make_lesson("RANK syntax: RANK col desc for descending order.", session_id=9501, category="shortcut"),
+        ])
+
+        # Load for a different task — should still get the aggregate_report lessons
+        objs = load_lesson_objects(path=lessons_path, task_id="basic_transform")
+        assert len(objs) == 2, f"Expected 2 cross-task lessons, got {len(objs)}"
+        assert any("LOAD" in o.lesson for o in objs)
+        assert any("RANK" in o.lesson for o in objs)
+
+
+def test_pick_number_error():
+    """Section 11: PICK with a number gives a helpful error pointing to SHOW N."""
+    # PICK 5 (number) — should error about using SHOW instead
+    ec, out, err = _run_gridtool('LOAD "fixture.csv"\nPICK 5')
+    assert ec == 1
+    assert "PICK selects columns by name" in err
+    assert "SHOW" in err
+
+    # PICK HEAD — should also trigger the row-limit error
+    ec, out, err = _run_gridtool('LOAD "fixture.csv"\nPICK HEAD')
+    assert ec == 1
+    assert "PICK selects columns by name" in err
+
+    # Semi-helpful mode: hints without giving full answer
+    ec, out, err = _run_gridtool('LOAD "fixture.csv"\nPICK 5', semi_helpful=True)
+    assert ec == 1
+    assert "PICK selects columns" in err
+    assert "different command" in err
+
+    # Valid PICK (columns by name) still works
+    ec, out, err = _run_gridtool('LOAD "fixture.csv"\nPICK region, amount\nSHOW')
+    assert ec == 0
+    assert "region" in out and "amount" in out
+
+
+def test_known_wrong_head_pick_lessons():
+    """Section 12: Lessons suggesting HEAD or PICK N are filtered out."""
+    head_lessons = [
+        "Use HEAD 5 to get the top 5 rows.",
+        "PICK :5 to select first 5 rows.",
+        "PICK HEAD 5 for limiting output rows.",
+        "Try HEAD command to limit rows.",
+        "Correct syntax: use HEAD N after RANK.",
+    ]
+    for text in head_lessons:
+        assert _KNOWN_WRONG_PATTERNS.search(text), f"Should be blocked: {text}"
+
+    # Good lessons about PICK and SHOW should NOT be blocked
+    good_lessons = [
+        "PICK selects columns by name: PICK name, price, stock",
+        "SHOW 5 limits output to first 5 rows.",
+        "SHOW displays all results, SHOW N shows first N rows.",
+    ]
+    for text in good_lessons:
+        assert not _KNOWN_WRONG_PATTERNS.search(text), f"Should NOT be blocked: {text}"
+
+
 # ── Script-mode runner ───────────────────────────────────────
 
 def _run_all_as_script():

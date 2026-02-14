@@ -122,6 +122,7 @@ _CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
     re.compile(r"Unknown command '(\w+)'\..*"): r"Unknown command '\1'.",
     re.compile(r"LOAD path must be quoted\..*"): "LOAD: invalid argument.",
     re.compile(r"MERGE path must be quoted\..*"): "MERGE: invalid argument.",
+    re.compile(r"PICK selects columns.*"): "PICK: invalid argument.",
     re.compile(r"SHOW takes an optional.*"): "SHOW: invalid argument.",
     re.compile(r"File not found:.*"): "File not found.",
 }
@@ -159,6 +160,9 @@ _SEMI_HELPFUL_OVERRIDES: dict[re.Pattern[str], str] = {
     re.compile(r"Unknown command '(\w+)'\. Did you mean '(\w+)'\?"):
         r"Unknown command '\1'. This is not SQL — gridtool has its own command names.",
     re.compile(r"Unknown command '(\w+)'\..*"): r"Unknown command '\1'. This is not SQL — gridtool has its own command names.",
+    # PICK: hint that PICK is for columns, SHOW for row limits
+    re.compile(r"PICK selects columns.*"):
+        "PICK selects columns by name, not row counts. To limit rows, use a different command with a number.",
     # SHOW
     re.compile(r"SHOW takes an optional.*"): "SHOW: optional argument must be a number (row limit).",
     # File not found: keep path but strip resolved path
@@ -332,6 +336,12 @@ def cmd_pick(args: str, rows, lineno: int):
     if not rows:
         _fail(lineno, "PICK requires data. Use LOAD first.")
     cols = [c.strip() for c in args.split(",")]
+    # Detect common mistake: using PICK for row limits instead of column selection
+    for c in cols:
+        stripped = c.lstrip(":").strip()
+        if stripped.isdigit() or stripped.upper() in ("HEAD", "LIMIT", "TOP"):
+            _fail(lineno, f"PICK selects columns by name, not row counts. "
+                  f"To limit output rows, use SHOW N (e.g., SHOW 5).")
     for c in cols:
         _check_col(c, rows, lineno)
     return [{c: r[c] for c in cols} for r in rows]

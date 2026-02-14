@@ -246,7 +246,11 @@ _KNOWN_WRONG_PATTERNS = re.compile(
     r"count\s*\(\s*\*\s*\)|"
     r"COUNT\s*\(\s*\*\s*\)|"
     r"read_skill.*(?:failed|unknown|not (?:found|available|valid|have))|"
-    r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))"
+    r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))|"
+    # PICK is for columns only; HEAD/LIMIT are not gridtool commands
+    r"PICK\s*(?::?\d|HEAD|head|LIMIT|limit)|"
+    r"\bHEAD\s+\d|"
+    r"(?:use|try|correct).{0,20}\bHEAD\b"
     r")"
 )
 
@@ -261,13 +265,12 @@ def load_lesson_objects(
 
     Returns the actual Lesson objects (not formatted text) so the agent loop
     can match them against runtime errors and inject relevant hints.
+    Includes cross-task lessons since error patterns (quoting, case sensitivity)
+    are domain-level, not task-specific.
     """
     all_lessons = load_lessons(path)
     all_lessons = [l for l in all_lessons if not _KNOWN_WRONG_PATTERNS.search(l.lesson)]
-    if not all_lessons:
-        return []
-    # Filter to task-relevant lessons
-    return [l for l in all_lessons if l.task_id == task_id or not l.task_id]
+    return all_lessons
 
 
 # Map gridtool command names to regex patterns that match errors about those commands
