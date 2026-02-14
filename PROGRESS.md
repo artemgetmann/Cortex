@@ -26,12 +26,17 @@
 - The system never showed a learning curve — either works immediately or never works
 
 ## What Changed (Code)
-1. **gridtool.py**: New `SEMI_HELPFUL_MODE` + `_SEMI_HELPFUL_OVERRIDES` dict — hints at fix category without full syntax
-2. **learning_cli.py**: `generate_lessons()` no longer short-circuits on success — creates "what worked" lessons
-3. **learning_cli.py**: `_lesson_quality_score()` increased domain keyword weight, added syntax-pattern bonus
-4. **agent_cli.py**: `max_lessons` 8->12, `max_sessions` 5->8, new `semi_helpful_errors` param
-5. **gridtool_adapter.py**: Passes `--semi-helpful` flag to gridtool subprocess
-6. **run_learning_curve.py** + **run_cli_agent.py**: New `--semi-helpful-errors` CLI flag
+1. **gridtool.py**: New `SEMI_HELPFUL_MODE` + `_SEMI_HELPFUL_OVERRIDES` dict — hints at fix category without full syntax. Also added distinct "missing alias" error for TALLY.
+2. **learning_cli.py**: `generate_lessons()` no longer short-circuits on success — creates "what worked" lessons with gridtool-specific critic prompts
+3. **learning_cli.py**: `_lesson_quality_score()` increased domain keyword weight (0.15→0.2), added syntax-pattern bonus for quotes/arrows/function-calls
+4. **learning_cli.py**: Added `_KNOWN_WRONG_PATTERNS` filter to reject poisonous lessons (e.g., "TALLY only supports one aggregation" which is FALSE, or `read_skill` noise from bootstrap mode)
+5. **learning_cli.py**: `load_relevant_lessons()` now also filters known-wrong lessons at load time (defense in depth)
+6. **agent_cli.py**: `max_lessons` 8→12, `max_sessions` 5→8, new `semi_helpful_errors` param
+7. **gridtool_adapter.py**: Passes `--semi-helpful` flag to gridtool subprocess
+8. **run_learning_curve.py** + **run_cli_agent.py**: New `--semi-helpful-errors` CLI flag
+
+## Key Discovery: Poisonous Lessons
+Analyzed historical lessons from bak2 file — found that the critic was generating **factually incorrect lessons** like "TALLY supports only one aggregation per call" (TALLY actually supports comma-separated multiple aggregations). These wrong lessons actively hurt performance when loaded into future runs. Added a regex-based filter to catch and reject known-incorrect claims.
 
 ## Blocked
 - **No ANTHROPIC_API_KEY** in .env — can't run the actual experiment
@@ -51,6 +56,7 @@
    ```
 5. If no learning curve appears, try `--max-steps 4` (even tighter budget)
 6. If semi-helpful errors are too easy (agent passes run 1), make hints more vague
+7. If learning curve appears but lessons plateau, increase `max_lessons` further
 
 ## Decisions Made
 - Combined approaches A+B+C — they address orthogonal failure modes
@@ -58,3 +64,5 @@
 - Success lessons use categories `shortcut` and `domain_detail` (not `mistake`)
 - Quality filter bonus for syntax-containing lessons (quotes, arrows, function calls)
 - Kept max_lessons=12 to ensure enough room for both positive and negative lessons
+- Added known-wrong lesson filter as critical safeguard against lesson poisoning
+- max-steps=6 chosen: requires 4 commands minimum, leaving only ~2 error-correction attempts
