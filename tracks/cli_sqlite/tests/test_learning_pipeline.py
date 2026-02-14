@@ -28,6 +28,8 @@ from tracks.cli_sqlite.learning_cli import (
     _KNOWN_WRONG_PATTERNS,
     _lesson_quality_score,
     filter_lessons,
+    find_lessons_for_error,
+    load_lesson_objects,
     load_lessons,
     load_relevant_lessons,
     store_lessons,
@@ -123,6 +125,13 @@ def test_gridtool_error_modes():
     _, _, err_s = _run_gridtool('LOAD "fixture.csv"\nGROUP BY region', semi_helpful=True)
     assert 'not SQL' in err_s
 
+    # Wildcard count(*) — gridtool requires actual column names
+    _, _, err_s = _run_gridtool('LOAD "fixture.csv"\nTALLY region -> cnt=count(*)', semi_helpful=True)
+    assert "wildcard" in err_s.lower() or "column name" in err_s.lower(), f"count(*) should hint at column name, got: {err_s}"
+
+    _, _, err_c = _run_gridtool('LOAD "fixture.csv"\nTALLY region -> cnt=count(*)', cryptic=True)
+    assert "invalid argument" in err_c.lower() or "syntax error" in err_c.lower(), f"Cryptic mode should be opaque, got: {err_c}"
+
 
 def test_lesson_quality_filter():
     """Section 2: Good gridtool lessons pass, generic advice rejected."""
@@ -163,12 +172,16 @@ def test_known_wrong_patterns():
         "TALLY does not need -> operator.",
         "read_skill failed with unknown ref 'gridtool'",
         "skill_ref 'aggregate' not found — try looking up available skills",
+        "TALLY region -> total=SUM(amount), cnt=COUNT(*)",
+        "Use count(*) to count rows in TALLY aggregation.",
+        "transaction_count=count(*)",
     ]
     not_poisonous = [
         "TALLY requires arrow syntax: TALLY col -> alias=func(agg_col)",
         "Use comma-separated aggregations: TALLY col -> a=sum(x), b=count(y)",
         "Functions must be lowercase in TALLY: sum, count, avg, min, max",
         'LOAD requires double-quoted path: LOAD "file.csv"',
+        "count() requires an actual column name like count(region), not a wildcard.",
     ]
     for text in poisonous:
         assert _KNOWN_WRONG_PATTERNS.search(text), f"Should be blocked: {text[:70]}"
@@ -333,6 +346,70 @@ def test_capture_final_state():
         state = adapter.capture_final_state(workspace)
         assert "North,4200.0,4" in state
         assert "invalid argument" not in state
+
+
+def test_error_triggered_lesson_injection():
+    """Section 8: find_lessons_for_error matches errors to relevant lessons."""
+    lessons = [
+        _make_lesson('LOAD requires double-quoted path: LOAD "file.csv". Error at step 1.', category="mistake"),
+        _make_lesson("TALLY uses arrow syntax: TALLY group_col -> alias=func(agg_col). Error at step 2.", category="domain_detail"),
+        _make_lesson("Functions must be lowercase: sum, count, avg, min, max. Error at step 3.", category="mistake"),
+        _make_lesson("RANK syntax: RANK col asc|desc. Error at step 4.", category="shortcut"),
+        _make_lesson("Multiple TALLY aggregations separated by commas: TALLY col -> a=sum(x), b=count(y).", category="domain_detail"),
+    ]
+
+    # LOAD error should match LOAD lesson
+    hints = find_lessons_for_error("ERROR at line 1: LOAD: argument must be quoted.", lessons)
+    assert len(hints) >= 1, f"Expected LOAD hints, got {hints}"
+    assert any("LOAD" in h and "quot" in h.lower() for h in hints), f"LOAD hint should mention quoting: {hints}"
+
+    # TALLY error should match TALLY lessons (arrow + multiple aggs)
+    hints = find_lessons_for_error("ERROR at line 2: TALLY: expected arrow operator '->'.", lessons)
+    assert len(hints) >= 1, f"Expected TALLY hints, got {hints}"
+    assert any("TALLY" in h and "->" in h for h in hints), f"TALLY hint should mention arrow: {hints}"
+
+    # Case sensitivity error should match lowercase lesson
+    hints = find_lessons_for_error("ERROR at line 2: Unknown function 'SUM'. Functions are case-sensitive.", lessons)
+    assert len(hints) >= 1, f"Expected case-sensitivity hints, got {hints}"
+    assert any("lowercase" in h.lower() for h in hints), f"Hint should mention lowercase: {hints}"
+
+    # RANK error should match RANK lesson
+    hints = find_lessons_for_error("ERROR at line 3: RANK: unknown column 'total'.", lessons)
+    assert len(hints) >= 1, f"Expected RANK hints, got {hints}"
+    assert any("RANK" in h for h in hints), f"RANK hint should mention RANK: {hints}"
+
+    # Empty error or no lessons should return empty
+    assert find_lessons_for_error("", lessons) == []
+    assert find_lessons_for_error("some error", []) == []
+
+    # Unrelated error (no matching command) should return empty
+    hints = find_lessons_for_error("Connection timeout after 5s.", lessons)
+    assert len(hints) == 0, f"Expected no hints for unrelated error, got {hints}"
+
+    # max_hints respected
+    hints = find_lessons_for_error("ERROR: TALLY syntax error", lessons, max_hints=1)
+    assert len(hints) <= 1, f"Expected max 1 hint, got {len(hints)}"
+
+
+def test_load_lesson_objects():
+    """Section 9: load_lesson_objects returns filtered Lesson objects."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lessons_path = Path(tmpdir) / "lessons.jsonl"
+
+        store_lessons(path=lessons_path, lessons=[
+            _make_lesson('LOAD requires quoted path: LOAD "file.csv". Error at step 1.', session_id=9501),
+            _make_lesson("TALLY arrow syntax: TALLY col -> alias=func(agg_col). Error at step 2.", session_id=9501),
+        ])
+
+        # Write a poisonous lesson directly (bypass filter)
+        poisonous = _make_lesson("TALLY does not use arrow operator.", session_id=9502)
+        with lessons_path.open("a") as f:
+            f.write(json.dumps(poisonous.to_dict()) + "\n")
+
+        objs = load_lesson_objects(path=lessons_path, task_id="aggregate_report")
+        assert len(objs) == 2, f"Expected 2 (poisonous filtered), got {len(objs)}"
+        assert all(isinstance(o, Lesson) for o in objs)
+        assert not any("does not use arrow" in o.lesson for o in objs)
 
 
 # ── Script-mode runner ───────────────────────────────────────

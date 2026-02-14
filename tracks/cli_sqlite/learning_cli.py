@@ -243,10 +243,100 @@ _KNOWN_WRONG_PATTERNS = re.compile(
     r"cannot.*multiple aggregat|"
     r"TALLY.*(?:does not|doesn.t|not) use.*arrow|"
     r"TALLY.*(?:does not|doesn.t|not) (?:need|require|use).*->|"
+    r"count\s*\(\s*\*\s*\)|"
+    r"COUNT\s*\(\s*\*\s*\)|"
     r"read_skill.*(?:failed|unknown|not (?:found|available|valid|have))|"
     r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))"
     r")"
 )
+
+
+def load_lesson_objects(
+    *,
+    path: Path,
+    task_id: str,
+    domain_keywords: re.Pattern[str] | None = None,
+) -> list[Lesson]:
+    """Load filtered lesson objects for error-triggered injection.
+
+    Returns the actual Lesson objects (not formatted text) so the agent loop
+    can match them against runtime errors and inject relevant hints.
+    """
+    all_lessons = load_lessons(path)
+    all_lessons = [l for l in all_lessons if not _KNOWN_WRONG_PATTERNS.search(l.lesson)]
+    if not all_lessons:
+        return []
+    # Filter to task-relevant lessons
+    return [l for l in all_lessons if l.task_id == task_id or not l.task_id]
+
+
+# Map gridtool command names to regex patterns that match errors about those commands
+_ERROR_COMMAND_PATTERNS: dict[str, re.Pattern[str]] = {
+    "LOAD": re.compile(r"(?i)\bLOAD\b"),
+    "TALLY": re.compile(r"(?i)\bTALLY\b"),
+    "KEEP": re.compile(r"(?i)\bKEEP\b"),
+    "TOSS": re.compile(r"(?i)\bTOSS\b"),
+    "RANK": re.compile(r"(?i)\bRANK\b"),
+    "PICK": re.compile(r"(?i)\bPICK\b"),
+    "DERIVE": re.compile(r"(?i)\bDERIVE\b"),
+    "MERGE": re.compile(r"(?i)\bMERGE\b"),
+    "SHOW": re.compile(r"(?i)\bSHOW\b"),
+}
+
+
+def find_lessons_for_error(
+    error_text: str,
+    lessons: list[Lesson],
+    *,
+    max_hints: int = 3,
+) -> list[str]:
+    """Find lessons relevant to a specific error message.
+
+    Matches the error text against lesson text to find command-specific hints.
+    Returns formatted hint strings ready to append to tool_result.
+    """
+    if not error_text or not lessons:
+        return []
+
+    # Identify which commands the error mentions
+    error_commands: set[str] = set()
+    for cmd, pattern in _ERROR_COMMAND_PATTERNS.items():
+        if pattern.search(error_text):
+            error_commands.add(cmd)
+
+    # Also check for generic error patterns (case sensitivity, quoting, etc.)
+    has_case_error = bool(re.search(r"(?i)case.?sensitive|unknown function|unknown command", error_text))
+    has_quote_error = bool(re.search(r"(?i)quot|must be quoted|argument must be", error_text))
+    has_syntax_error = bool(re.search(r"(?i)syntax|expected|format", error_text))
+
+    matched: list[tuple[float, str]] = []
+    for lesson in lessons:
+        score = 0.0
+        text = lesson.lesson
+
+        # Command-specific matching: lesson mentions same command as error
+        lesson_commands: set[str] = set()
+        for cmd, pattern in _ERROR_COMMAND_PATTERNS.items():
+            if pattern.search(text):
+                lesson_commands.add(cmd)
+
+        overlap = error_commands & lesson_commands
+        if overlap:
+            score += 1.0 * len(overlap)
+
+        # Generic error type matching
+        if has_case_error and re.search(r"(?i)case.?sensitive|lowercase|uppercase", text):
+            score += 0.5
+        if has_quote_error and re.search(r'(?i)quot|".*"', text):
+            score += 0.5
+        if has_syntax_error and re.search(r"(?i)syntax|->|arrow|format", text):
+            score += 0.5
+
+        if score > 0:
+            matched.append((score, text))
+
+    matched.sort(key=lambda x: x[0], reverse=True)
+    return [text for _, text in matched[:max_hints]]
 
 
 def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15, domain_keywords: re.Pattern[str] | None = None) -> list[Lesson]:
@@ -318,6 +408,8 @@ def generate_lessons(
             f"- Good example for gridtool: 'TALLY groups with arrow syntax: TALLY col -> alias=func(agg_col), functions must be lowercase (sum, count, avg)'\n"
             f"- Good example: 'LOAD requires quoted path: LOAD \"file.csv\", KEEP/TOSS use word operators: eq, neq, gt, lt, gte, lte'\n"
             "- Bad: 'The agent completed the task successfully'\n"
+            "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
+            "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
             "- 2 to 5 lessons total. Extract EACH distinct syntax rule used.\n"
         )
     else:
@@ -335,6 +427,8 @@ def generate_lessons(
             f"- Good: 'Functions are case-sensitive, must be lowercase: sum, count, avg, min, max. The agent used SUM.'\n"
             "- Bad: 'Always read the skill document before executing commands'\n"
             "- Bad: 'TALLY only supports one aggregation' — this is WRONG, TALLY supports comma-separated multiple aggregations.\n"
+            "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
+            "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
             "- Base lessons only on provided events and deterministic eval.\n"
             "- 2 to 5 lessons total.\n"
         )

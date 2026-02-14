@@ -13,7 +13,14 @@ from config import CortexConfig
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
-from tracks.cli_sqlite.learning_cli import generate_lessons, load_relevant_lessons, prune_lessons, store_lessons
+from tracks.cli_sqlite.learning_cli import (
+    find_lessons_for_error,
+    generate_lessons,
+    load_lesson_objects,
+    load_relevant_lessons,
+    prune_lessons,
+    store_lessons,
+)
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
@@ -325,6 +332,12 @@ def run_cli_agent(
         max_sessions=8,
         domain_keywords=domain_keywords,
     )
+    # Load lesson objects for error-triggered injection during the run
+    loaded_lesson_objects = load_lesson_objects(
+        path=LESSONS_PATH,
+        task_id=task_id,
+        domain_keywords=domain_keywords,
+    )
 
     domain_fragment = adapter.system_prompt_fragment()
     if bootstrap:
@@ -386,6 +399,7 @@ def run_cli_agent(
         "required_skill_refs": sorted(required_skill_refs),
         "require_skill_read": require_skill_read,
         "lessons_loaded": lessons_loaded,
+        "lesson_activations": 0,
         "lessons_generated": 0,
         "posttask_patch_attempted": False,
         "posttask_candidates_queued": 0,
@@ -497,6 +511,16 @@ def run_cli_agent(
                         result = ToolResult(output=_clip_text(result.output or "(ok)"))
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
+
+            # Error-triggered lesson injection: when executor fails, check if
+            # any loaded lessons match the error and append hints to help the
+            # agent self-correct on the next step (same run, not next session).
+            if result.is_error() and canonical_name == executor_tool_name and loaded_lesson_objects:
+                hints = find_lessons_for_error(result.error or "", loaded_lesson_objects)
+                if hints:
+                    hint_block = "\n\n--- HINT from prior sessions ---\n" + "\n".join(f"- {h}" for h in hints)
+                    result = ToolResult(error=(result.error or "") + hint_block)
+                    metrics["lesson_activations"] += len(hints)
 
             if result.is_error():
                 metrics["tool_errors"] += 1
