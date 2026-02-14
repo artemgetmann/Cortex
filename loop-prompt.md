@@ -4,6 +4,8 @@
 
 You are running autonomously while the developer is away. No one will answer questions. If you need input, **make your best judgment, document it in PROGRESS.md, and keep going.**
 
+**FIRST THING YOU DO:** Check if `PROGRESS.md` exists in this directory. If it does, read it — a previous run already made progress. Pick up where it left off. Do NOT redo completed work. If it doesn't exist, create it and start from scratch.
+
 ## Rules
 
 ### Safety
