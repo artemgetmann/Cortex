@@ -140,9 +140,10 @@ def propose_skill_updates(
     routed_skill_refs: list[str],
     read_skill_refs: list[str],
     skill_snapshots: list[str],
+    domain_name: str = "sqlite",
 ) -> tuple[list[SkillUpdate], float, str]:
     system = (
-        "You are PostTaskHook for SQL skill maintenance.\n"
+        f"You are PostTaskHook for {domain_name} skill maintenance.\n"
         "Return STRICT JSON only:\n"
         "{\n"
         '  "confidence": 0.0,\n'

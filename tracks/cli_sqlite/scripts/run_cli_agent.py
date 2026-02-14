@@ -21,8 +21,12 @@ def main() -> int:
     ap.add_argument("--task", default="")
     ap.add_argument("--session", required=True, type=int)
     ap.add_argument("--max-steps", type=int, default=12)
+    ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool"],
+                     help="Domain adapter to use (default: sqlite)")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
+    ap.add_argument("--model-judge", default=None,
+                     help="Model for LLM judge (default: one tier above executor)")
     ap.add_argument("--auto-escalate-critic", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--escalation-score-threshold", type=float, default=0.75)
     ap.add_argument("--escalation-consecutive-runs", type=int, default=2)
@@ -40,8 +44,10 @@ def main() -> int:
         task=args.task or None,
         session_id=args.session,
         max_steps=args.max_steps,
+        domain=args.domain,
         model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
         model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
+        model_judge=args.model_judge.strip() if args.model_judge else None,
         posttask_mode=args.posttask_mode,
         posttask_learn=not args.no_posttask_learn,
         verbose=args.verbose,

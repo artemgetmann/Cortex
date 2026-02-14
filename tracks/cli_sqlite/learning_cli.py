@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail"}
+ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail", "domain_detail"}
 
 
 def _tokenize(text: str) -> set[str]:
@@ -213,13 +213,14 @@ _STEP_REFERENCE = re.compile(r"(?i)\b(?:step\s*\d+|at step|steps?\s*[\d,]+)\b")
 _ERROR_REFERENCE = re.compile(r"(?i)(?:error|exception|failed|missing|duplicate|mismatch|constraint|violation)")
 
 
-def _lesson_quality_score(lesson: Lesson) -> float:
+def _lesson_quality_score(lesson: Lesson, *, domain_keywords: re.Pattern[str] | None = None) -> float:
     text = lesson.lesson
     if _GENERIC_PATTERNS.search(text):
         return 0.0
     score = 0.0
-    sql_matches = len(_SQL_KEYWORDS.findall(text))
-    score += min(sql_matches * 0.15, 0.45)
+    keywords = domain_keywords or _SQL_KEYWORDS
+    kw_matches = len(keywords.findall(text))
+    score += min(kw_matches * 0.15, 0.45)
     if _STEP_REFERENCE.search(text):
         score += 0.2
     if _ERROR_REFERENCE.search(text):
@@ -229,11 +230,11 @@ def _lesson_quality_score(lesson: Lesson) -> float:
     return min(score, 1.0)
 
 
-def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15) -> list[Lesson]:
-    return [lesson for lesson in lessons if _lesson_quality_score(lesson) >= min_quality]
+def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15, domain_keywords: re.Pattern[str] | None = None) -> list[Lesson]:
+    return [lesson for lesson in lessons if _lesson_quality_score(lesson, domain_keywords=domain_keywords) >= min_quality]
 
 
-def prune_lessons(path: Path, *, max_per_task: int = 20) -> int:
+def prune_lessons(path: Path, *, max_per_task: int = 20, domain_keywords: re.Pattern[str] | None = None) -> int:
     all_lessons = load_lessons(path)
     if not all_lessons:
         return 0
@@ -247,7 +248,7 @@ def prune_lessons(path: Path, *, max_per_task: int = 20) -> int:
         if len(task_lessons) <= max_per_task:
             kept.extend(task_lessons)
         else:
-            scored = sorted(task_lessons, key=_lesson_quality_score, reverse=True)
+            scored = sorted(task_lessons, key=lambda l: _lesson_quality_score(l, domain_keywords=domain_keywords), reverse=True)
             kept.extend(scored[:max_per_task])
             pruned = True
 
@@ -271,6 +272,8 @@ def generate_lessons(
     eval_result: dict[str, Any],
     events_tail: list[dict[str, Any]],
     skill_refs_used: list[str],
+    domain_name: str = "sqlite",
+    domain_keywords: re.Pattern[str] | None = None,
 ) -> list[Lesson]:
     passed = bool(eval_result.get("passed", False))
     try:
@@ -281,14 +284,14 @@ def generate_lessons(
         return []
 
     system = (
-        "You are a post-run SQL learning critic.\n"
+        f"You are a post-run {domain_name} learning critic.\n"
         "Return STRICT JSON array only. Each item must match:\n"
-        '{"category":"mistake|insight|shortcut|sql_detail","lesson":"...","evidence_steps":[1,2]}\n'
+        '{"category":"mistake|insight|shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
         "Rules:\n"
-        "- Each lesson MUST reference at least one of: exact SQL fragment, error message, step number, or column/table name.\n"
-        "- REJECT generic advice like 'always read the skill', 'be careful with SQL', 'remember to check'.\n"
+        "- Each lesson MUST reference at least one of: exact command/code fragment, error message, step number, or column/table name.\n"
+        "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
         "- Good: 'INSERT INTO ledger missed ON CONFLICT for event_id causing duplicate at step 4'\n"
-        "- Bad: 'Always read the skill document before executing SQL'\n"
+        "- Bad: 'Always read the skill document before executing commands'\n"
         "- Base lessons only on provided events and deterministic eval.\n"
         "- 1 to 4 lessons total.\n"
     )
@@ -344,4 +347,4 @@ def generate_lessons(
                 timestamp=now,
             )
         )
-    return filter_lessons(lessons)
+    return filter_lessons(lessons, domain_keywords=domain_keywords)

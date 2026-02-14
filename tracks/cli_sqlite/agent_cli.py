@@ -9,8 +9,9 @@ from typing import Any
 import anthropic
 
 from config import CortexConfig
+from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
-from tracks.cli_sqlite.executor import TaskWorkspace, prepare_task_workspace, run_sqlite, show_fixture_text
+from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.learning_cli import generate_lessons, load_relevant_lessons, prune_lessons, store_lessons
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.self_improve_cli import (
@@ -22,7 +23,6 @@ from tracks.cli_sqlite.self_improve_cli import (
     queue_skill_update_candidates,
     skill_digest,
 )
-from tracks.cli_sqlite.tool_aliases import build_alias_map, get_tool_api_name, get_tool_description
 from tracks.cli_sqlite.skill_routing_cli import (
     SkillManifestEntry,
     build_skill_manifest,
@@ -49,16 +49,6 @@ SONNET_MODEL = "claude-sonnet-4-5"
 OPUS_MODEL = "claude-opus-4-6"
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
-RUN_SQLITE_TOOL_NAME = "run_sqlite"
-
-
-@dataclass(frozen=True)
-class ToolResult:
-    output: str = ""
-    error: str | None = None
-
-    def is_error(self) -> bool:
-        return bool(self.error)
 
 
 @dataclass
@@ -67,101 +57,12 @@ class CliRunResult:
     metrics: dict[str, Any]
 
 
-def _default_task_text(task_id: str) -> str:
-    if task_id == "import_aggregate":
-        return (
-            "SQLite task: import_aggregate.\n"
-            "Goal:\n"
-            "1) Build table `sales(category TEXT, amount INTEGER)`.\n"
-            "2) Import the CSV rows from `fixture.csv` into `sales`.\n"
-            "3) Return grouped totals ordered by category:\n"
-            "   SELECT category, SUM(amount) AS total FROM sales GROUP BY category ORDER BY category;\n"
-            "Constraints:\n"
-            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
-            "- Keep SQL deterministic and concise.\n"
-        )
-    if task_id == "incremental_reconcile":
-        return (
-            "SQLite task: incremental_reconcile.\n"
-            "Goal:\n"
-            "1) Ingest rows from the fixture into `ledger`.\n"
-            "2) Deduplicate by `event_id` and store duplicate rows in `rejects`.\n"
-            "3) Write checkpoint metadata in `checkpoint_log`.\n"
-            "4) Return deterministic aggregate totals by category.\n"
-            "Constraints:\n"
-            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
-            "- Read relevant skills before SQL execution.\n"
-            "- Keep SQL deterministic and transaction-safe.\n"
-        )
-    if task_id == "idempotent_rerun":
-        return (
-            "SQLite task: idempotent_rerun.\n"
-            "Goal:\n"
-            "1) Import rows from `fixture.csv` into `inventory(sku, product, quantity)`.\n"
-            "2) The fixture contains duplicate rows — use idempotent insert to handle them.\n"
-            "3) Verify exactly 3 unique rows exist with correct data.\n"
-            "Constraints:\n"
-            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
-            "- Read relevant skills before SQL execution.\n"
-            "- Keep SQL deterministic and concise.\n"
-        )
-    if task_id == "partial_failure_recovery":
-        return (
-            "SQLite task: partial_failure_recovery.\n"
-            "Goal:\n"
-            "1) Import valid rows from `fixture.csv` into `transactions(txn_id, account, amount)`.\n"
-            "2) Some rows have non-numeric amounts — route those to `error_log(txn_id, reason)`.\n"
-            "3) Verify: 4 valid transactions, 2 error log entries, correct aggregates.\n"
-            "Constraints:\n"
-            "- Use only run_sqlite, read_skill, and show_fixture tools.\n"
-            "- Read relevant skills before SQL execution.\n"
-            "- Keep SQL deterministic and concise.\n"
-        )
-    return f"SQLite task id: {task_id}. Use run_sqlite to complete the task."
-
-
-def _run_sqlite_tool_param(*, opaque: bool = False) -> dict[str, Any]:
-    return {
-        "name": get_tool_api_name("run_sqlite", opaque),
-        "description": get_tool_description("run_sqlite", opaque),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sql": {"type": "string", "description": "SQL (or safe .read) to execute via sqlite3."}
-            },
-            "required": ["sql"],
-            "additionalProperties": False,
-        },
-    }
-
-
-def _read_skill_tool_param(*, opaque: bool = False) -> dict[str, Any]:
-    return {
-        "name": get_tool_api_name("read_skill", opaque),
-        "description": get_tool_description("read_skill", opaque),
-        "input_schema": {
-            "type": "object",
-            "properties": {"skill_ref": {"type": "string"}},
-            "required": ["skill_ref"],
-            "additionalProperties": False,
-        },
-    }
-
-
-def _show_fixture_tool_param(path_refs: list[str], *, opaque: bool = False) -> dict[str, Any]:
-    refs_text = ", ".join(path_refs) if path_refs else "(none)"
-    base_desc = get_tool_description("show_fixture", opaque)
-    desc = f"{base_desc} Available refs: {refs_text}."
-    return {
-        "name": get_tool_api_name("show_fixture", opaque),
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": {"path_ref": {"type": "string"}},
-            "required": ["path_ref"],
-            "additionalProperties": False,
-        },
-    }
+def _load_task_text(tasks_root: Path, task_id: str) -> str:
+    """Load task description from task.md file, with fallback."""
+    task_md = tasks_root / task_id / "task.md"
+    if task_md.exists():
+        return task_md.read_text(encoding="utf-8").strip()
+    return f"Task: {task_id}. Complete using available tools."
 
 
 def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
@@ -194,7 +95,6 @@ def _tier_from_model(model_name: str) -> str:
 
 
 def _model_from_tier(tier: str, *, base_model: str) -> str:
-    # If caller sets a non-standard model, keep it as base for haiku tier.
     if tier == "haiku":
         return base_model
     if tier == "sonnet":
@@ -302,16 +202,10 @@ def _build_system_prompt(
     task_id: str,
     skills_text: str,
     lessons_text: str,
+    domain_fragment: str,
 ) -> str:
     return (
-        "You are controlling a deterministic sqlite3 CLI environment.\n"
-        "Rules:\n"
-        "- Use run_sqlite for SQL execution.\n"
-        "- You must read at least one routed skill with read_skill before run_sqlite.\n"
-        "- Use read_skill whenever routed skill summaries are insufficient for exact execution.\n"
-        "- Use show_fixture to inspect fixture/bootstrap files.\n"
-        "- Keep SQL concise, deterministic, and verifiable.\n"
-        "- Do not use unsupported sqlite shell actions.\n"
+        f"{domain_fragment}"
         f"- Active task_id: {task_id}\n\n"
         "Skills metadata:\n"
         f"{skills_text}\n\n"
@@ -347,6 +241,17 @@ def _is_skill_gate_satisfied(
     return bool(read_skill_refs & required_skill_refs)
 
 
+def _resolve_adapter(domain: str) -> DomainAdapter:
+    """Resolve a domain name to its adapter instance."""
+    if domain == "sqlite":
+        from tracks.cli_sqlite.domains.sqlite_adapter import SqliteAdapter
+        return SqliteAdapter()
+    if domain == "gridtool":
+        from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
+        return GridtoolAdapter()
+    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool")
+
+
 def run_cli_agent(
     *,
     cfg: CortexConfig,
@@ -356,6 +261,8 @@ def run_cli_agent(
     max_steps: int = 12,
     model_executor: str = DEFAULT_EXECUTOR_MODEL,
     model_critic: str = DEFAULT_CRITIC_MODEL,
+    model_judge: str | None = None,
+    domain: str = "sqlite",
     posttask_mode: str = "candidate",
     posttask_learn: bool = True,
     verbose: bool = False,
@@ -369,11 +276,18 @@ def run_cli_agent(
     opaque_tools: bool = False,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
-    task_text = task.strip() if isinstance(task, str) and task.strip() else _default_task_text(task_id)
+    adapter = _resolve_adapter(domain)
+
+    # Load task text: explicit arg > task.md file > fallback
+    task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
 
     paths = ensure_session(session_id, sessions_root=SESSIONS_ROOT, reset_existing=True)
-    task_workspace: TaskWorkspace = prepare_task_workspace(track_root=TRACK_ROOT, task_id=task_id, db_path=paths.db_path)
-    allowed_read_paths = {path.resolve() for path in task_workspace.fixture_paths.values()}
+
+    # Prepare domain workspace
+    task_dir = TASKS_ROOT / task_id
+    if not task_dir.exists():
+        raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
+    workspace: DomainWorkspace = adapter.prepare_workspace(task_dir, paths.session_dir)
 
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
     routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
@@ -387,25 +301,29 @@ def run_cli_agent(
         max_lessons=8,
         max_sessions=5,
     )
-    system_prompt = _build_system_prompt(task_id=task_id, skills_text=skills_text, lessons_text=lessons_text)
+
+    domain_fragment = adapter.system_prompt_fragment()
+    system_prompt = _build_system_prompt(
+        task_id=task_id,
+        skills_text=skills_text,
+        lessons_text=lessons_text,
+        domain_fragment=domain_fragment,
+    )
     if required_skill_refs:
+        executor_tool = adapter.executor_tool_name
         system_prompt += (
             "\nSkill gate requirement:\n"
-            f"- Before first run_sqlite call, read at least one of: {sorted(required_skill_refs)}\n"
+            f"- Before first {executor_tool} call, read at least one of: {sorted(required_skill_refs)}\n"
         )
     if opaque_tools:
         system_prompt += (
             "\nTool names are opaque. Read your routed skills for usage semantics.\n"
         )
 
-    alias_map = build_alias_map(opaque=opaque_tools)
+    alias_map = adapter.build_alias_map(opaque=opaque_tools)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
-    tools = [
-        _run_sqlite_tool_param(opaque=opaque_tools),
-        _read_skill_tool_param(opaque=opaque_tools),
-        _show_fixture_tool_param(sorted(task_workspace.fixture_paths.keys()), opaque=opaque_tools),
-    ]
+    tools = adapter.tool_defs(sorted(workspace.fixture_paths.keys()), opaque=opaque_tools)
 
     escalation_state = _load_escalation_state(base_model=model_critic)
     critic_model_for_run, escalation_state = _resolve_critic_model_for_run(
@@ -414,10 +332,14 @@ def run_cli_agent(
         state=escalation_state,
     )
 
+    # Resolve judge model
+    effective_judge_model = model_judge or default_judge_model(model_executor)
+
     metrics: dict[str, Any] = {
         "session_id": session_id,
         "task_id": task_id,
         "task": task_text,
+        "domain": domain,
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,
@@ -434,9 +356,13 @@ def run_cli_agent(
         "auto_promotion_reason": None,
         "executor_model": model_executor,
         "critic_model": critic_model_for_run,
+        "judge_model": effective_judge_model,
         "eval_score": 0.0,
         "eval_reasons": [],
         "eval_passed": False,
+        "judge_score": None,
+        "judge_passed": None,
+        "judge_reasons": [],
         "critic_no_updates_streak": int(escalation_state.get("critic_no_updates_streak", 0)),
         "low_score_streak": int(escalation_state.get("low_score_streak", 0)),
         "escalation_state": {
@@ -449,6 +375,7 @@ def run_cli_agent(
         "time_start": time.time(),
     }
 
+    executor_tool_name = adapter.executor_tool_name
     read_skill_refs: set[str] = set()
 
     for step in range(1, max_steps + 1):
@@ -482,34 +409,7 @@ def run_cli_agent(
             tool_input = tool_input if isinstance(tool_input, dict) else {}
             metrics["tool_actions"] += 1
 
-            if canonical_name == RUN_SQLITE_TOOL_NAME:
-                sql = tool_input.get("sql")
-                if not isinstance(sql, str):
-                    result = ToolResult(error=f"run_sqlite requires string sql, got {sql!r}")
-                elif require_skill_read and not _is_skill_gate_satisfied(
-                    read_skill_refs=read_skill_refs,
-                    required_skill_refs=required_skill_refs,
-                ):
-                    metrics["skill_gate_blocks"] += 1
-                    result = ToolResult(
-                        error=(
-                            "Skill gate: call read_skill for at least one routed skill before run_sqlite. "
-                            f"Required refs: {sorted(required_skill_refs)}"
-                        )
-                    )
-                else:
-                    exec_result = run_sqlite(
-                        db_path=task_workspace.db_path,
-                        sql=sql,
-                        timeout_s=5.0,
-                        allowed_read_paths=allowed_read_paths,
-                    )
-                    if exec_result.ok:
-                        payload = exec_result.output or "(ok)"
-                        result = ToolResult(output=_clip_text(payload))
-                    else:
-                        result = ToolResult(error=exec_result.error)
-            elif canonical_name == READ_SKILL_TOOL_NAME:
+            if canonical_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 skill_ref = tool_input.get("skill_ref")
                 if not isinstance(skill_ref, str):
@@ -526,11 +426,37 @@ def run_cli_agent(
                 if not isinstance(path_ref, str):
                     result = ToolResult(error=f"show_fixture requires string path_ref, got {path_ref!r}")
                 else:
-                    text, err = show_fixture_text(task_workspace=task_workspace, path_ref=path_ref)
-                    if err:
-                        result = ToolResult(error=err)
+                    # Read fixture from workspace
+                    key = path_ref.strip()
+                    target = workspace.fixture_paths.get(key)
+                    if target is None:
+                        result = ToolResult(error=f"Unknown path_ref: {path_ref!r}. Allowed: {sorted(workspace.fixture_paths.keys())}")
+                    elif not target.exists():
+                        result = ToolResult(error=f"Missing fixture file: {target}")
                     else:
-                        result = ToolResult(output=_clip_text(f"path_ref: {path_ref}\n\n{text}", max_chars=6000))
+                        try:
+                            text = target.read_text(encoding="utf-8")
+                            result = ToolResult(output=_clip_text(f"path_ref: {path_ref}\n\n{text}", max_chars=6000))
+                        except Exception as exc:
+                            result = ToolResult(error=f"Failed reading fixture: {type(exc).__name__}: {exc}")
+            elif canonical_name == executor_tool_name:
+                # Skill gate check before executor
+                if require_skill_read and not _is_skill_gate_satisfied(
+                    read_skill_refs=read_skill_refs,
+                    required_skill_refs=required_skill_refs,
+                ):
+                    metrics["skill_gate_blocks"] += 1
+                    result = ToolResult(
+                        error=(
+                            f"Skill gate: call read_skill for at least one routed skill before {executor_tool_name}. "
+                            f"Required refs: {sorted(required_skill_refs)}"
+                        )
+                    )
+                else:
+                    # Delegate to domain adapter
+                    result = adapter.execute(canonical_name, tool_input, workspace)
+                    if not result.is_error():
+                        result = ToolResult(output=_clip_text(result.output or "(ok)"))
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
 
@@ -563,17 +489,48 @@ def run_cli_agent(
             break
         messages.append({"role": "user", "content": tool_results})
 
+    # --- Evaluation ---
     events = read_events(paths.events_path)
-    eval_result = evaluate_cli_session(
-        task=task_text,
-        task_id=task_id,
-        events=events,
-        db_path=task_workspace.db_path,
-        tasks_root=TASKS_ROOT,
-    ).to_dict()
-    metrics["eval_passed"] = bool(eval_result.get("passed", False))
-    metrics["eval_score"] = float(eval_result.get("score", 0.0) or 0.0)
-    metrics["eval_reasons"] = list(eval_result.get("reasons", [])) if isinstance(eval_result.get("reasons"), list) else []
+
+    # Deterministic eval (CONTRACT.json) — works for domains that have contracts
+    contract_path = TASKS_ROOT / task_id / "CONTRACT.json"
+    if contract_path.exists():
+        # SQLite-style deterministic eval
+        eval_result = evaluate_cli_session(
+            task=task_text,
+            task_id=task_id,
+            events=events,
+            db_path=workspace.work_dir / "task.db",
+            tasks_root=TASKS_ROOT,
+        ).to_dict()
+        metrics["eval_passed"] = bool(eval_result.get("passed", False))
+        metrics["eval_score"] = float(eval_result.get("score", 0.0) or 0.0)
+        metrics["eval_reasons"] = list(eval_result.get("reasons", [])) if isinstance(eval_result.get("reasons"), list) else []
+    else:
+        eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
+
+    # LLM Judge — always run if no contract, or if contract failed
+    use_llm_judge = not contract_path.exists() or not metrics.get("eval_passed", False)
+    if use_llm_judge:
+        final_state = adapter.capture_final_state(workspace)
+        judge_result: JudgeResult = llm_judge(
+            client=client,
+            model=effective_judge_model,
+            task_text=task_text,
+            events=events,
+            final_state=final_state,
+            domain_name=domain,
+        )
+        metrics["judge_passed"] = judge_result.passed
+        metrics["judge_score"] = judge_result.score
+        metrics["judge_reasons"] = judge_result.reasons
+
+        # If no CONTRACT exists, use judge as primary eval signal
+        if not contract_path.exists():
+            metrics["eval_passed"] = judge_result.passed
+            metrics["eval_score"] = judge_result.score
+            metrics["eval_reasons"] = judge_result.reasons
+            eval_result = judge_result.to_dict()
 
     critic_no_updates = False
 
@@ -591,6 +548,7 @@ def run_cli_agent(
         ]
         routed_refs = [entry.skill_ref for entry in routed_entries]
         skill_snapshots, skill_digests = _load_skill_snapshots(entries=skill_manifest_entries, routed_refs=routed_refs)
+        domain_keywords = adapter.quality_keywords()
         lessons = generate_lessons(
             client=client,
             model=critic_model_for_run,
@@ -600,9 +558,11 @@ def run_cli_agent(
             eval_result=eval_result,
             events_tail=tail_events,
             skill_refs_used=sorted(read_skill_refs),
+            domain_name=domain,
+            domain_keywords=domain_keywords,
         )
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lessons)
-        prune_lessons(LESSONS_PATH, max_per_task=20)
+        prune_lessons(LESSONS_PATH, max_per_task=20, domain_keywords=domain_keywords)
 
         proposed_updates, confidence, reflection_raw = propose_skill_updates(
             client=client,
@@ -614,6 +574,7 @@ def run_cli_agent(
             routed_skill_refs=routed_refs,
             read_skill_refs=sorted(read_skill_refs),
             skill_snapshots=skill_snapshots,
+            domain_name=adapter.name,
         )
         if not proposed_updates:
             parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
