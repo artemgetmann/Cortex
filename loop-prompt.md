@@ -6,6 +6,8 @@ You are running autonomously while the developer is away. No one will answer que
 
 **FIRST THING YOU DO:** Check if `PROGRESS.md` exists in this directory. If it does, read it — a previous run already made progress. Pick up where it left off. Do NOT redo completed work. If it doesn't exist, create it and start from scratch.
 
+**LAST THING YOU DO (EVERY TIME, NO EXCEPTIONS):** Before you finish, update `PROGRESS.md` with everything you accomplished, what failed, decisions you made, and what the next run should tackle. Then `git add -A && git commit`. This is your only way to pass knowledge to the next run. If you don't write it down, it's lost.
+
 ## Rules
 
 ### Safety
