@@ -285,6 +285,12 @@ def run_cli_agent(
     # Load task text: explicit arg > task.md file > fallback
     task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
 
+    if bootstrap:
+        # Strip read_skill references from task text to prevent wasted steps.
+        # Task file unchanged on disk — only the runtime prompt is modified.
+        task_text = re.sub(r"- Read the .*?skill document.*?\n", "", task_text)
+        task_text = re.sub(r",?\s*read_skill,?", "", task_text)
+
     paths = ensure_session(session_id, sessions_root=SESSIONS_ROOT, reset_existing=True)
 
     # Prepare domain workspace

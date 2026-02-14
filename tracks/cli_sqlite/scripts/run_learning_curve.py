@@ -46,6 +46,11 @@ def main() -> int:
     cfg = load_config()
     results: list[dict] = []
 
+    # Clear escalation state for clean experiment
+    escalation_path = Path(__file__).resolve().parents[1] / "learning" / "critic_escalation_state.json"
+    if escalation_path.exists():
+        escalation_path.unlink()
+
     print(f"\n{'='*60}")
     print(f"  Learning Curve Experiment")
     print(f"  task={args.task_id}  domain={args.domain}  bootstrap={args.bootstrap}")
