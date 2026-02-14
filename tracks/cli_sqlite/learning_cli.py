@@ -148,6 +148,8 @@ def load_relevant_lessons(
     max_sessions: int = 5,
 ) -> tuple[str, int]:
     all_lessons = load_lessons(path)
+    # Filter out known-incorrect lessons that would poison future runs
+    all_lessons = [l for l in all_lessons if not _KNOWN_WRONG_PATTERNS.search(l.lesson)]
     if not all_lessons:
         return "No prior lessons loaded.", 0
 
