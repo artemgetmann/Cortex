@@ -90,6 +90,39 @@ docs/
 - Do not ask Haiku/Sonnet runs to use zoom; they should use screenshot + precise clicks instead.
 - If you need zoom-dependent precision checks, run with Opus.
 
+## CLI Learning Lab (`tracks/cli_sqlite/`)
+
+The CLI learning lab tests whether an LLM agent can teach itself a fictional CLI tool (gridtool) through cross-session lesson accumulation — no skill docs, just error messages and lessons.
+
+### Running experiments
+
+**Always run these in background** — they take 3-10 minutes and make API calls:
+
+```bash
+# Single session
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id aggregate_report --domain gridtool \
+  --session 9501 --max-steps 6 --bootstrap --verbose
+
+# Learning curve experiment (10 sequential sessions)
+python3 tracks/cli_sqlite/scripts/run_learning_curve.py \
+  --task-id aggregate_report --domain gridtool \
+  --sessions 10 --start-session 9501 --max-steps 6 \
+  --bootstrap --verbose --posttask-mode direct
+```
+
+Key flags:
+- `--bootstrap`: No skill docs, agent learns from lessons + error messages only
+- `--cryptic-errors`: Strip helpful hints from error messages (harder mode)
+- `--max-steps N`: Step budget (6 = tight, 12 = generous)
+- `--posttask-mode direct`: Apply skill patches immediately (vs `candidate` for queuing)
+
+Before re-running experiments, clear lessons for a clean baseline:
+```bash
+cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.jsonl.bak
+: > tracks/cli_sqlite/learning/lessons.jsonl
+```
+
 ## Environment variables
 
 | Variable | Default | Purpose |
