@@ -1,0 +1,13 @@
+name,category,price,stock
+Widget A,electronics,29.99,15
+Widget B,electronics,49.99,0
+Gadget X,tools,19.99,8
+Gadget Y,tools,39.99,22
+Doohickey,accessories,9.99,0
+Thingamajig,accessories,14.99,5
+Gizmo Pro,electronics,89.99,3
+Whatchamacallit,tools,24.99,12
+Contraption,accessories,34.99,7
+Apparatus,electronics,59.99,0
+Mechanism,tools,44.99,18
+Doodad,accessories,7.99,30
