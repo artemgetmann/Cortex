@@ -34,6 +34,8 @@ def main() -> int:
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--opaque-tools", action="store_true", help="Use opaque tool names to test skill-reading behavior")
+    ap.add_argument("--bootstrap", action="store_true",
+                     help="Bootstrap mode: no skill docs, agent learns from scratch via lessons only")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -54,8 +56,9 @@ def main() -> int:
         auto_escalate_critic=bool(args.auto_escalate_critic),
         escalation_score_threshold=args.escalation_score_threshold,
         escalation_consecutive_runs=max(1, args.escalation_consecutive_runs),
-        require_skill_read=bool(args.require_skill_read),
+        require_skill_read=bool(args.require_skill_read) and not args.bootstrap,
         opaque_tools=bool(args.opaque_tools),
+        bootstrap=bool(args.bootstrap),
     )
     print(json_dump(result.metrics))
     return 0

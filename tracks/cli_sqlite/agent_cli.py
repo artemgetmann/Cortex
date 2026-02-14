@@ -263,6 +263,7 @@ def run_cli_agent(
     model_critic: str = DEFAULT_CRITIC_MODEL,
     model_judge: str | None = None,
     domain: str = "sqlite",
+    bootstrap: bool = False,
     posttask_mode: str = "candidate",
     posttask_learn: bool = True,
     verbose: bool = False,
@@ -289,11 +290,20 @@ def run_cli_agent(
         raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
     workspace: DomainWorkspace = adapter.prepare_workspace(task_dir, paths.session_dir)
 
+    # Build full manifest always (needed for posttask learning even in bootstrap)
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
-    routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
-    routed_refs = [entry.skill_ref for entry in routed_entries]
-    required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
-    skills_text = manifest_summaries_text(routed_entries)
+
+    if bootstrap:
+        # Bootstrap mode: no skill docs, agent must learn from scratch via lessons
+        routed_entries: list[SkillManifestEntry] = []
+        routed_refs: list[str] = []
+        required_skill_refs: set[str] = set()
+        skills_text = "(bootstrap mode — no skill docs available. Learn from trial, error messages, and prior lessons.)"
+    else:
+        routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
+        routed_refs = [entry.skill_ref for entry in routed_entries]
+        required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
+        skills_text = manifest_summaries_text(routed_entries)
     lessons_text, lessons_loaded = load_relevant_lessons(
         path=LESSONS_PATH,
         task_id=task_id,
@@ -340,6 +350,7 @@ def run_cli_agent(
         "task_id": task_id,
         "task": task_text,
         "domain": domain,
+        "bootstrap": bootstrap,
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,

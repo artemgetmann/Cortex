@@ -172,9 +172,17 @@ def cmd_tally(args: str, rows, lineno: int):
     agg_specs = []
     for part in agg_str.split(","):
         part = part.strip()
+        if not part:
+            continue
         am = re.match(r'(\w+)\s*=\s*(\w+)\((\w+)\)', part)
         if not am:
             _fail(lineno, "TALLY syntax: TALLY group_col -> alias=func(agg_col). Got invalid format.")
+        # Detect unparsed trailing text (e.g. missing comma between specs)
+        remainder = part[am.end():].strip()
+        if remainder:
+            _fail(lineno, f"TALLY: unexpected text after '{am.group(0)}': '{remainder}'. "
+                  f"Separate multiple aggregations with commas, e.g.: "
+                  f"TALLY {group_col} -> a=sum(x), b=count(y)")
         alias, func, agg_col = am.group(1), am.group(2), am.group(3)
         if func != func.lower():
             _fail(lineno, f"Unknown function '{func}'. Use lowercase: {func.lower()}")
