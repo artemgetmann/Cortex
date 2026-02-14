@@ -103,6 +103,7 @@ def _check_col(col: str, rows, lineno: int):
 
 _CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
     re.compile(r"TALLY syntax:.*"): "TALLY: syntax error.",
+    re.compile(r"TALLY aggregation .* missing alias.*"): "TALLY: syntax error.",
     re.compile(r"TALLY: unexpected text.*"): "TALLY: syntax error.",
     re.compile(r"RANK direction must be.*"): "RANK: invalid direction.",
     re.compile(r"RANK syntax:.*"): "RANK: syntax error.",
@@ -127,6 +128,7 @@ _CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
 _SEMI_HELPFUL_OVERRIDES: dict[re.Pattern[str], str] = {
     # TALLY: hints at arrow syntax without showing full format
     re.compile(r"TALLY syntax:.*"): "TALLY: expected arrow operator '->' after group column.",
+    re.compile(r"TALLY aggregation .* missing alias.*"): "TALLY: each aggregation needs an alias name before '='.",
     re.compile(r"TALLY: unexpected text.*"): "TALLY: separate multiple aggregations with commas.",
     # RANK: hints at valid directions
     re.compile(r"RANK direction must be.*"): "RANK: direction must be a word — 'asc' or 'desc'.",
@@ -262,6 +264,9 @@ def cmd_tally(args: str, rows, lineno: int):
             continue
         am = re.match(r'(\w+)\s*=\s*(\w+)\((\w+)\)', part)
         if not am:
+            # Check if it looks like func(col) without alias
+            if re.match(r'\w+\(\w+\)', part):
+                _fail(lineno, f"TALLY aggregation '{part}' missing alias. Use: alias=func(col)")
             _fail(lineno, "TALLY syntax: TALLY group_col -> alias=func(agg_col). Got invalid format.")
         # Detect unparsed trailing text (e.g. missing comma between specs)
         remainder = part[am.end():].strip()
