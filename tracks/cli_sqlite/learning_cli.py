@@ -220,13 +220,16 @@ def _lesson_quality_score(lesson: Lesson, *, domain_keywords: re.Pattern[str] | 
     score = 0.0
     keywords = domain_keywords or _SQL_KEYWORDS
     kw_matches = len(keywords.findall(text))
-    score += min(kw_matches * 0.15, 0.45)
+    score += min(kw_matches * 0.2, 0.6)
     if _STEP_REFERENCE.search(text):
-        score += 0.2
-    if _ERROR_REFERENCE.search(text):
-        score += 0.2
-    if lesson.evidence_steps:
         score += 0.15
+    if _ERROR_REFERENCE.search(text):
+        score += 0.15
+    if lesson.evidence_steps:
+        score += 0.1
+    # Boost: lessons containing syntax examples (quotes, arrows, operators) are valuable
+    if re.search(r'["\']|->|=\w+\(', text):
+        score += 0.2
     return min(score, 1.0)
 
 
@@ -280,21 +283,38 @@ def generate_lessons(
         score = float(eval_result.get("score", 0.0))
     except (TypeError, ValueError):
         score = 0.0
-    if passed and score >= 1.0:
-        return []
 
-    system = (
-        f"You are a post-run {domain_name} learning critic.\n"
-        "Return STRICT JSON array only. Each item must match:\n"
-        '{"category":"mistake|insight|shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
-        "Rules:\n"
-        "- Each lesson MUST reference at least one of: exact command/code fragment, error message, step number, or column/table name.\n"
-        "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
-        "- Good: 'INSERT INTO ledger missed ON CONFLICT for event_id causing duplicate at step 4'\n"
-        "- Bad: 'Always read the skill document before executing commands'\n"
-        "- Base lessons only on provided events and deterministic eval.\n"
-        "- 1 to 4 lessons total.\n"
-    )
+    if passed and score >= 1.0:
+        # Generate positive lessons from successes — record what worked
+        system = (
+            f"You are a post-run {domain_name} learning critic analyzing a SUCCESSFUL run.\n"
+            "Return STRICT JSON array only. Each item must match:\n"
+            '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+            "Rules:\n"
+            "- Extract the key syntax patterns and commands that made this run succeed.\n"
+            "- Each lesson MUST include exact command syntax, function names, or operator names from the events.\n"
+            "- Focus on domain-specific syntax that a future agent would need to know.\n"
+            "- REJECT generic advice. Only record concrete syntax patterns.\n"
+            f"- Good example for gridtool: 'TALLY groups with arrow syntax: TALLY col -> alias=func(agg_col), functions must be lowercase (sum, count, avg)'\n"
+            f"- Good example: 'LOAD requires quoted path: LOAD \"file.csv\", KEEP/TOSS use word operators: eq, neq, gt, lt, gte, lte'\n"
+            "- Bad: 'The agent completed the task successfully'\n"
+            "- 1 to 3 lessons total. Be concise.\n"
+        )
+    else:
+        system = (
+            f"You are a post-run {domain_name} learning critic.\n"
+            "Return STRICT JSON array only. Each item must match:\n"
+            '{"category":"mistake|insight|shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+            "Rules:\n"
+            "- Each lesson MUST reference at least one of: exact command/code fragment, error message, step number, or column/table name.\n"
+            "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
+            "- Focus on SPECIFIC syntax errors and their fixes.\n"
+            f"- Good for gridtool: 'TALLY requires arrow syntax with alias: TALLY col -> alias=func(agg_col), not GROUP BY. Error at step 3.'\n"
+            f"- Good: 'Functions must be lowercase: use sum() not SUM(). Error at step 4.'\n"
+            "- Bad: 'Always read the skill document before executing commands'\n"
+            "- Base lessons only on provided events and deterministic eval.\n"
+            "- 1 to 4 lessons total.\n"
+        )
     user = (
         f"TASK_ID:\n{task_id}\n\n"
         f"TASK:\n{task}\n\n"

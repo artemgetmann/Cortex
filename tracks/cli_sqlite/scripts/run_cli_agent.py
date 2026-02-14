@@ -38,6 +38,8 @@ def main() -> int:
                      help="Bootstrap mode: no skill docs, agent learns from scratch via lessons only")
     ap.add_argument("--cryptic-errors", action="store_true",
                      help="Cryptic error mode: strip helpful hints from tool error messages")
+    ap.add_argument("--semi-helpful-errors", action="store_true",
+                     help="Semi-helpful error mode: hint at fixes without full syntax")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -62,6 +64,7 @@ def main() -> int:
         opaque_tools=bool(args.opaque_tools),
         bootstrap=bool(args.bootstrap),
         cryptic_errors=bool(args.cryptic_errors),
+        semi_helpful_errors=bool(args.semi_helpful_errors),
     )
     print(json_dump(result.metrics))
     return 0

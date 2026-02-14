@@ -16,6 +16,8 @@ import sys
 
 # Global flag: when True, error messages omit helpful hints
 CRYPTIC_MODE = False
+# Global flag: when True, error messages hint without giving full answers
+SEMI_HELPFUL_MODE = False
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +124,54 @@ _CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
 }
 
 
+_SEMI_HELPFUL_OVERRIDES: dict[re.Pattern[str], str] = {
+    # TALLY: hints at arrow syntax without showing full format
+    re.compile(r"TALLY syntax:.*"): "TALLY: expected arrow operator '->' after group column.",
+    re.compile(r"TALLY: unexpected text.*"): "TALLY: separate multiple aggregations with commas.",
+    # RANK: hints at valid directions
+    re.compile(r"RANK direction must be.*"): "RANK: direction must be a word — 'asc' or 'desc'.",
+    re.compile(r"RANK syntax:.*"): "RANK: requires a column name and direction.",
+    # KEEP/TOSS: hints at word operators without listing them all
+    re.compile(r"KEEP syntax:.*"): "KEEP: requires column, operator, and value.",
+    re.compile(r"KEEP requires word operator.*"): "KEEP: operators must be words (like 'eq'), not symbols.",
+    re.compile(r"KEEP unknown operator.*"): "KEEP: unknown operator. Use word-based comparison operators.",
+    re.compile(r"TOSS syntax:.*"): "TOSS: requires column, operator, and value.",
+    re.compile(r"TOSS requires word operator.*"): "TOSS: operators must be words (like 'eq'), not symbols.",
+    re.compile(r"TOSS unknown operator.*"): "TOSS: unknown operator. Use word-based comparison operators.",
+    # DERIVE: hints at format
+    re.compile(r"DERIVE syntax:.*"): "DERIVE: expected 'new_col = expression' format.",
+    # MERGE: hints at quoting
+    re.compile(r"MERGE syntax:.*"): "MERGE: requires a quoted path and ON keyword.",
+    re.compile(r"MERGE path must be quoted\..*"): "MERGE: file path must be in double quotes.",
+    # LOAD: hints at quoting
+    re.compile(r"LOAD path must be quoted\..*"): "LOAD: file path must be in double quotes.",
+    # Functions: hints at case sensitivity
+    re.compile(r"Unknown function '(\w+)'.*"): r"Unknown function '\1'. Functions are case-sensitive — use lowercase.",
+    # Column: keep column name but strip available list
+    re.compile(r"Column '(\w+)' not found\..*"): r"Column '\1' not found in current data.",
+    # Command: hint at correct command without listing all
+    re.compile(r"Unknown command '(\w+)'\. Did you mean '(\w+)'\?"):
+        r"Unknown command '\1'. This is not SQL — gridtool has its own command names.",
+    re.compile(r"Unknown command '(\w+)'\..*"): r"Unknown command '\1'. This is not SQL — gridtool has its own command names.",
+    # SHOW
+    re.compile(r"SHOW takes an optional.*"): "SHOW: optional argument must be a number (row limit).",
+    # File not found: keep path but strip resolved path
+    re.compile(r"File not found: \"([^\"]+)\" \(resolved.*"): r'File not found: "\1".',
+}
+
+
 def _strip_hints(msg: str) -> str:
     """Replace helpful error messages with opaque versions in cryptic mode."""
     for pattern, replacement in _CRYPTIC_OVERRIDES.items():
+        m = pattern.search(msg)
+        if m:
+            return pattern.sub(replacement, msg)
+    return msg
+
+
+def _semi_helpful_hints(msg: str) -> str:
+    """Replace detailed error messages with semi-helpful hints."""
+    for pattern, replacement in _SEMI_HELPFUL_OVERRIDES.items():
         m = pattern.search(msg)
         if m:
             return pattern.sub(replacement, msg)
@@ -135,6 +182,8 @@ def _fail(lineno: int, msg: str):
     """Print error to stderr and exit."""
     if CRYPTIC_MODE:
         msg = _strip_hints(msg)
+    elif SEMI_HELPFUL_MODE:
+        msg = _semi_helpful_hints(msg)
     print(f"ERROR at line {lineno}: {msg}", file=sys.stderr)
     sys.exit(1)
 
@@ -419,13 +468,16 @@ def run(workdir: str, input_stream):
 
 
 def main():
-    global CRYPTIC_MODE
+    global CRYPTIC_MODE, SEMI_HELPFUL_MODE
     parser = argparse.ArgumentParser(description="gridtool: pipeline CSV data processor")
     parser.add_argument("--workdir", required=True, help="Working directory for CSV file resolution")
     parser.add_argument("--cryptic", action="store_true",
                         help="Cryptic error mode: strip helpful hints from error messages")
+    parser.add_argument("--semi-helpful", action="store_true",
+                        help="Semi-helpful error mode: hint at fixes without giving full syntax")
     args = parser.parse_args()
     CRYPTIC_MODE = args.cryptic
+    SEMI_HELPFUL_MODE = args.semi_helpful
     if not os.path.isdir(args.workdir):
         print(f"ERROR: --workdir '{args.workdir}' is not a directory", file=sys.stderr)
         sys.exit(1)

@@ -241,14 +241,14 @@ def _is_skill_gate_satisfied(
     return bool(read_skill_refs & required_skill_refs)
 
 
-def _resolve_adapter(domain: str, *, cryptic_errors: bool = False) -> DomainAdapter:
+def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_errors: bool = False) -> DomainAdapter:
     """Resolve a domain name to its adapter instance."""
     if domain == "sqlite":
         from tracks.cli_sqlite.domains.sqlite_adapter import SqliteAdapter
         return SqliteAdapter()
     if domain == "gridtool":
         from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
-        return GridtoolAdapter(cryptic_errors=cryptic_errors)
+        return GridtoolAdapter(cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
     raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool")
 
 
@@ -276,9 +276,10 @@ def run_cli_agent(
     require_skill_read: bool = True,
     opaque_tools: bool = False,
     cryptic_errors: bool = False,
+    semi_helpful_errors: bool = False,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
-    adapter = _resolve_adapter(domain, cryptic_errors=cryptic_errors)
+    adapter = _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
 
     # Load task text: explicit arg > task.md file > fallback
     task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
@@ -309,8 +310,8 @@ def run_cli_agent(
         path=LESSONS_PATH,
         task_id=task_id,
         task=task_text,
-        max_lessons=8,
-        max_sessions=5,
+        max_lessons=12,
+        max_sessions=8,
     )
 
     domain_fragment = adapter.system_prompt_fragment()

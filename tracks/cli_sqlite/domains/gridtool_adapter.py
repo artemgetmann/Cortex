@@ -60,8 +60,9 @@ def _get_tool_description(canonical: str, opaque: bool) -> str:
 class GridtoolAdapter:
     """DomainAdapter implementation for the custom gridtool CLI."""
 
-    def __init__(self, *, cryptic_errors: bool = False) -> None:
+    def __init__(self, *, cryptic_errors: bool = False, semi_helpful_errors: bool = False) -> None:
         self._cryptic = cryptic_errors
+        self._semi_helpful = semi_helpful_errors
 
     @property
     def name(self) -> str:
@@ -117,6 +118,8 @@ class GridtoolAdapter:
             cmd = ["python3", str(GRIDTOOL_PATH), "--workdir", str(workspace.work_dir)]
             if self._cryptic:
                 cmd.append("--cryptic")
+            elif self._semi_helpful:
+                cmd.append("--semi-helpful")
             result = subprocess.run(
                 cmd,
                 input=commands,
