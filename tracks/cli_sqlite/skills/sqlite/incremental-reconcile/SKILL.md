@@ -30,3 +30,9 @@ Use this skill for `incremental_reconcile` tasks.
 - Never delete from `ledger` to satisfy dedupe.
 - Never drop `ledger`.
 - Keep behavior idempotent across reruns.
+
+## Tool Reference
+
+- `dispatch(sql="...")` — executes SQL against the task database.
+- `probe(skill_ref="...")` — reads a skill document by reference key.
+- `catalog(path_ref="...")` — shows fixture or bootstrap data by path reference.

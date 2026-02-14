@@ -1,0 +1,94 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "insufficient_runs_for_promotion",
+  "bootstrap": true,
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "domain": "gridtool",
+  "elapsed_s": 18.456,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": false,
+  "eval_reasons": [
+    "Task not completed: no successful gridtool output was produced",
+    "Step 2 error shows incorrect PICK syntax: 'PICK price limit 5' failed with 'Column price limit 5 not found' - agent treated 'limit 5' as part of column name",
+    "Step 3 error shows continued syntax misunderstanding: 'PICK name limit 5' failed with same error pattern - agent still treating 'limit 5' as part of column name instead of separate parameter",
+    "The agent failed to correct the syntax error after two attempts and never produced the required top 5 results ranked by price descending with stock > 0",
+    "Required output (filtered data, ranked by price descending, limited to top 5 rows) was never displayed"
+  ],
+  "eval_score": 0.0,
+  "executor_model": "claude-haiku-4-5",
+  "judge_model": "claude-sonnet-4-5",
+  "judge_passed": false,
+  "judge_reasons": [
+    "Task not completed: no successful gridtool output was produced",
+    "Step 2 error shows incorrect PICK syntax: 'PICK price limit 5' failed with 'Column price limit 5 not found' - agent treated 'limit 5' as part of column name",
+    "Step 3 error shows continued syntax misunderstanding: 'PICK name limit 5' failed with same error pattern - agent still treating 'limit 5' as part of column name instead of separate parameter",
+    "The agent failed to correct the syntax error after two attempts and never produced the required top 5 results ranked by price descending with stock > 0",
+    "Required output (filtered data, ranked by price descending, limited to top 5 rows) was never displayed"
+  ],
+  "judge_score": 0.0,
+  "lesson_activations": 0,
+  "lessons_generated": 3,
+  "lessons_loaded": 5,
+  "low_score_streak": 1,
+  "posttask_candidates_queued": 0,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "require_skill_read": false,
+  "required_skill_refs": [],
+  "session_id": 11003,
+  "skill_gate_blocks": 0,
+  "skill_reads": 0,
+  "steps": 3,
+  "task": "gridtool task: basic_transform.\n\nGoal:\n1) Load the product data from fixture.csv\n2) Keep only items where stock is greater than 0\n3) Rank results by price in descending order\n4) Show the top 5 results\n\nConstraints:\n- Use only run_gridtool and show_fixture tools.\n- gridtool has its own syntax \u2014 it is NOT SQL.",
+  "task_id": "basic_transform",
+  "time_start": 1771075997.835464,
+  "tool_actions": 3,
+  "tool_errors": 2,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1254,
+      "output_tokens": 85,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1521,
+      "output_tokens": 131,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1698,
+      "output_tokens": 102,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}

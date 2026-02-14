@@ -1,0 +1,77 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "no_queue",
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "elapsed_s": 10.247,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": true,
+  "eval_reasons": [],
+  "eval_score": 1.0,
+  "executor_model": "claude-haiku-4-5",
+  "lessons_generated": 0,
+  "lessons_loaded": 0,
+  "low_score_streak": 0,
+  "posttask_candidates_queued": 0,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "require_skill_read": true,
+  "required_skill_refs": [
+    "sqlite/partial-failure-recovery"
+  ],
+  "session_id": 6002,
+  "skill_gate_blocks": 0,
+  "skill_reads": 1,
+  "steps": 3,
+  "task": "SQLite task: partial_failure_recovery.\nGoal:\n1) Import valid rows from `fixture.csv` into `transactions(txn_id, account, amount)`.\n2) Some rows have non-numeric amounts \u2014 route those to `error_log(txn_id, reason)`.\n3) Verify: 4 valid transactions, 2 error log entries, correct aggregates.\nConstraints:\n- Use only run_sqlite, read_skill, and show_fixture tools.\n- Read relevant skills before SQL execution.\n- Keep SQL deterministic and concise.\n",
+  "task_id": "partial_failure_recovery",
+  "time_start": 1771015498.3806841,
+  "tool_actions": 3,
+  "tool_errors": 0,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1120,
+      "output_tokens": 129,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1925,
+      "output_tokens": 434,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2382,
+      "output_tokens": 263,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}

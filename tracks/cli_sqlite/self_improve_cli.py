@@ -140,9 +140,10 @@ def propose_skill_updates(
     routed_skill_refs: list[str],
     read_skill_refs: list[str],
     skill_snapshots: list[str],
+    domain_name: str = "sqlite",
 ) -> tuple[list[SkillUpdate], float, str]:
     system = (
-        "You are PostTaskHook for SQL skill maintenance.\n"
+        f"You are PostTaskHook for {domain_name} skill maintenance.\n"
         "Return STRICT JSON only:\n"
         "{\n"
         '  "confidence": 0.0,\n'
@@ -507,12 +508,15 @@ def _collect_recent_scores(*, sessions_root: Path, task_id: str, max_sessions: i
     return rows[-max_sessions:]
 
 
-def _scores_improving(rows: list[dict[str, Any]], *, min_runs: int, min_delta: float) -> bool:
+def _scores_improving(rows: list[dict[str, Any]], *, min_runs: int, min_delta: float, max_regressions: int = 1) -> bool:
     if len(rows) < min_runs:
         return False
     recent = rows[-min_runs:]
     scores = [float(row.get("score", 0.0)) for row in recent]
-    return all(scores[idx] <= scores[idx + 1] for idx in range(len(scores) - 1)) and ((scores[-1] - scores[0]) >= min_delta)
+    regressions = sum(1 for idx in range(len(scores) - 1) if scores[idx + 1] < scores[idx])
+    if regressions > max_regressions:
+        return False
+    return (scores[-1] - scores[0]) >= min_delta
 
 
 def auto_promote_queued_candidates(
@@ -527,6 +531,7 @@ def auto_promote_queued_candidates(
     min_runs: int = 3,
     min_delta: float = 0.2,
     max_sessions: int = 8,
+    max_regressions: int = 1,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "attempted": True,
@@ -552,7 +557,7 @@ def auto_promote_queued_candidates(
     if len(score_rows) < min_runs:
         result["reason"] = "insufficient_runs_for_promotion"
         return result
-    if not _scores_improving(score_rows, min_runs=min_runs, min_delta=min_delta):
+    if not _scores_improving(score_rows, min_runs=min_runs, min_delta=min_delta, max_regressions=max_regressions):
         result["reason"] = "score_not_improving"
         return result
 

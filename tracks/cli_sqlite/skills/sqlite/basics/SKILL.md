@@ -13,3 +13,9 @@ Use this skill for every sqlite task.
 - Prefer one clear query per `run_sqlite` call while debugging.
 - Use `ORDER BY` for deterministic output.
 - If errors mention missing table/column, inspect schema immediately and correct forward.
+
+## Tool Reference
+
+- `dispatch(sql="...")` — executes SQL against the task database.
+- `probe(skill_ref="...")` — reads a skill document by reference key.
+- `catalog(path_ref="...")` — shows fixture or bootstrap data by path reference.
