@@ -163,13 +163,14 @@ class GridtoolAdapter:
     def system_prompt_fragment(self) -> str:
         return (
             "You are controlling a gridtool CLI environment.\n"
-            "gridtool is a data processing tool with its own syntax.\n"
-            "You MUST read the skill doc before using it — the syntax is NOT SQL.\n"
+            "gridtool is a data processing tool with its own syntax — NOT SQL.\n"
             "Rules:\n"
             "- Use run_gridtool to execute gridtool commands.\n"
-            "- You must read at least one routed skill with read_skill before run_gridtool.\n"
-            "- Use read_skill whenever routed skill summaries are insufficient for exact execution.\n"
             "- Use show_fixture to inspect fixture files.\n"
+            "- Before starting, check the Skills metadata section. If a skill's title or\n"
+            "  description seems relevant to your task, read it with read_skill using the\n"
+            "  exact skill_ref listed. Only call read_skill with refs that are listed —\n"
+            "  do not guess or invent skill_ref names.\n"
             "- gridtool commands: LOAD, KEEP, TOSS, TALLY, RANK, PICK, DERIVE, MERGE, SHOW.\n"
             "- Do NOT use SQL syntax — gridtool is completely different.\n"
         )
