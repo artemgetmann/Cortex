@@ -146,6 +146,8 @@ def load_relevant_lessons(
     task: str,
     max_lessons: int = 8,
     max_sessions: int = 5,
+    max_lessons_per_session: int = 2,
+    min_sessions_before_retrieval: int = 1,
     domain_keywords: re.Pattern[str] | None = None,
 ) -> tuple[str, int]:
     all_lessons = load_lessons(path)
@@ -164,16 +166,35 @@ def load_relevant_lessons(
         score += 0.2 * quality
         if score > 0:
             scored.append((score, lesson))
+
+    # Anti-attribution guard: require lessons from multiple sessions before retrieval.
+    # Prevents a single lucky pass from polluting future runs.
+    corroborated_sessions = {
+        lesson.session_id
+        for _, lesson in scored
+        if lesson.task_id == task_id and lesson.session_id > 0
+    }
+    if len(corroborated_sessions) < min_sessions_before_retrieval:
+        return "No prior lessons loaded.", 0
+
     scored.sort(key=lambda item: (item[0], item[1].timestamp), reverse=True)
 
     selected: list[Lesson] = []
     seen_sessions: set[int] = set()
+    session_lesson_counts: dict[int, int] = {}
     for _, lesson in scored:
         if lesson.session_id and len(seen_sessions) >= max_sessions and lesson.session_id not in seen_sessions:
             continue
+        # Anti-attribution guard: cap lessons from any single session to avoid
+        # loading many hypotheses from one failed run.
+        if lesson.session_id:
+            count = session_lesson_counts.get(lesson.session_id, 0)
+            if count >= max_lessons_per_session:
+                continue
         selected.append(lesson)
         if lesson.session_id:
             seen_sessions.add(lesson.session_id)
+            session_lesson_counts[lesson.session_id] = session_lesson_counts.get(lesson.session_id, 0) + 1
         if len(selected) >= max_lessons:
             break
     if not selected:
