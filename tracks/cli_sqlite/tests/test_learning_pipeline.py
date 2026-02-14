@@ -115,6 +115,10 @@ def test_gridtool_error_modes():
     _, _, err_s = _run_gridtool('LOAD "fixture.csv"\nTALLY region -> sum(amount)', semi_helpful=True)
     assert "alias name before '='" in err_s
 
+    # Arrow present but bad aggregation format (e.g., SUM amount instead of alias=func(col))
+    _, _, err_s = _run_gridtool('LOAD "fixture.csv"\nTALLY region -> SUM amount, COUNT', semi_helpful=True)
+    assert 'alias=func(col)' in err_s, f"Bad agg format should mention alias=func(col), got: {err_s}"
+
     # SQL GROUP BY mistake
     _, _, err_s = _run_gridtool('LOAD "fixture.csv"\nGROUP BY region', semi_helpful=True)
     assert 'not SQL' in err_s
@@ -154,6 +158,9 @@ def test_known_wrong_patterns():
         "TALLY does not support multiple aggregations — use one TALLY per aggregation.",
         "TALLY supports a single aggregation only. Use TALLY twice.",
         "Cannot perform multiple aggregations in TALLY.",
+        "TALLY syntax does not use arrow operator '->'.",
+        "TALLY doesn't use arrow operator.",
+        "TALLY does not need -> operator.",
         "read_skill failed with unknown ref 'gridtool'",
         "skill_ref 'aggregate' not found — try looking up available skills",
     ]
@@ -390,6 +397,9 @@ def _run_all_as_script():
         "TALLY does not support multiple aggregations — use one TALLY per aggregation.",
         "TALLY supports a single aggregation only. Use TALLY twice.",
         "Cannot perform multiple aggregations in TALLY.",
+        "TALLY syntax does not use arrow operator '->'.",
+        "TALLY doesn't use arrow operator.",
+        "TALLY does not need -> operator.",
         "read_skill failed with unknown ref 'gridtool'",
         "skill_ref 'aggregate' not found — try looking up available skills",
     ]

@@ -241,6 +241,8 @@ _KNOWN_WRONG_PATTERNS = re.compile(
     r"(?i)("
     r"TALLY.*(?:only.*one|single|does not support multiple).*aggregat|"
     r"cannot.*multiple aggregat|"
+    r"TALLY.*(?:does not|doesn.t|not) use.*arrow|"
+    r"TALLY.*(?:does not|doesn.t|not) (?:need|require|use).*->|"
     r"read_skill.*(?:failed|unknown|not (?:found|available|valid|have))|"
     r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))"
     r")"
