@@ -116,7 +116,7 @@ _CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
     re.compile(r"DERIVE syntax:.*"): "DERIVE: syntax error.",
     re.compile(r"MERGE syntax:.*"): "MERGE: syntax error.",
     re.compile(r"Unknown function '(\w+)'.*"): r"Unknown function '\1'.",
-    re.compile(r"Column '(\w+)' not found\..*"): r"Column '\1' not found.",
+    re.compile(r"Column '(\w+)' not found[.\s].*"): r"Column '\1' not found.",
     re.compile(r"Unknown command '(\w+)'\..*"): r"Unknown command '\1'.",
     re.compile(r"LOAD path must be quoted\..*"): "LOAD: invalid argument.",
     re.compile(r"MERGE path must be quoted\..*"): "MERGE: invalid argument.",
@@ -149,8 +149,8 @@ _SEMI_HELPFUL_OVERRIDES: dict[re.Pattern[str], str] = {
     re.compile(r"LOAD path must be quoted\..*"): "LOAD: file path must be in double quotes.",
     # Functions: hints at case sensitivity
     re.compile(r"Unknown function '(\w+)'.*"): r"Unknown function '\1'. Functions are case-sensitive — use lowercase.",
-    # Column: keep column name but strip available list
-    re.compile(r"Column '(\w+)' not found\..*"): r"Column '\1' not found in current data.",
+    # Column: keep column name but strip available list (matches both "not found." and "not found in 'file'.")
+    re.compile(r"Column '(\w+)' not found[.\s].*"): r"Column '\1' not found in current data.",
     # Command: hint at correct command without listing all
     re.compile(r"Unknown command '(\w+)'\. Did you mean '(\w+)'\?"):
         r"Unknown command '\1'. This is not SQL — gridtool has its own command names.",
