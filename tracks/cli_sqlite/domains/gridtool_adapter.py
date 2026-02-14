@@ -60,6 +60,9 @@ def _get_tool_description(canonical: str, opaque: bool) -> str:
 class GridtoolAdapter:
     """DomainAdapter implementation for the custom gridtool CLI."""
 
+    def __init__(self, *, cryptic_errors: bool = False) -> None:
+        self._cryptic = cryptic_errors
+
     @property
     def name(self) -> str:
         return "gridtool"
@@ -111,8 +114,11 @@ class GridtoolAdapter:
         if not isinstance(commands, str):
             return ToolResult(error=f"run_gridtool requires string commands, got {commands!r}")
         try:
+            cmd = ["python3", str(GRIDTOOL_PATH), "--workdir", str(workspace.work_dir)]
+            if self._cryptic:
+                cmd.append("--cryptic")
             result = subprocess.run(
-                ["python3", str(GRIDTOOL_PATH), "--workdir", str(workspace.work_dir)],
+                cmd,
                 input=commands,
                 capture_output=True,
                 text=True,

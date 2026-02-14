@@ -36,6 +36,8 @@ def main() -> int:
     ap.add_argument("--opaque-tools", action="store_true", help="Use opaque tool names to test skill-reading behavior")
     ap.add_argument("--bootstrap", action="store_true",
                      help="Bootstrap mode: no skill docs, agent learns from scratch via lessons only")
+    ap.add_argument("--cryptic-errors", action="store_true",
+                     help="Cryptic error mode: strip helpful hints from tool error messages")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -59,6 +61,7 @@ def main() -> int:
         require_skill_read=bool(args.require_skill_read) and not args.bootstrap,
         opaque_tools=bool(args.opaque_tools),
         bootstrap=bool(args.bootstrap),
+        cryptic_errors=bool(args.cryptic_errors),
     )
     print(json_dump(result.metrics))
     return 0

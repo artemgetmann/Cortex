@@ -14,6 +14,9 @@ import os
 import re
 import sys
 
+# Global flag: when True, error messages omit helpful hints
+CRYPTIC_MODE = False
+
 
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -96,8 +99,42 @@ def _check_col(col: str, rows, lineno: int):
         _fail(lineno, f"Column '{col}' not found. Available: {cols_str}")
 
 
+_CRYPTIC_OVERRIDES: dict[re.Pattern[str], str] = {
+    re.compile(r"TALLY syntax:.*"): "TALLY: syntax error.",
+    re.compile(r"TALLY: unexpected text.*"): "TALLY: syntax error.",
+    re.compile(r"RANK direction must be.*"): "RANK: invalid direction.",
+    re.compile(r"RANK syntax:.*"): "RANK: syntax error.",
+    re.compile(r"KEEP syntax:.*"): "KEEP: syntax error.",
+    re.compile(r"KEEP requires word operator.*"): "KEEP: invalid operator.",
+    re.compile(r"KEEP unknown operator.*"): "KEEP: invalid operator.",
+    re.compile(r"TOSS syntax:.*"): "TOSS: syntax error.",
+    re.compile(r"TOSS requires word operator.*"): "TOSS: invalid operator.",
+    re.compile(r"TOSS unknown operator.*"): "TOSS: invalid operator.",
+    re.compile(r"DERIVE syntax:.*"): "DERIVE: syntax error.",
+    re.compile(r"MERGE syntax:.*"): "MERGE: syntax error.",
+    re.compile(r"Unknown function '(\w+)'.*"): r"Unknown function '\1'.",
+    re.compile(r"Column '(\w+)' not found\..*"): r"Column '\1' not found.",
+    re.compile(r"Unknown command '(\w+)'\..*"): r"Unknown command '\1'.",
+    re.compile(r"LOAD path must be quoted\..*"): "LOAD: invalid argument.",
+    re.compile(r"MERGE path must be quoted\..*"): "MERGE: invalid argument.",
+    re.compile(r"SHOW takes an optional.*"): "SHOW: invalid argument.",
+    re.compile(r"File not found:.*"): "File not found.",
+}
+
+
+def _strip_hints(msg: str) -> str:
+    """Replace helpful error messages with opaque versions in cryptic mode."""
+    for pattern, replacement in _CRYPTIC_OVERRIDES.items():
+        m = pattern.search(msg)
+        if m:
+            return pattern.sub(replacement, msg)
+    return msg
+
+
 def _fail(lineno: int, msg: str):
     """Print error to stderr and exit."""
+    if CRYPTIC_MODE:
+        msg = _strip_hints(msg)
     print(f"ERROR at line {lineno}: {msg}", file=sys.stderr)
     sys.exit(1)
 
@@ -382,9 +419,13 @@ def run(workdir: str, input_stream):
 
 
 def main():
+    global CRYPTIC_MODE
     parser = argparse.ArgumentParser(description="gridtool: pipeline CSV data processor")
     parser.add_argument("--workdir", required=True, help="Working directory for CSV file resolution")
+    parser.add_argument("--cryptic", action="store_true",
+                        help="Cryptic error mode: strip helpful hints from error messages")
     args = parser.parse_args()
+    CRYPTIC_MODE = args.cryptic
     if not os.path.isdir(args.workdir):
         print(f"ERROR: --workdir '{args.workdir}' is not a directory", file=sys.stderr)
         sys.exit(1)

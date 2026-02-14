@@ -34,6 +34,7 @@ def main() -> int:
     ap.add_argument("--start-session", type=int, default=9001, help="Starting session ID")
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--bootstrap", action="store_true", help="No skill docs, lessons only")
+    ap.add_argument("--cryptic-errors", action="store_true", help="Cryptic errors: strip hints from error messages")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
@@ -47,7 +48,7 @@ def main() -> int:
     print(f"\n{'='*60}")
     print(f"  Learning Curve Experiment")
     print(f"  task={args.task_id}  domain={args.domain}  bootstrap={args.bootstrap}")
-    print(f"  sessions={args.sessions}  model={args.model_executor}")
+    print(f"  cryptic_errors={args.cryptic_errors}  sessions={args.sessions}  model={args.model_executor}")
     print(f"{'='*60}\n")
 
     for i in range(args.sessions):
@@ -75,6 +76,7 @@ def main() -> int:
             require_skill_read=not args.bootstrap,
             opaque_tools=False,
             bootstrap=args.bootstrap,
+            cryptic_errors=args.cryptic_errors,
         )
 
         m = result.metrics
