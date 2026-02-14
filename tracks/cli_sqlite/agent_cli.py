@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import anthropic
 
@@ -285,6 +285,7 @@ def run_cli_agent(
     opaque_tools: bool = False,
     cryptic_errors: bool = False,
     semi_helpful_errors: bool = False,
+    on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     adapter = _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
@@ -542,6 +543,9 @@ def run_cli_agent(
                     f"[step {step:03d}] tool={canonical_name} ok={not result.is_error()} error={result.error!r}",
                     flush=True,
                 )
+
+            if on_step:
+                on_step(step, canonical_name, not result.is_error(), result.error)
 
             tool_results.append(_tool_result_block(tool_use_id, result))
 
