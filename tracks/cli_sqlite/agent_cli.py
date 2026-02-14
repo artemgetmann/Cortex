@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -315,6 +316,15 @@ def run_cli_agent(
     )
 
     domain_fragment = adapter.system_prompt_fragment()
+    if bootstrap:
+        # Strip skill-reading instructions to avoid wasting steps on read_skill
+        # with invented refs (no skill docs exist in bootstrap mode)
+        domain_fragment = re.sub(
+            r"- Before starting.*?do not guess or invent skill_ref names\.\n",
+            "",
+            domain_fragment,
+            flags=re.DOTALL,
+        )
     system_prompt = _build_system_prompt(
         task_id=task_id,
         skills_text=skills_text,
@@ -336,6 +346,10 @@ def run_cli_agent(
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
     tools = adapter.tool_defs(sorted(workspace.fixture_paths.keys()), opaque=opaque_tools)
+    if bootstrap:
+        # Remove read_skill from tool list — no skill docs in bootstrap mode
+        read_skill_api_name = "read_skill" if not opaque_tools else "probe"
+        tools = [t for t in tools if t.get("name") != read_skill_api_name]
 
     escalation_state = _load_escalation_state(base_model=model_critic)
     critic_model_for_run, escalation_state = _resolve_critic_model_for_run(

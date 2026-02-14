@@ -175,7 +175,7 @@ def load_relevant_lessons(
     if not selected:
         return "No prior lessons loaded.", 0
 
-    lines = ["Lessons from previous CLI sessions (apply only when relevant):"]
+    lines = ["Lessons from previous sessions — apply these to avoid repeating past mistakes:"]
     for lesson in selected:
         step_text = ",".join(str(step) for step in lesson.evidence_steps[:4]) if lesson.evidence_steps else "-"
         lines.append(
@@ -237,7 +237,7 @@ def _lesson_quality_score(lesson: Lesson, *, domain_keywords: re.Pattern[str] | 
 
 _KNOWN_WRONG_PATTERNS = re.compile(
     r"(?i)("
-    r"TALLY.*(?:only one|single|does not support multiple) aggregat|"
+    r"TALLY.*(?:only.*one|single|does not support multiple).*aggregat|"
     r"cannot.*multiple aggregat|"
     r"read_skill.*(?:failed|unknown|not (?:found|available|valid|have))|"
     r"skill_ref.*(?:failed|unknown|not (?:found|available|valid))"

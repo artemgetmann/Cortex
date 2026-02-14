@@ -159,9 +159,22 @@ class GridtoolAdapter:
         )
 
     def capture_final_state(self, workspace: DomainWorkspace) -> str:
-        # For gridtool, the final state is best captured from event logs
-        # since output goes to stdout. Return a hint.
-        return "See event log for gridtool SHOW outputs."
+        """Extract last successful gridtool output from event log for judge."""
+        events_path = workspace.work_dir / "events.jsonl"
+        if not events_path.exists():
+            return "(no events recorded)"
+        import json
+        last_output = None
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            try:
+                evt = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if evt.get("tool") == "run_gridtool" and evt.get("ok") and evt.get("output"):
+                last_output = evt["output"]
+        if last_output:
+            return f"Last successful gridtool output:\n{last_output[:2000]}"
+        return "(no successful gridtool output)"
 
     def system_prompt_fragment(self) -> str:
         return (
