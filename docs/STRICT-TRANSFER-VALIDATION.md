@@ -106,3 +106,27 @@ EOF
 
 Expected signature:
 - CSV output headed by `region,total,cnt` with sorted totals.
+
+## Architecture A/B Benchmark (Full vs Simplified)
+
+Use this to compare the current 3-role architecture against the simplified mode.
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_architecture_ab.py \
+  --domain fluxtool \
+  --task-id aggregate_report_holdout \
+  --learning-mode strict \
+  --sessions 10 \
+  --start-session 37000 \
+  --max-steps 8 \
+  --bootstrap \
+  --mixed-errors \
+  --clear-lessons-between-arms \
+  --output-json tracks/cli_sqlite/artifacts/ab/manual_fluxtool_ab.json \
+  --output-md tracks/cli_sqlite/artifacts/ab/manual_fluxtool_ab.md
+```
+
+Expected signature:
+- Output table includes `full` and `simplified` arms with pass-rate and error deltas.
+- JSON payload includes `config`, `arms`, `deltas`, `runs`, and optional `caveats`.
+- Canonical interpretation should be recorded in `docs/AB-FINDINGS.md`.
