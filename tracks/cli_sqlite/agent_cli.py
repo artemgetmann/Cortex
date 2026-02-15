@@ -61,6 +61,8 @@ READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 LEARNING_MODES = ("strict", "legacy")
 DEFAULT_LEARNING_MODE = "legacy"
+ARCHITECTURE_MODES = ("full", "simplified")
+DEFAULT_ARCHITECTURE_MODE = "full"
 
 
 @dataclass
@@ -380,6 +382,14 @@ def _normalize_learning_mode(learning_mode: str) -> str:
     return mode
 
 
+def _normalize_architecture_mode(architecture_mode: str) -> str:
+    mode = str(architecture_mode).strip().lower()
+    if mode not in ARCHITECTURE_MODES:
+        allowed = ", ".join(ARCHITECTURE_MODES)
+        raise ValueError(f"Unknown architecture mode: {architecture_mode!r}. Allowed: {allowed}")
+    return mode
+
+
 def prepare_cli_prompt_preview(
     *,
     task_id: str,
@@ -487,6 +497,7 @@ def run_cli_agent(
     model_judge: str | None = None,
     domain: str = "sqlite",
     learning_mode: str = DEFAULT_LEARNING_MODE,
+    architecture_mode: str = DEFAULT_ARCHITECTURE_MODE,
     bootstrap: bool = False,
     posttask_mode: str = "candidate",
     posttask_learn: bool = True,
@@ -505,6 +516,7 @@ def run_cli_agent(
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     learning_mode = _normalize_learning_mode(learning_mode)
+    architecture_mode = _normalize_architecture_mode(architecture_mode)
     # Local retrieval provider is intentionally lightweight and deterministic.
     # Strict mode uses it for critic context; legacy ignores it.
     knowledge_provider = LocalDocsKnowledgeProvider()
@@ -610,8 +622,14 @@ def run_cli_agent(
         state=escalation_state,
     )
 
-    # Resolve judge model
-    effective_judge_model = model_judge or default_judge_model(model_executor)
+    contract_path = TASKS_ROOT / task_id / "CONTRACT.json"
+    has_contract = contract_path.exists()
+
+    # Simplified architecture removes the separate judge model and reuses executor.
+    if architecture_mode == "simplified":
+        effective_judge_model = model_executor
+    else:
+        effective_judge_model = model_judge or default_judge_model(model_executor)
 
     metrics: dict[str, Any] = {
         "session_id": session_id,
@@ -619,6 +637,7 @@ def run_cli_agent(
         "task": task_text,
         "domain": domain,
         "learning_mode": learning_mode,
+        "architecture_mode": architecture_mode,
         "bootstrap": bootstrap,
         "mixed_errors": mixed_errors,
         "steps": 0,
@@ -632,6 +651,7 @@ def run_cli_agent(
         "lesson_activations": 0,
         "lessons_generated": 0,
         "posttask_patch_attempted": False,
+        "posttask_skill_patching_skipped_by_mode": False,
         "posttask_candidates_queued": 0,
         "posttask_patch_applied": 0,
         "auto_promotion_applied": 0,
@@ -796,8 +816,7 @@ def run_cli_agent(
     events = read_events(paths.events_path)
 
     # Deterministic eval (CONTRACT.json) — works for domains that have contracts
-    contract_path = TASKS_ROOT / task_id / "CONTRACT.json"
-    if contract_path.exists():
+    if has_contract:
         # SQLite-style deterministic eval
         eval_result = evaluate_cli_session(
             task=task_text,
@@ -813,7 +832,7 @@ def run_cli_agent(
         eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
 
     # LLM Judge — always run if no contract, or if contract failed
-    use_llm_judge = not contract_path.exists() or not metrics.get("eval_passed", False)
+    use_llm_judge = not has_contract or not metrics.get("eval_passed", False)
     if use_llm_judge:
         final_state = adapter.capture_final_state(workspace)
         judge_result: JudgeResult = llm_judge(
@@ -830,7 +849,7 @@ def run_cli_agent(
         metrics["judge_critique"] = judge_result.raw_response
 
         # If no CONTRACT exists, use judge as primary eval signal
-        if not contract_path.exists():
+        if not has_contract:
             metrics["eval_passed"] = judge_result.passed
             metrics["eval_score"] = judge_result.score
             metrics["eval_reasons"] = judge_result.reasons
@@ -839,7 +858,8 @@ def run_cli_agent(
     critic_no_updates = False
 
     if posttask_learn and skill_manifest_entries:
-        metrics["posttask_patch_attempted"] = True
+        patching_enabled = architecture_mode == "full"
+        metrics["posttask_patch_attempted"] = patching_enabled
         tail_events = [
             {
                 "step": row.get("step"),
@@ -875,9 +895,10 @@ def run_cli_agent(
         # Metrics always include provenance for observability/debugging, even
         # when strict mode yields no retrieved chunks.
         metrics["critic_context_sources"] = critic_context_sources
+        lesson_model_for_run = model_executor if architecture_mode == "simplified" else critic_model_for_run
         lesson_result: LessonGenerationResult = generate_lessons(
             client=client,
-            model=critic_model_for_run,
+            model=lesson_model_for_run,
             session_id=session_id,
             task_id=task_id,
             task=task_text,
@@ -897,96 +918,100 @@ def run_cli_agent(
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lesson_result.filtered_lessons)
         prune_lessons(LESSONS_PATH, max_per_task=20, domain_keywords=domain_keywords)
 
-        proposed_updates, confidence, reflection_raw = propose_skill_updates(
-            client=client,
-            model=critic_model_for_run,
-            task=task_text,
-            metrics=metrics,
-            eval_result=eval_result,
-            events_tail=tail_events,
-            routed_skill_refs=routed_refs,
-            read_skill_refs=sorted(read_skill_refs),
-            skill_snapshots=skill_snapshots,
-            domain_name=adapter.name,
-        )
-        if not proposed_updates:
-            parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
-            if parsed_updates:
-                proposed_updates = parsed_updates
-                confidence = parsed_confidence
+        # Simplified architecture stores lessons only and skips post-task skill patches.
+        if not patching_enabled:
+            metrics["posttask_skill_patching_skipped_by_mode"] = True
+        else:
+            proposed_updates, confidence, reflection_raw = propose_skill_updates(
+                client=client,
+                model=critic_model_for_run,
+                task=task_text,
+                metrics=metrics,
+                eval_result=eval_result,
+                events_tail=tail_events,
+                routed_skill_refs=routed_refs,
+                read_skill_refs=sorted(read_skill_refs),
+                skill_snapshots=skill_snapshots,
+                domain_name=adapter.name,
+            )
+            if not proposed_updates:
+                parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
+                if parsed_updates:
+                    proposed_updates = parsed_updates
+                    confidence = parsed_confidence
 
-        critic_no_updates = len(proposed_updates) == 0
-        required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
-        allowed_refs = {update.skill_ref for update in proposed_updates}
+            critic_no_updates = len(proposed_updates) == 0
+            required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
+            allowed_refs = {update.skill_ref for update in proposed_updates}
 
-        if posttask_mode == "direct":
-            patch_result = apply_skill_updates(
+            if posttask_mode == "direct":
+                patch_result = apply_skill_updates(
+                    entries=skill_manifest_entries,
+                    updates=proposed_updates,
+                    confidence=confidence,
+                    skills_root=SKILLS_ROOT,
+                    manifest_path=MANIFEST_PATH,
+                    required_skill_digests=required_digests,
+                    allowed_skill_refs=allowed_refs,
+                )
+                metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+            else:
+                patch_result = queue_skill_update_candidates(
+                    queue_path=QUEUE_PATH,
+                    updates=proposed_updates,
+                    confidence=confidence,
+                    session_id=session_id,
+                    task_id=task_id,
+                    required_skill_digests=required_digests,
+                    allowed_skill_refs=allowed_refs,
+                    evaluation=eval_result,
+                )
+                metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
+
+            write_event(
+                paths.events_path,
+                {
+                    "step": int(metrics["steps"]) + 1,
+                    "tool": "posttask_hook",
+                    "tool_input": {"mode": posttask_mode, "critic_model": critic_model_for_run},
+                    "ok": True,
+                    "error": None,
+                    "output": json.dumps(
+                        {
+                            "confidence": confidence,
+                            "update_count": len(proposed_updates),
+                            "result": patch_result,
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            )
+
+            promotion_result = auto_promote_queued_candidates(
                 entries=skill_manifest_entries,
-                updates=proposed_updates,
-                confidence=confidence,
+                queue_path=QUEUE_PATH,
+                promoted_path=PROMOTED_PATH,
+                sessions_root=SESSIONS_ROOT,
+                task_id=task_id,
                 skills_root=SKILLS_ROOT,
                 manifest_path=MANIFEST_PATH,
-                required_skill_digests=required_digests,
-                allowed_skill_refs=allowed_refs,
+                min_runs=promotion_min_runs,
+                min_delta=promotion_min_delta,
+                max_regressions=promotion_max_regressions,
             )
-            metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
-        else:
-            patch_result = queue_skill_update_candidates(
-                queue_path=QUEUE_PATH,
-                updates=proposed_updates,
-                confidence=confidence,
-                session_id=session_id,
-                task_id=task_id,
-                required_skill_digests=required_digests,
-                allowed_skill_refs=allowed_refs,
-                evaluation=eval_result,
+            metrics["auto_promotion_applied"] = int(promotion_result.get("applied", 0))
+            metrics["auto_promotion_reason"] = promotion_result.get("reason")
+            write_event(
+                paths.events_path,
+                {
+                    "step": int(metrics["steps"]) + 2,
+                    "tool": "promotion_gate",
+                    "tool_input": {"task_id": task_id, "min_runs": promotion_min_runs, "min_delta": promotion_min_delta},
+                    "ok": True,
+                    "error": None,
+                    "output": json.dumps(promotion_result, ensure_ascii=True),
+                },
             )
-            metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
-
-        write_event(
-            paths.events_path,
-            {
-                "step": int(metrics["steps"]) + 1,
-                "tool": "posttask_hook",
-                "tool_input": {"mode": posttask_mode, "critic_model": critic_model_for_run},
-                "ok": True,
-                "error": None,
-                "output": json.dumps(
-                    {
-                        "confidence": confidence,
-                        "update_count": len(proposed_updates),
-                        "result": patch_result,
-                    },
-                    ensure_ascii=True,
-                ),
-            },
-        )
-
-        promotion_result = auto_promote_queued_candidates(
-            entries=skill_manifest_entries,
-            queue_path=QUEUE_PATH,
-            promoted_path=PROMOTED_PATH,
-            sessions_root=SESSIONS_ROOT,
-            task_id=task_id,
-            skills_root=SKILLS_ROOT,
-            manifest_path=MANIFEST_PATH,
-            min_runs=promotion_min_runs,
-            min_delta=promotion_min_delta,
-            max_regressions=promotion_max_regressions,
-        )
-        metrics["auto_promotion_applied"] = int(promotion_result.get("applied", 0))
-        metrics["auto_promotion_reason"] = promotion_result.get("reason")
-        write_event(
-            paths.events_path,
-            {
-                "step": int(metrics["steps"]) + 2,
-                "tool": "promotion_gate",
-                "tool_input": {"task_id": task_id, "min_runs": promotion_min_runs, "min_delta": promotion_min_delta},
-                "ok": True,
-                "error": None,
-                "output": json.dumps(promotion_result, ensure_ascii=True),
-            },
-        )
 
     escalation_state = _escalate_if_needed(
         state=escalation_state,

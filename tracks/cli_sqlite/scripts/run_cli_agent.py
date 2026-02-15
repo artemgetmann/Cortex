@@ -9,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
+    ARCHITECTURE_MODES,
     DEFAULT_CRITIC_MODEL,
+    DEFAULT_ARCHITECTURE_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LEARNING_MODE,
     LEARNING_MODES,
@@ -26,6 +28,7 @@ def main() -> int:
     ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool"],
                      help="Domain adapter to use (default: sqlite)")
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
+    ap.add_argument("--architecture-mode", default=DEFAULT_ARCHITECTURE_MODE, choices=ARCHITECTURE_MODES)
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None,
@@ -57,6 +60,7 @@ def main() -> int:
         max_steps=args.max_steps,
         domain=args.domain,
         learning_mode=args.learning_mode,
+        architecture_mode=args.architecture_mode,
         model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
         model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
         model_judge=args.model_judge.strip() if args.model_judge else None,
