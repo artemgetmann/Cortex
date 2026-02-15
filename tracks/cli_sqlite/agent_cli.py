@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -14,6 +15,10 @@ from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, Too
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
+from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
+from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
+from tracks.cli_sqlite.lesson_retrieval_v2 import retrieve_on_error, retrieve_pre_run
+from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, migrate_legacy_lessons, upsert_lesson_records
 from tracks.cli_sqlite.learning_cli import (
     find_lessons_for_error,
     generate_lessons,
@@ -49,6 +54,8 @@ TASKS_ROOT = TRACK_ROOT / "tasks"
 LEARNING_ROOT = TRACK_ROOT / "learning"
 SESSIONS_ROOT = TRACK_ROOT / "sessions"
 LESSONS_PATH = LEARNING_ROOT / "lessons.jsonl"
+LESSONS_V2_PATH = LEARNING_ROOT / "lessons_v2.jsonl"
+MEMORY_EVENTS_PATH = LEARNING_ROOT / "memory_events.jsonl"
 QUEUE_PATH = LEARNING_ROOT / "pending_skill_patches.json"
 PROMOTED_PATH = LEARNING_ROOT / "promoted_skill_patches.json"
 ESCALATION_STATE_PATH = LEARNING_ROOT / "critic_escalation_state.json"
@@ -111,6 +118,10 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
 
 
 def _tier_from_model(model_name: str) -> str:
@@ -240,6 +251,56 @@ def _build_system_prompt(
         "Prior lessons:\n"
         f"{lessons_text}\n"
     )
+
+
+def _format_v2_lesson_block(matches: list[Any]) -> tuple[str, list[str]]:
+    if not matches:
+        return "", []
+    lines = ["Memory V2 lessons (high-signal):"]
+    lesson_ids: list[str] = []
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None:
+            continue
+        lesson_ids.append(str(getattr(lesson, "lesson_id", "")))
+        score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
+        lines.append(f"- ({score_value:.2f}) {lesson.rule_text}")
+    return "\n".join(lines), [value for value in lesson_ids if value]
+
+
+def _load_recent_eval_scores(
+    *,
+    sessions_root: Path,
+    task_id: str,
+    domain: str,
+    limit: int = 6,
+) -> list[float]:
+    scores: list[float] = []
+    candidates = sorted(
+        [path for path in sessions_root.glob("session-*/metrics.json") if path.is_file()],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for metrics_path in candidates:
+        try:
+            row = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_id", "")).strip() != task_id:
+            continue
+        if str(row.get("domain", "")).strip() != domain:
+            continue
+        try:
+            score = float(row.get("eval_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        scores.append(score)
+        if len(scores) >= limit:
+            break
+    return list(reversed(scores))
 
 
 def _load_skill_snapshots(
@@ -444,6 +505,17 @@ def prepare_cli_prompt_preview(
         max_sessions=8,
         domain_keywords=domain_keywords,
     )
+    migrate_legacy_lessons(legacy_path=LESSONS_PATH, v2_path=LESSONS_V2_PATH)
+    v2_matches, _ = retrieve_pre_run(
+        path=LESSONS_V2_PATH,
+        task_id=task_id,
+        domain=domain,
+        task_text=task_text,
+        max_results=6,
+    )
+    v2_block, _ = _format_v2_lesson_block(v2_matches)
+    if v2_block:
+        lessons_text = f"{lessons_text}\n\n{v2_block}".strip()
     domain_fragment = adapter.system_prompt_fragment()
     if bootstrap:
         domain_fragment = re.sub(
@@ -572,6 +644,19 @@ def run_cli_agent(
         max_sessions=8,
         domain_keywords=domain_keywords,
     )
+    # Keep V2 backward-compatible with legacy lessons by migrating legacy rows
+    # into the v2 store before retrieval. The migration is idempotent.
+    migrate_legacy_lessons(legacy_path=LESSONS_PATH, v2_path=LESSONS_V2_PATH)
+    prerun_v2_matches, _ = retrieve_pre_run(
+        path=LESSONS_V2_PATH,
+        task_id=task_id,
+        domain=domain,
+        task_text=task_text,
+        max_results=8,
+    )
+    prerun_v2_block, prerun_v2_ids = _format_v2_lesson_block(prerun_v2_matches)
+    if prerun_v2_block:
+        lessons_text = f"{lessons_text}\n\n{prerun_v2_block}".strip()
     # Load lesson objects for error-triggered injection during the run
     loaded_lesson_objects = load_lesson_objects(
         path=LESSONS_PATH,
@@ -648,8 +733,18 @@ def run_cli_agent(
         "required_skill_refs": sorted(required_skill_refs),
         "require_skill_read": require_skill_read,
         "lessons_loaded": lessons_loaded,
+        "v2_lessons_loaded": len(prerun_v2_ids),
+        "v2_prerun_lesson_ids": prerun_v2_ids,
         "lesson_activations": 0,
+        "v2_lesson_activations": 0,
+        "v2_error_events": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_promoted": 0,
+        "v2_suppressed": 0,
+        "v2_fingerprint_recurrence_before": 0,
+        "v2_fingerprint_recurrence_after": 0,
         "lessons_generated": 0,
+        "v2_lessons_generated": 0,
         "posttask_patch_attempted": False,
         "posttask_skill_patching_skipped_by_mode": False,
         "posttask_candidates_queued": 0,
@@ -683,6 +778,10 @@ def run_cli_agent(
 
     executor_tool_name = adapter.executor_tool_name
     read_skill_refs: set[str] = set()
+    run_error_events: list[ErrorEvent] = []
+    seen_error_fingerprints: list[str] = []
+    lesson_activation_records: list[dict[str, Any]] = []
+    contradiction_loser_counts: dict[str, int] = defaultdict(int)
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
@@ -766,19 +865,119 @@ def run_cli_agent(
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
 
-            # Error-triggered lesson injection: when executor fails, check if
-            # any loaded lessons match the error and append hints to help the
-            # agent self-correct on the next step (same run, not next session).
-            if result.is_error() and canonical_name == executor_tool_name and loaded_lesson_objects:
-                hints = find_lessons_for_error(
-                    result.error or "",
-                    loaded_lesson_objects,
-                    learning_mode=learning_mode,
+            # Memory V2 capture + retrieval path:
+            # - capture failure events via universal channels
+            # - fetch fingerprint-aligned hints in the same run
+            # - fallback to legacy lesson matcher if V2 has no signal yet
+            if result.is_error() and canonical_name == executor_tool_name:
+                error_text = result.error or ""
+                action_state = {
+                    "tool": canonical_name,
+                    "tool_input": tool_input,
+                    "step": step,
+                    "task_id": task_id,
+                    "domain": domain,
+                }
+                error_fingerprint = build_error_fingerprint(error=error_text, state=action_state, action=tool_input)
+                error_tags = extract_tags(error=error_text, state=action_state, action=tool_input)
+
+                failure_events = [
+                    ErrorEvent(
+                        channel="hard_failure",
+                        error=error_text,
+                        state=action_state,
+                        action=tool_input,
+                        tags=tuple(error_tags),
+                        fingerprint=error_fingerprint,
+                        metadata={"session_id": session_id, "step": step},
+                    )
+                ]
+                if any(tag in {"constraint", "constraint_failed"} for tag in error_tags):
+                    failure_events.append(
+                        ErrorEvent(
+                            channel="constraint_failure",
+                            error=error_text,
+                            state=action_state,
+                            action=tool_input,
+                            tags=tuple(error_tags),
+                            fingerprint=error_fingerprint,
+                            metadata={"session_id": session_id, "step": step},
+                        )
+                    )
+                if seen_error_fingerprints.count(error_fingerprint) >= 1:
+                    # Repeated fingerprint in one run is a generic "no progress"
+                    # signal and should be tracked independent of domain semantics.
+                    failure_events.append(
+                        ErrorEvent(
+                            channel="progress_signal",
+                            error="no_progress",
+                            state=action_state,
+                            action=tool_input,
+                            tags=tuple(sorted(set(error_tags) | {"no_progress", "state_stall"})),
+                            fingerprint=error_fingerprint,
+                            metadata={"session_id": session_id, "step": step, "progress_signal": -1.0},
+                        )
+                    )
+                if step >= max(3, int(max_steps * 0.5)):
+                    failure_events.append(
+                        ErrorEvent(
+                            channel="efficiency_signal",
+                            error="efficiency_regression",
+                            state=action_state,
+                            action=tool_input,
+                            tags=tuple(sorted(set(error_tags) | {"efficiency_signal"})),
+                            fingerprint=error_fingerprint,
+                            metadata={"session_id": session_id, "step": step, "efficiency_signal": -1.0},
+                        )
+                    )
+
+                memory_events_path = paths.session_dir / "memory_events.jsonl"
+                for event in failure_events:
+                    event_row = event.to_dict()
+                    write_event(memory_events_path, event_row)
+                    write_event(MEMORY_EVENTS_PATH, event_row)
+                    run_error_events.append(event)
+                    metrics["v2_error_events"] += 1
+                seen_error_fingerprints.append(error_fingerprint)
+
+                v2_hints: list[str] = []
+                v2_matches, conflict_losers = retrieve_on_error(
+                    path=LESSONS_V2_PATH,
+                    error_text=error_text,
+                    fingerprint=error_fingerprint,
+                    query_tags=error_tags,
+                    max_results=2,
                 )
-                if hints:
-                    hint_block = "\n\n--- HINT from prior sessions ---\n" + "\n".join(f"- {h}" for h in hints)
+                for loser in conflict_losers:
+                    contradiction_loser_counts[loser] += 1
+                if v2_matches:
+                    for match in v2_matches:
+                        v2_hints.append(match.lesson.rule_text)
+                    lesson_activation_records.append(
+                        {
+                            "step": step,
+                            "fingerprint": error_fingerprint,
+                            "lesson_ids": [match.lesson.lesson_id for match in v2_matches],
+                        }
+                    )
+                    metrics["lesson_activations"] += len(v2_hints)
+                    metrics["v2_lesson_activations"] += len(v2_hints)
+
+                # Legacy fallback keeps older runs usable while v2 memory warms up.
+                legacy_hints: list[str] = []
+                if not v2_hints and loaded_lesson_objects:
+                    legacy_hints = find_lessons_for_error(
+                        error_text,
+                        loaded_lesson_objects,
+                        learning_mode=learning_mode,
+                    )
+                    if legacy_hints:
+                        metrics["lesson_activations"] += len(legacy_hints)
+
+                merged_hints = v2_hints or legacy_hints
+                if merged_hints:
+                    hint_block = "\n\n--- HINT from prior sessions ---\n" + "\n".join(f"- {hint}" for hint in merged_hints)
                     result = ToolResult(error=(result.error or "") + hint_block)
-                    metrics["lesson_activations"] += len(hints)
 
             if result.is_error():
                 metrics["tool_errors"] += 1
@@ -917,6 +1116,114 @@ def run_cli_agent(
         metrics["critic_rejected_lessons"] = [_serialize_lesson(lesson) for lesson in rejected]
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lesson_result.filtered_lessons)
         prune_lessons(LESSONS_PATH, max_per_task=20, domain_keywords=domain_keywords)
+
+        # Memory V2 candidate generation uses executor self-reflection regardless
+        # of architecture mode so utility can be measured against one generator.
+        v2_reflection: LessonGenerationResult = generate_lessons(
+            client=client,
+            model=model_executor,
+            session_id=session_id,
+            task_id=task_id,
+            task=task_text,
+            eval_result=eval_result,
+            events_tail=tail_events,
+            skill_refs_used=sorted(read_skill_refs),
+            domain_name=domain,
+            learning_mode=learning_mode,
+            critic_context=critic_context,
+            domain_keywords=domain_keywords,
+        )
+        hard_events = [event for event in run_error_events if event.channel == "hard_failure"]
+        fingerprint_counts = Counter(event.fingerprint for event in hard_events)
+        recurring_fingerprints = [fingerprint for fingerprint, count in fingerprint_counts.items() if count >= 2]
+        prioritized_fingerprints = recurring_fingerprints or [fingerprint for fingerprint, _ in fingerprint_counts.most_common(3)]
+        v2_candidates: list[LessonRecord] = []
+        for lesson in v2_reflection.filtered_lessons:
+            tags = extract_tags(error=lesson.lesson)
+            v2_candidates.append(
+                LessonRecord.from_candidate(
+                    session_id=session_id,
+                    task_id=task_id,
+                    task=task_text,
+                    domain=domain,
+                    rule_text=lesson.lesson,
+                    trigger_fingerprints=prioritized_fingerprints,
+                    tags=tags,
+                    status="candidate",
+                )
+            )
+        v2_store_result = upsert_lesson_records(LESSONS_V2_PATH, v2_candidates)
+        metrics["v2_lessons_generated"] = int(v2_store_result.get("inserted", 0))
+        metrics["v2_lessons_merged"] = int(v2_store_result.get("merged", 0))
+        metrics["v2_conflict_links"] = int(v2_store_result.get("conflict_links", 0))
+        metrics["v2_fingerprint_counts"] = dict(fingerprint_counts)
+        metrics["v2_fingerprint_recurrence"] = sum(1 for count in fingerprint_counts.values() if count > 1)
+        metrics["v2_fingerprint_recurrence_before"] = metrics["v2_fingerprint_recurrence"]
+
+        recent_scores = _load_recent_eval_scores(sessions_root=SESSIONS_ROOT, task_id=task_id, domain=domain)
+        baseline_score = (sum(recent_scores) / float(len(recent_scores))) if recent_scores else None
+        referee_gain = None if baseline_score is None else float(metrics.get("eval_score", 0.0) or 0.0) - baseline_score
+
+        activations_by_lesson: dict[str, dict[str, float]] = defaultdict(lambda: {"error": 0.0, "eff": 0.0, "count": 0.0})
+        helped = 0
+        fingerprints_recur_after: set[str] = set()
+        for activation in lesson_activation_records:
+            step_idx = int(activation.get("step", 0) or 0)
+            fingerprint = str(activation.get("fingerprint", ""))
+            repeats_after = sum(
+                1
+                for event in hard_events
+                if event.fingerprint == fingerprint and int(event.metadata.get("step", 0) or 0) > step_idx
+            )
+            error_reduction = 1.0 if repeats_after == 0 else -_clamp(repeats_after / 3.0, 0.0, 1.0)
+            step_efficiency_gain = _clamp(1.0 - (float(metrics.get("steps", 0) or 0) / float(max(1, max_steps))), -1.0, 1.0)
+            if error_reduction > 0:
+                helped += 1
+            if repeats_after > 0:
+                fingerprints_recur_after.add(fingerprint)
+            for lesson_id in activation.get("lesson_ids", []):
+                lesson_key = str(lesson_id).strip()
+                if not lesson_key:
+                    continue
+                bucket = activations_by_lesson[lesson_key]
+                bucket["error"] += error_reduction
+                bucket["eff"] += step_efficiency_gain
+                bucket["count"] += 1.0
+
+        outcomes: list[LessonOutcome] = []
+        for lesson_id, bucket in activations_by_lesson.items():
+            count = max(1.0, bucket["count"])
+            outcomes.append(
+                LessonOutcome(
+                    lesson_id=lesson_id,
+                    error_reduction=bucket["error"] / count,
+                    step_efficiency_gain=bucket["eff"] / count,
+                    referee_score_gain=referee_gain,
+                    major_regression=bool(metrics.get("eval_score", 0.0) < 0.2 and metrics.get("tool_errors", 0) > 0),
+                    contradiction_lost=False,
+                )
+            )
+        for lesson_id, count in contradiction_loser_counts.items():
+            if count <= 0:
+                continue
+            outcomes.append(
+                LessonOutcome(
+                    lesson_id=lesson_id,
+                    error_reduction=0.0,
+                    step_efficiency_gain=0.0,
+                    referee_score_gain=referee_gain,
+                    contradiction_lost=True,
+                )
+            )
+        promotion_result_v2 = apply_outcomes(path=LESSONS_V2_PATH, outcomes=outcomes)
+        metrics["v2_promoted"] = int(promotion_result_v2.get("promoted", 0))
+        metrics["v2_suppressed"] = int(promotion_result_v2.get("suppressed", 0))
+        metrics["v2_outcomes_updated"] = int(promotion_result_v2.get("updated", 0))
+        metrics["v2_fingerprint_recurrence_after"] = len(fingerprints_recur_after)
+        metrics["v2_retrieval_help_ratio"] = round(
+            float(helped) / float(max(1, len(lesson_activation_records))),
+            4,
+        )
 
         # Simplified architecture stores lessons only and skips post-task skill patches.
         if not patching_enabled:
