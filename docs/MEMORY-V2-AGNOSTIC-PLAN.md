@@ -234,3 +234,34 @@ This is the core autonomous learning loop: attempt -> detect failure/progress ->
 - web-scale knowledge graph extraction.
 
 These can be phase-2 upgrades after memory health is proven with this lightweight hybrid.
+
+## Implementation status (2026-02-15)
+
+Implemented in `exp/memory-v2-agnostic`:
+
+- [x] Universal failure capture module (`tracks/cli_sqlite/error_capture.py`)
+  - fingerprint normalization from error/state/action
+  - generic tag extraction for CLI and non-CLI contexts
+  - channelized event representation + serialization
+- [x] Lesson store V2 (`tracks/cli_sqlite/lesson_store_v2.py`)
+  - JSONL lifecycle states: `candidate|promoted|suppressed|archived`
+  - dedup + conflict-linking + archive support
+  - legacy adapter/migration helper for `learning/lessons.jsonl`
+- [x] Retrieval V2 (`tracks/cli_sqlite/lesson_retrieval_v2.py`)
+  - pre-run + on-error retrieval
+  - weighted ranking formula from this plan
+  - guards for session/tag caps and conflict-aware selection
+- [x] Promotion/suppression V2 (`tracks/cli_sqlite/lesson_promotion_v2.py`)
+  - utility formulas with/without referee score
+  - promotion and suppression gates from this plan
+- [x] Agent loop integration (`tracks/cli_sqlite/agent_cli.py`)
+  - failed-step ErrorEvent capture
+  - on-error retrieval + hint injection
+  - end-of-run candidate generation + utility update
+  - deterministic evaluator + LLM judge behavior preserved
+- [x] Benchmark tooling
+  - `tracks/cli_sqlite/scripts/run_memory_stability.py`
+  - `tracks/cli_sqlite/scripts/report_memory_health.py`
+- [x] Tests added
+  - `tracks/cli_sqlite/tests/test_error_capture_v2.py`
+  - `tracks/cli_sqlite/tests/test_lesson_memory_v2.py`
