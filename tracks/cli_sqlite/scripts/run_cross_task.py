@@ -125,7 +125,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Cross-task transfer experiment")
     ap.add_argument("--train-task", required=True, help="Task to train on first")
     ap.add_argument("--test-tasks", nargs="+", required=True, help="Tasks to test transfer on")
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
     ap.add_argument("--train-sessions", type=int, default=3, help="Training sessions on source task")
     ap.add_argument("--test-sessions", type=int, default=5, help="Test sessions per target task")
     ap.add_argument("--start-session", type=int, default=11001, help="Starting session ID")

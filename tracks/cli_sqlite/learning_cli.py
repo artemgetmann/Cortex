@@ -9,6 +9,8 @@ from typing import Any
 
 
 ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail", "domain_detail", "negative"}
+LEARNING_MODES = ("strict", "legacy")
+DEFAULT_LEARNING_MODE = "legacy"
 
 
 def _tokenize(text: str) -> set[str]:
@@ -43,6 +45,14 @@ def _extract_json_array(raw: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _normalize_learning_mode(learning_mode: str) -> str:
+    mode = str(learning_mode).strip().lower()
+    if mode not in LEARNING_MODES:
+        allowed = ", ".join(LEARNING_MODES)
+        raise ValueError(f"Unknown learning mode: {learning_mode!r}. Allowed: {allowed}")
+    return mode
 
 
 @dataclass(frozen=True)
@@ -320,17 +330,32 @@ _ERROR_COMMAND_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 
-def find_lessons_for_error(
+_STRICT_TAG_PATTERNS: dict[str, re.Pattern[str]] = {
+    "path_quote": re.compile(r'(?i)\bquote|quoted|path|file|"\w+'),
+    "arrow_syntax": re.compile(r"(?i)->|=>|arrow|group"),
+    "function_case": re.compile(r"(?i)lowercase|uppercase|case.?sensitive|function"),
+    "operator_word": re.compile(r"(?i)\boperator|eq|neq|gt|lt|gte|lte|is|isnt|above|below|atleast|atmost"),
+    "column_reference": re.compile(r"(?i)\bcolumn|field|alias|missing alias|not found"),
+    "sort_direction": re.compile(r"(?i)\basc|desc|up|down|direction|rank|sort"),
+    "join_merge": re.compile(r"(?i)\bmerge|join|attach|on\b|by\b"),
+    "command_name": re.compile(r"(?i)\bunknown command|valid commands|syntax"),
+}
+
+
+def _extract_tags(text: str) -> set[str]:
+    tags: set[str] = set()
+    for tag, pattern in _STRICT_TAG_PATTERNS.items():
+        if pattern.search(text):
+            tags.add(tag)
+    return tags
+
+
+def _find_lessons_for_error_legacy(
     error_text: str,
     lessons: list[Lesson],
     *,
-    max_hints: int = 3,
+    max_hints: int,
 ) -> list[str]:
-    """Find lessons relevant to a specific error message.
-
-    Matches the error text against lesson text to find command-specific hints.
-    Returns formatted hint strings ready to append to tool_result.
-    """
     if not error_text or not lessons:
         return []
 
@@ -373,6 +398,62 @@ def find_lessons_for_error(
 
     matched.sort(key=lambda x: x[0], reverse=True)
     return [text for _, text in matched[:max_hints]]
+
+
+def _find_lessons_for_error_strict(
+    error_text: str,
+    lessons: list[Lesson],
+    *,
+    max_hints: int,
+) -> list[str]:
+    """Generic strict-mode retrieval using semantic + tag overlap."""
+    if not error_text or not lessons:
+        return []
+
+    error_tags = _extract_tags(error_text)
+    ranked: list[tuple[float, str]] = []
+    for lesson in lessons:
+        text = lesson.lesson
+        score = _jaccard(error_text, text)
+        lesson_tags = _extract_tags(text)
+        shared_tags = error_tags & lesson_tags
+        if shared_tags:
+            score += 0.35 * len(shared_tags)
+        if lesson.category == "negative":
+            score += 0.1
+        if "WRONG:" in text and "CORRECT:" in text:
+            score += 0.05
+        if score >= 0.12:
+            ranked.append((score, text))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    seen: set[str] = set()
+    selected: list[str] = []
+    for _, text in ranked:
+        if text in seen:
+            continue
+        seen.add(text)
+        selected.append(text)
+        if len(selected) >= max_hints:
+            break
+    return selected
+
+
+def find_lessons_for_error(
+    error_text: str,
+    lessons: list[Lesson],
+    *,
+    learning_mode: str = DEFAULT_LEARNING_MODE,
+    max_hints: int | None = None,
+) -> list[str]:
+    """Find error-relevant lesson hints for runtime correction."""
+    mode = _normalize_learning_mode(learning_mode)
+    if mode == "strict":
+        # Strict mode intentionally caps hint injection to avoid over-scaffolding.
+        hint_cap = 2 if max_hints is None else min(2, max(1, int(max_hints)))
+        return _find_lessons_for_error_strict(error_text, lessons, max_hints=hint_cap)
+    hint_cap = 3 if max_hints is None else max(1, int(max_hints))
+    return _find_lessons_for_error_legacy(error_text, lessons, max_hints=hint_cap)
 
 
 def filter_lessons(lessons: list[Lesson], *, min_quality: float = 0.15, domain_keywords: re.Pattern[str] | None = None) -> list[Lesson]:
@@ -422,61 +503,92 @@ def generate_lessons(
     events_tail: list[dict[str, Any]],
     skill_refs_used: list[str],
     domain_name: str = "sqlite",
+    learning_mode: str = DEFAULT_LEARNING_MODE,
+    critic_context: str = "",
     domain_keywords: re.Pattern[str] | None = None,
 ) -> LessonGenerationResult:
+    mode = _normalize_learning_mode(learning_mode)
     passed = bool(eval_result.get("passed", False))
     try:
         score = float(eval_result.get("score", 0.0))
     except (TypeError, ValueError):
         score = 0.0
 
-    if passed and score >= 1.0:
-        # Generate positive lessons from successes — record what worked
-        system = (
-            f"You are a post-run {domain_name} learning critic analyzing a SUCCESSFUL run.\n"
-            "Return STRICT JSON array only. Each item must match:\n"
-            '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
-            "Rules:\n"
-            "- Extract the key syntax patterns and commands that made this run succeed.\n"
-            "- Each lesson MUST include exact command syntax, function names, or operator names from the events.\n"
-            "- Focus on domain-specific syntax that a future agent would need to know.\n"
-            "- REJECT generic advice. Only record concrete syntax patterns.\n"
-            f"- Good example for gridtool: 'TALLY groups with arrow syntax: TALLY col -> alias=func(agg_col), functions must be lowercase (sum, count, avg)'\n"
-            f"- Good example: 'LOAD requires quoted path: LOAD \"file.csv\", KEEP/TOSS use word operators: eq, neq, gt, lt, gte, lte'\n"
-            "- Bad: 'The agent completed the task successfully'\n"
-            "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
-            "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
-            "- 2 to 5 lessons total. Extract EACH distinct syntax rule used.\n"
-        )
+    if mode == "strict":
+        if passed and score >= 1.0:
+            system = (
+                "You are a post-run learning critic analyzing a SUCCESSFUL CLI run.\n"
+                "Return STRICT JSON array only. Each item must match:\n"
+                '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+                "Rules:\n"
+                "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
+                "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
+                "- Include exact command/operator/function tokens that actually appeared.\n"
+                "- Reject generic advice and motivational text.\n"
+                "- 2 to 5 lessons total.\n"
+            )
+        else:
+            system = (
+                "You are a post-run learning critic analyzing a FAILED or PARTIAL CLI run.\n"
+                "Return STRICT JSON array only. Each item must match:\n"
+                '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
+                "Rules:\n"
+                "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
+                "- Prefer category='negative' for correction rules with explicit contrast.\n"
+                "- For category='negative', format as:\n"
+                "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
+                "- Every lesson must include the concrete correction, not generic process advice.\n"
+                "- 2 to 5 lessons total.\n"
+            )
     else:
-        system = (
-            f"You are a post-run {domain_name} learning critic.\n"
-            "Return STRICT JSON array only. Each item must match:\n"
-            '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
-            "Rules:\n"
-            "- For each error in the events, extract the CORRECT syntax from the error hint.\n"
-            "- Prefer category='negative' for failure lessons that encode WRONG vs CORRECT syntax.\n"
-            "- For category='negative', use lesson format:\n"
-            "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
-            "- Each lesson MUST include: what went wrong + the correct syntax to use instead.\n"
-            "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
-            "- Focus on SPECIFIC syntax errors and their fixes.\n"
-            f"- Good for gridtool: 'TALLY requires arrow syntax: TALLY group_col -> alias=func(agg_col). The agent used GROUP BY instead.'\n"
-            f"- Good negative: 'WRONG: TALLY GROUP BY region -> CORRECT: TALLY region -> total=sum(amount). WHY: gridtool does not support SQL GROUP BY.'\n"
-            f"- Good: 'LOAD path must be in double quotes: LOAD \"file.csv\". The agent wrote LOAD file.csv without quotes.'\n"
-            f"- Good: 'Functions are case-sensitive, must be lowercase: sum, count, avg, min, max. The agent used SUM.'\n"
-            "- Bad: 'Always read the skill document before executing commands'\n"
-            "- Bad: 'TALLY only supports one aggregation' — this is WRONG, TALLY supports comma-separated multiple aggregations.\n"
-            "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
-            "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
-            "- Base lessons only on provided events and deterministic eval.\n"
-            "- 2 to 5 lessons total.\n"
-        )
+        if passed and score >= 1.0:
+            # Legacy path preserves the existing gridtool-tuned examples.
+            system = (
+                f"You are a post-run {domain_name} learning critic analyzing a SUCCESSFUL run.\n"
+                "Return STRICT JSON array only. Each item must match:\n"
+                '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+                "Rules:\n"
+                "- Extract the key syntax patterns and commands that made this run succeed.\n"
+                "- Each lesson MUST include exact command syntax, function names, or operator names from the events.\n"
+                "- Focus on domain-specific syntax that a future agent would need to know.\n"
+                "- REJECT generic advice. Only record concrete syntax patterns.\n"
+                f"- Good example for gridtool: 'TALLY groups with arrow syntax: TALLY col -> alias=func(agg_col), functions must be lowercase (sum, count, avg)'\n"
+                f"- Good example: 'LOAD requires quoted path: LOAD \"file.csv\", KEEP/TOSS use word operators: eq, neq, gt, lt, gte, lte'\n"
+                "- Bad: 'The agent completed the task successfully'\n"
+                "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
+                "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
+                "- 2 to 5 lessons total. Extract EACH distinct syntax rule used.\n"
+            )
+        else:
+            system = (
+                f"You are a post-run {domain_name} learning critic.\n"
+                "Return STRICT JSON array only. Each item must match:\n"
+                '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
+                "Rules:\n"
+                "- For each error in the events, extract the CORRECT syntax from the error hint.\n"
+                "- Prefer category='negative' for failure lessons that encode WRONG vs CORRECT syntax.\n"
+                "- For category='negative', use lesson format:\n"
+                "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
+                "- Each lesson MUST include: what went wrong + the correct syntax to use instead.\n"
+                "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
+                "- Focus on SPECIFIC syntax errors and their fixes.\n"
+                f"- Good for gridtool: 'TALLY requires arrow syntax: TALLY group_col -> alias=func(agg_col). The agent used GROUP BY instead.'\n"
+                f"- Good negative: 'WRONG: TALLY GROUP BY region -> CORRECT: TALLY region -> total=sum(amount). WHY: gridtool does not support SQL GROUP BY.'\n"
+                f"- Good: 'LOAD path must be in double quotes: LOAD \"file.csv\". The agent wrote LOAD file.csv without quotes.'\n"
+                f"- Good: 'Functions are case-sensitive, must be lowercase: sum, count, avg, min, max. The agent used SUM.'\n"
+                "- Bad: 'Always read the skill document before executing commands'\n"
+                "- Bad: 'TALLY only supports one aggregation' — this is WRONG, TALLY supports comma-separated multiple aggregations.\n"
+                "- IMPORTANT: count(*) does NOT work in gridtool — always use an actual column name like count(col_name).\n"
+                "- IMPORTANT: Functions MUST be lowercase: sum, count, avg, min, max. Never write SUM, COUNT, etc.\n"
+                "- Base lessons only on provided events and deterministic eval.\n"
+                "- 2 to 5 lessons total.\n"
+            )
     user = (
         f"TASK_ID:\n{task_id}\n\n"
         f"TASK:\n{task}\n\n"
         f"EVAL:\n{json.dumps(eval_result, ensure_ascii=True)}\n\n"
         f"EVENTS_TAIL:\n{json.dumps(events_tail, ensure_ascii=True)}\n\n"
+        f"RETRIEVED_CONTEXT:\n{critic_context or '(none)'}\n\n"
         f"SKILLS_USED:\n{json.dumps(skill_refs_used, ensure_ascii=True)}"
     )
 

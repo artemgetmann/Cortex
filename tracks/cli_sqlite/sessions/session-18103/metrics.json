@@ -1,0 +1,259 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "insufficient_runs_for_promotion",
+  "bootstrap": true,
+  "critic_context_sources": [
+    "fluxtool/reference",
+    "fluxtool/reference",
+    "fluxtool/reference",
+    "fluxtool/reference"
+  ],
+  "critic_filtered_lessons": [
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        7,
+        8
+      ],
+      "lesson": "IMPORT in fluxtool requires double-quoted file paths: IMPORT \"fixture.csv\" not IMPORT fixture.csv. Unquoted paths cause 'file path must be in double quotes' error."
+    },
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        2,
+        5,
+        8
+      ],
+      "lesson": "GROUP aggregation syntax uses => arrow and alias=func(column) format: GROUP region => total_amount=sum(amount), transaction_count=count(region). Requires lowercase function names and explicit column arguments (count(region) not count())."
+    },
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        5,
+        7,
+        8
+      ],
+      "lesson": "SORT direction keywords in fluxtool are 'up' or 'down', not SQL-style 'asc'/'desc'. Use SORT total_amount down for descending order."
+    },
+    {
+      "category": "shortcut",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        4,
+        6
+      ],
+      "lesson": "Fluxtool command repertoire is: IMPORT, FILTER, EXCLUDE, GROUP, SORT, COLUMNS, COMPUTE, ATTACH, DISPLAY. Use GROUP not TALLY, SORT not RANK, DISPLAY not SHOW. Incorrect command names fail immediately."
+    }
+  ],
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "critic_raw_lessons": [
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        7,
+        8
+      ],
+      "lesson": "IMPORT in fluxtool requires double-quoted file paths: IMPORT \"fixture.csv\" not IMPORT fixture.csv. Unquoted paths cause 'file path must be in double quotes' error."
+    },
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        2,
+        5,
+        8
+      ],
+      "lesson": "GROUP aggregation syntax uses => arrow and alias=func(column) format: GROUP region => total_amount=sum(amount), transaction_count=count(region). Requires lowercase function names and explicit column arguments (count(region) not count())."
+    },
+    {
+      "category": "domain_detail",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        5,
+        7,
+        8
+      ],
+      "lesson": "SORT direction keywords in fluxtool are 'up' or 'down', not SQL-style 'asc'/'desc'. Use SORT total_amount down for descending order."
+    },
+    {
+      "category": "shortcut",
+      "eval_passed": true,
+      "eval_score": 1.0,
+      "evidence_steps": [
+        4,
+        6
+      ],
+      "lesson": "Fluxtool command repertoire is: IMPORT, FILTER, EXCLUDE, GROUP, SORT, COLUMNS, COMPUTE, ATTACH, DISPLAY. Use GROUP not TALLY, SORT not RANK, DISPLAY not SHOW. Incorrect command names fail immediately."
+    }
+  ],
+  "critic_rejected_lessons": [],
+  "domain": "fluxtool",
+  "elapsed_s": 27.573,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": true,
+  "eval_reasons": [
+    "Step 8 successfully imported data from fixture.csv using IMPORT \"fixture.csv\"",
+    "Step 8 correctly grouped by region using GROUP region => total_amount=sum(amount), transaction_count=count(region), computing both total amount and transaction count as required",
+    "Step 8 sorted results by total_amount in descending order using SORT total_amount down",
+    "Step 8 displayed all results using DISPLAY command, showing North (4200.0, 4 transactions), South (3200.0, 3 transactions), and East (2750.0, 3 transactions) in descending order by total amount",
+    "Final output correctly aggregates all 10 transactions from fixture.csv into 3 regional summaries with accurate totals: North=1200+950+750+1300=4200, South=800+1500+900=3200, East=1100+600+1050=2750",
+    "All four task requirements (import, group with aggregations, sort descending, display all) were successfully completed in the final state"
+  ],
+  "eval_score": 1.0,
+  "executor_model": "claude-haiku-4-5",
+  "judge_critique": "{\n  \"passed\": true,\n  \"score\": 1.0,\n  \"reasons\": [\n    \"Step 8 successfully imported data from fixture.csv using IMPORT \\\"fixture.csv\\\"\",\n    \"Step 8 correctly grouped by region using GROUP region => total_amount=sum(amount), transaction_count=count(region), computing both total amount and transaction count as required\",\n    \"Step 8 sorted results by total_amount in descending order using SORT total_amount down\",\n    \"Step 8 displayed all results using DISPLAY command, showing North (4200.0, 4 t",
+  "judge_model": "claude-sonnet-4-5",
+  "judge_passed": true,
+  "judge_reasons": [
+    "Step 8 successfully imported data from fixture.csv using IMPORT \"fixture.csv\"",
+    "Step 8 correctly grouped by region using GROUP region => total_amount=sum(amount), transaction_count=count(region), computing both total amount and transaction count as required",
+    "Step 8 sorted results by total_amount in descending order using SORT total_amount down",
+    "Step 8 displayed all results using DISPLAY command, showing North (4200.0, 4 transactions), South (3200.0, 3 transactions), and East (2750.0, 3 transactions) in descending order by total amount",
+    "Final output correctly aggregates all 10 transactions from fixture.csv into 3 regional summaries with accurate totals: North=1200+950+750+1300=4200, South=800+1500+900=3200, East=1100+600+1050=2750",
+    "All four task requirements (import, group with aggregations, sort descending, display all) were successfully completed in the final state"
+  ],
+  "judge_score": 1.0,
+  "learning_mode": "strict",
+  "lesson_activations": 12,
+  "lessons_generated": 4,
+  "lessons_loaded": 0,
+  "low_score_streak": 0,
+  "mixed_errors": true,
+  "posttask_candidates_queued": 0,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "require_skill_read": false,
+  "required_skill_refs": [],
+  "session_id": 18103,
+  "skill_gate_blocks": 0,
+  "skill_reads": 0,
+  "steps": 8,
+  "task": "fluxtool task: aggregate_report_holdout.\n\nGoal:\n1) Import sales data from fixture.csv\n2) Group by region, computing total amount and transaction count\n3) Sort by total amount in descending order\n4) Display all results\n\nConstraints:\n- Use only run_fluxtool and show_fixture tools.\n- fluxtool has its own syntax and operator words \u2014 it is NOT SQL and not gridtool.",
+  "task_id": "aggregate_report_holdout",
+  "time_start": 1771163475.412749,
+  "tool_actions": 8,
+  "tool_errors": 6,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 936,
+      "output_tokens": 83,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1135,
+      "output_tokens": 154,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1449,
+      "output_tokens": 121,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1730,
+      "output_tokens": 109,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2021,
+      "output_tokens": 114,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2288,
+      "output_tokens": 137,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2606,
+      "output_tokens": 115,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2866,
+      "output_tokens": 107,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}

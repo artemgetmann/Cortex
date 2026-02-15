@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from tracks.cli_sqlite.domain_adapter import DomainWorkspace, ToolResult
+from tracks.cli_sqlite.domain_adapter import DomainDoc, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.tool_aliases import ToolAlias
 
 
@@ -15,6 +15,7 @@ GRIDTOOL_PATH = Path(__file__).resolve().parent / "gridtool.py"
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 RUN_GRIDTOOL_TOOL_NAME = "run_gridtool"
+GRIDTOOL_DOCS_DIR = Path(__file__).resolve().parent / "docs"
 
 _GRIDTOOL_KEYWORDS = re.compile(
     r"(?i)\b(LOAD|KEEP|TOSS|TALLY|RANK|PICK|DERIVE|MERGE|SHOW|"
@@ -230,3 +231,14 @@ class GridtoolAdapter:
             api_name = alias.opaque_name if opaque else canonical
             result[api_name] = canonical
         return result
+
+    def docs_manifest(self) -> list[DomainDoc]:
+        docs = [
+            DomainDoc(
+                doc_id="gridtool/reference",
+                path=GRIDTOOL_DOCS_DIR / "gridtool-reference.md",
+                title="Gridtool Syntax Reference",
+                tags=("gridtool", "pipeline", "load", "tally", "rank", "derive", "merge"),
+            )
+        ]
+        return [doc for doc in docs if doc.path.exists()]

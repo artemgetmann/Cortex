@@ -13,6 +13,7 @@ from config import CortexConfig
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
+from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
 from tracks.cli_sqlite.learning_cli import (
     find_lessons_for_error,
     generate_lessons,
@@ -58,6 +59,8 @@ SONNET_MODEL = "claude-sonnet-4-5"
 OPUS_MODEL = "claude-opus-4-6"
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
+LEARNING_MODES = ("strict", "legacy")
+DEFAULT_LEARNING_MODE = "legacy"
 
 
 @dataclass
@@ -254,6 +257,18 @@ def _load_skill_snapshots(
     return snapshots, digests
 
 
+def _prioritize_domain_routed_entries(
+    *,
+    entries: list[SkillManifestEntry],
+    domain: str,
+) -> list[SkillManifestEntry]:
+    domain_prefix = f"{domain}/"
+    return sorted(
+        entries,
+        key=lambda entry: (0 if entry.skill_ref.startswith(domain_prefix) else 1),
+    )
+
+
 def _is_skill_gate_satisfied(
     *,
     read_skill_refs: set[str],
@@ -276,7 +291,14 @@ def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_
             semi_helpful_errors=semi_helpful_errors,
             mixed_errors=False,
         )
-    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool")
+    if domain == "fluxtool":
+        from tracks.cli_sqlite.domains.fluxtool_adapter import FluxtoolAdapter
+        return FluxtoolAdapter(
+            cryptic_errors=cryptic_errors,
+            semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=False,
+        )
+    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool")
 
 
 def _resolve_adapter_with_mode(
@@ -294,6 +316,13 @@ def _resolve_adapter_with_mode(
             semi_helpful_errors=semi_helpful_errors,
             mixed_errors=mixed_errors,
         )
+    if domain == "fluxtool":
+        from tracks.cli_sqlite.domains.fluxtool_adapter import FluxtoolAdapter
+        return FluxtoolAdapter(
+            cryptic_errors=cryptic_errors,
+            semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=mixed_errors,
+        )
     return _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
 
 
@@ -307,11 +336,49 @@ def _serialize_lesson(lesson: Any) -> dict[str, Any]:
     }
 
 
+def _build_critic_context_query(
+    *,
+    task_text: str,
+    eval_result: dict[str, Any],
+    events_tail: list[dict[str, Any]],
+) -> str:
+    eval_reasons = eval_result.get("reasons", [])
+    reasons_text = ", ".join(str(r) for r in eval_reasons) if isinstance(eval_reasons, list) else str(eval_reasons)
+    error_snippets: list[str] = []
+    for row in events_tail:
+        err = row.get("error")
+        if isinstance(err, str) and err.strip():
+            error_snippets.append(err.strip()[:180])
+    joined_errors = " | ".join(error_snippets[-6:])
+    return f"task={task_text}\nreasons={reasons_text}\nerrors={joined_errors}"
+
+
+def _format_critic_context(chunks: list[Any]) -> str:
+    if not chunks:
+        return ""
+    lines: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        title = getattr(chunk, "source_title", "doc")
+        source_id = getattr(chunk, "source_id", f"doc-{idx}")
+        text = getattr(chunk, "text", "")
+        lines.append(f"[{idx}] {title} ({source_id})\n{text}")
+    return "\n\n".join(lines)
+
+
+def _normalize_learning_mode(learning_mode: str) -> str:
+    mode = str(learning_mode).strip().lower()
+    if mode not in LEARNING_MODES:
+        allowed = ", ".join(LEARNING_MODES)
+        raise ValueError(f"Unknown learning mode: {learning_mode!r}. Allowed: {allowed}")
+    return mode
+
+
 def prepare_cli_prompt_preview(
     *,
     task_id: str,
     task: str | None,
     domain: str = "sqlite",
+    learning_mode: str = DEFAULT_LEARNING_MODE,
     bootstrap: bool = False,
     require_skill_read: bool = True,
     opaque_tools: bool = False,
@@ -320,6 +387,9 @@ def prepare_cli_prompt_preview(
     mixed_errors: bool = False,
 ) -> CliPromptPreview:
     """Build the exact prompt/tools payload without executing a session."""
+    # Workstream 1 only introduces mode plumbing; strict/legacy behavior split lands
+    # in later workstreams but this keeps preview and runtime signatures aligned.
+    learning_mode = _normalize_learning_mode(learning_mode)
     adapter = _resolve_adapter_with_mode(
         domain,
         cryptic_errors=cryptic_errors,
@@ -343,6 +413,7 @@ def prepare_cli_prompt_preview(
         )
     else:
         routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
+        routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
         routed_refs = [entry.skill_ref for entry in routed_entries]
         required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
         skills_text = manifest_summaries_text(routed_entries)
@@ -378,7 +449,6 @@ def prepare_cli_prompt_preview(
         )
     if opaque_tools:
         system_prompt += "\nTool names are opaque. Read your routed skills for usage semantics.\n"
-
     task_dir = TASKS_ROOT / task_id
     if not task_dir.exists():
         raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
@@ -409,6 +479,7 @@ def run_cli_agent(
     model_critic: str = DEFAULT_CRITIC_MODEL,
     model_judge: str | None = None,
     domain: str = "sqlite",
+    learning_mode: str = DEFAULT_LEARNING_MODE,
     bootstrap: bool = False,
     posttask_mode: str = "candidate",
     posttask_learn: bool = True,
@@ -426,6 +497,8 @@ def run_cli_agent(
     mixed_errors: bool = False,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
+    learning_mode = _normalize_learning_mode(learning_mode)
+    knowledge_provider = LocalDocsKnowledgeProvider()
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     adapter = _resolve_adapter_with_mode(
         domain,
@@ -465,6 +538,7 @@ def run_cli_agent(
         )
     else:
         routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
+        routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
         routed_refs = [entry.skill_ref for entry in routed_entries]
         required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
         skills_text = manifest_summaries_text(routed_entries)
@@ -535,6 +609,7 @@ def run_cli_agent(
         "task_id": task_id,
         "task": task_text,
         "domain": domain,
+        "learning_mode": learning_mode,
         "bootstrap": bootstrap,
         "mixed_errors": mixed_errors,
         "steps": 0,
@@ -666,7 +741,11 @@ def run_cli_agent(
             # any loaded lessons match the error and append hints to help the
             # agent self-correct on the next step (same run, not next session).
             if result.is_error() and canonical_name == executor_tool_name and loaded_lesson_objects:
-                hints = find_lessons_for_error(result.error or "", loaded_lesson_objects)
+                hints = find_lessons_for_error(
+                    result.error or "",
+                    loaded_lesson_objects,
+                    learning_mode=learning_mode,
+                )
                 if hints:
                     hint_block = "\n\n--- HINT from prior sessions ---\n" + "\n".join(f"- {h}" for h in hints)
                     result = ToolResult(error=(result.error or "") + hint_block)
@@ -765,6 +844,23 @@ def run_cli_agent(
         routed_refs = [entry.skill_ref for entry in routed_entries]
         skill_snapshots, skill_digests = _load_skill_snapshots(entries=skill_manifest_entries, routed_refs=routed_refs)
         domain_keywords = adapter.quality_keywords()
+        critic_context = ""
+        critic_context_sources: list[str] = []
+        if learning_mode == "strict":
+            docs = adapter.docs_manifest()
+            retrieval_query = _build_critic_context_query(
+                task_text=task_text,
+                eval_result=eval_result,
+                events_tail=tail_events,
+            )
+            retrieved_chunks = knowledge_provider.retrieve(
+                query=retrieval_query,
+                docs=docs,
+                max_chunks=4,
+            )
+            critic_context = _format_critic_context(retrieved_chunks)
+            critic_context_sources = [str(getattr(chunk, "source_id", "")) for chunk in retrieved_chunks]
+        metrics["critic_context_sources"] = critic_context_sources
         lesson_result: LessonGenerationResult = generate_lessons(
             client=client,
             model=critic_model_for_run,
@@ -775,6 +871,8 @@ def run_cli_agent(
             events_tail=tail_events,
             skill_refs_used=sorted(read_skill_refs),
             domain_name=domain,
+            learning_mode=learning_mode,
+            critic_context=critic_context,
             domain_keywords=domain_keywords,
         )
         metrics["critic_raw_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.raw_lessons]

@@ -22,6 +22,8 @@ from config import load_config
 from tracks.cli_sqlite.agent_cli import (
     DEFAULT_CRITIC_MODEL,
     DEFAULT_EXECUTOR_MODEL,
+    DEFAULT_LEARNING_MODE,
+    LEARNING_MODES,
     run_cli_agent,
 )
 
@@ -29,7 +31,8 @@ from tracks.cli_sqlite.agent_cli import (
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run N sessions and plot the learning curve")
     ap.add_argument("--task-id", required=True)
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
+    ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=5, help="Number of sequential sessions")
     ap.add_argument("--start-session", type=int, default=9001, help="Starting session ID")
     ap.add_argument("--max-steps", type=int, default=12)
@@ -54,7 +57,7 @@ def main() -> int:
 
     print(f"\n{'='*60}")
     print(f"  Learning Curve Experiment")
-    print(f"  task={args.task_id}  domain={args.domain}  bootstrap={args.bootstrap}")
+    print(f"  task={args.task_id}  domain={args.domain}  learning_mode={args.learning_mode}  bootstrap={args.bootstrap}")
     print(f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  sessions={args.sessions}  model={args.model_executor}")
     print(f"{'='*60}\n")
 
@@ -71,6 +74,7 @@ def main() -> int:
             session_id=session_id,
             max_steps=args.max_steps,
             domain=args.domain,
+            learning_mode=args.learning_mode,
             model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
             model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
             model_judge=args.model_judge.strip() if args.model_judge else None,

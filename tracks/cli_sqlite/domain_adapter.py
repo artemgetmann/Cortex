@@ -26,6 +26,16 @@ class DomainWorkspace:
     fixture_paths: dict[str, Path]
 
 
+@dataclass(frozen=True)
+class DomainDoc:
+    """Retrieval document metadata exposed by a domain adapter."""
+
+    doc_id: str
+    path: Path
+    title: str
+    tags: tuple[str, ...] = ()
+
+
 @runtime_checkable
 class DomainAdapter(Protocol):
     """Protocol that every domain adapter must satisfy."""
@@ -66,4 +76,8 @@ class DomainAdapter(Protocol):
 
     def build_alias_map(self, *, opaque: bool) -> dict[str, str]:
         """Return {api_name: canonical_name} for all tools including domain-specific ones."""
+        ...
+
+    def docs_manifest(self) -> list[DomainDoc]:
+        """Return local docs that strict-mode critic retrieval can query."""
         ...

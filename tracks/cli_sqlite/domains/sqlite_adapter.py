@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
+from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainDoc, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.executor import (
     TaskWorkspace,
     prepare_task_workspace,
@@ -20,6 +20,7 @@ from tracks.cli_sqlite.tool_aliases import ToolAlias
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 RUN_SQLITE_TOOL_NAME = "run_sqlite"
+SQLITE_DOCS_DIR = Path(__file__).resolve().parent / "docs"
 
 # Re-use the existing SQL keywords regex from learning_cli.py
 _SQL_KEYWORDS = re.compile(
@@ -182,3 +183,14 @@ class SqliteAdapter:
             api_name = alias.opaque_name if opaque else canonical
             result[api_name] = canonical
         return result
+
+    def docs_manifest(self) -> list[DomainDoc]:
+        docs = [
+            DomainDoc(
+                doc_id="sqlite/reference",
+                path=SQLITE_DOCS_DIR / "sqlite-reference.md",
+                title="SQLite Reference",
+                tags=("sqlite", "sql", "query", "aggregate", "transaction"),
+            )
+        ]
+        return [doc for doc in docs if doc.path.exists()]

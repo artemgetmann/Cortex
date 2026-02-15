@@ -12,8 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
+    DEFAULT_LEARNING_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_CRITIC_MODEL,
+    LEARNING_MODES,
     LESSONS_PATH,
     prepare_cli_prompt_preview,
     run_cli_agent,
@@ -38,7 +40,8 @@ from tracks.cli_sqlite.demo_display import (
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cortex CLI Learning Demo")
     ap.add_argument("--task-id", required=True)
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
+    ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=6)
     ap.add_argument("--start-session", type=int, default=10001)
     ap.add_argument("--max-steps", type=int, default=12)
@@ -72,6 +75,7 @@ def main() -> int:
             task_id=args.task_id,
             task=None,
             domain=args.domain,
+            learning_mode=args.learning_mode,
             bootstrap=args.bootstrap,
             require_skill_read=not args.bootstrap,
             opaque_tools=False,
@@ -126,6 +130,7 @@ def main() -> int:
             task_id=args.task_id,
             task=None,
             domain=args.domain,
+            learning_mode=args.learning_mode,
             bootstrap=args.bootstrap,
             require_skill_read=not args.bootstrap,
             opaque_tools=False,
@@ -148,6 +153,7 @@ def main() -> int:
             session_id=session_id,
             max_steps=args.max_steps,
             domain=args.domain,
+            learning_mode=args.learning_mode,
             model_executor=model,
             model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
             model_judge=args.model_judge.strip() if args.model_judge else None,

@@ -48,3 +48,14 @@ python3 tracks/cli_sqlite/scripts/score_cli_session.py \
 - Default models are Haiku for executor and critic.
 - Critic-only escalation is enabled by default (`haiku -> sonnet -> opus`) when score/no-update streak triggers fire.
 - Skill-read gate is enabled by default. `run_sqlite` is blocked until at least one routed skill is loaded via `read_skill`.
+
+## Strict Transfer Modes
+
+- `--learning-mode legacy`: Original behavior (domain-tuned critic prompt + command-pattern hint routing).
+- `--learning-mode strict`: Generic critic contract + retrieval-backed context + semantic hint routing (strict hint cap = 2).
+
+## Holdout and Cross-Domain Validation
+
+- Holdout domain: `fluxtool` (remapped command/operator language).
+- Cross-domain runner: `tracks/cli_sqlite/scripts/run_cross_domain.py`.
+- Validation command matrix and expected signatures: `docs/STRICT-TRANSFER-VALIDATION.md`.
