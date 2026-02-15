@@ -22,12 +22,14 @@ def _record(
     fingerprints: tuple[str, ...] = ("fp_a",),
     tags: tuple[str, ...] = ("syntax_structure",),
     reliability: float = 0.5,
+    domain: str = "gridtool",
+    task_id: str = "aggregate_report",
 ) -> LessonRecord:
     rec = LessonRecord.from_candidate(
         session_id=session_id,
-        task_id="aggregate_report",
+        task_id=task_id,
         task="aggregate report",
-        domain="gridtool",
+        domain=domain,
         rule_text=rule_text,
         trigger_fingerprints=fingerprints,
         tags=tags,
@@ -95,6 +97,8 @@ class RetrievalV2Tests(unittest.TestCase):
                 path=path,
                 error_text="TALLY expected arrow syntax",
                 fingerprint="fp_exact",
+                domain="gridtool",
+                task_id="aggregate_report",
                 query_tags=("syntax_structure",),
                 max_results=2,
             )
@@ -131,6 +135,8 @@ class RetrievalV2Tests(unittest.TestCase):
                 path=path,
                 error_text="LOAD path must be quoted",
                 fingerprint="fp_load",
+                domain="gridtool",
+                task_id="aggregate_report",
                 query_tags=("path_quote",),
                 max_results=3,
             )
@@ -156,6 +162,52 @@ class RetrievalV2Tests(unittest.TestCase):
             )
             # default guard: max 2 from one source session
             self.assertLessEqual(len(matches), 2)
+
+    def test_on_error_filters_cross_domain_lessons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            gridtool = _record(
+                session_id=1801,
+                rule_text="Use TALLY region -> total=sum(amount).",
+                fingerprints=("fp_shared",),
+                tags=("syntax_structure",),
+                reliability=0.95,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            fluxtool = _record(
+                session_id=1802,
+                rule_text='Use GROUP region => total=sum(amount) after IMPORT "fixture.csv".',
+                fingerprints=("fp_shared",),
+                tags=("syntax_structure",),
+                reliability=0.6,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            domainless = _record(
+                session_id=1803,
+                rule_text="Always use quoted file paths.",
+                fingerprints=("fp_shared",),
+                tags=("path_quote",),
+                reliability=0.99,
+                domain="",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [gridtool, fluxtool, domainless])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="GROUP syntax error",
+                fingerprint="fp_shared",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("syntax_structure",),
+                max_results=3,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertIn(fluxtool.lesson_id, ids)
+            self.assertNotIn(gridtool.lesson_id, ids)
+            self.assertNotIn(domainless.lesson_id, ids)
 
 
 class PromotionV2Tests(unittest.TestCase):

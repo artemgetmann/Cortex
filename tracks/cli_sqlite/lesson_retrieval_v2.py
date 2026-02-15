@@ -238,13 +238,37 @@ def retrieve_on_error(
     path: Path,
     error_text: str,
     fingerprint: str,
+    domain: str,
+    task_id: str = "",
     query_tags: Sequence[str] = (),
     max_results: int = 3,
+    include_domainless: bool = False,
 ) -> tuple[list[RetrievalMatch], list[str]]:
-    """On-error retrieval prioritizing exact fingerprint matches."""
+    """
+    On-error retrieval prioritizing exact fingerprint matches.
+
+    Domain filtering is strict by default to prevent cross-tool syntax bleed
+    (e.g., gridtool hints injected during fluxtool runs). Domainless lessons
+    are excluded unless explicitly allowed.
+    """
     records = load_lesson_records(path)
+    normalized_domain = str(domain).strip().lower()
+    normalized_task = str(task_id).strip()
+    scoped: list[LessonRecord] = []
+    for row in records:
+        row_domain = str(row.domain).strip().lower()
+        domain_ok = row_domain == normalized_domain
+        if include_domainless and not row_domain:
+            domain_ok = True
+        if not domain_ok:
+            continue
+        # Optional task narrowing keeps broad domain memory available while
+        # preferring exact task matches when task id is known.
+        if normalized_task and row.task_id and row.task_id != normalized_task:
+            continue
+        scoped.append(row)
     return retrieve_lessons(
-        records=records,
+        records=scoped,
         query_text=error_text,
         query_fingerprint=fingerprint,
         query_tags=query_tags,

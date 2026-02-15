@@ -945,8 +945,11 @@ def run_cli_agent(
                     path=LESSONS_V2_PATH,
                     error_text=error_text,
                     fingerprint=error_fingerprint,
+                    domain=domain,
+                    task_id=task_id,
                     query_tags=error_tags,
                     max_results=2,
+                    include_domainless=False,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
@@ -966,9 +969,16 @@ def run_cli_agent(
                 # Legacy fallback keeps older runs usable while v2 memory warms up.
                 legacy_hints: list[str] = []
                 if not v2_hints and loaded_lesson_objects:
+                    # Guard legacy fallback to the active task only. Legacy rows
+                    # do not carry reliable domain metadata, so unrestricted
+                    # cross-task matching can leak wrong-tool syntax hints.
+                    legacy_candidates = [
+                        lesson for lesson in loaded_lesson_objects
+                        if str(getattr(lesson, "task_id", "")).strip() == task_id
+                    ]
                     legacy_hints = find_lessons_for_error(
                         error_text,
-                        loaded_lesson_objects,
+                        legacy_candidates,
                         learning_mode=learning_mode,
                     )
                     if legacy_hints:
