@@ -68,6 +68,66 @@ python3 tracks/cli_sqlite/scripts/demo_learning.py \
 
 ---
 
+## Day 2 Status: CLI Demo Polish (Visibility + Harder Curriculum)
+
+### Winning Demo Target
+- **Task:** `regional_performance`
+- **Model:** `claude-haiku-4-5`
+- **Error mode:** `--mixed-errors` (semi-helpful on basic commands, cryptic on core pipeline commands)
+- **Step budget:** `--max-steps 8`
+- **Curve target:** **9 runs** with **5 FAIL then 4 PASS** (knee at run 5 or 6)
+
+### Why This Matters (Narrative)
+- The agent has no prior docs or examples for `gridtool` in bootstrap mode.
+- It fails, extracts concrete syntax lessons from critic output, injects those lessons into future prompts, and converges.
+- This is in-context learning across sessions, not fine-tuning.
+- Demo now shows full pipeline: prompt context, thinking trace, hint injection, critic raw vs filtered, judge reasoning.
+
+### Operator Self-Test (Run This Yourself)
+1. **Tests first**
+```bash
+python3 -m pytest tracks/cli_sqlite/tests/test_learning_pipeline.py -v
+python3 -m pytest tracks/cli_sqlite/tests/ -v
+```
+2. **Inspect exact model context (no sessions executed)**
+```bash
+python3 tracks/cli_sqlite/scripts/demo_learning.py \
+  --task-id regional_performance --domain gridtool \
+  --bootstrap --mixed-errors --dump-prompt
+```
+3. **Run the polished demo**
+```bash
+python3 tracks/cli_sqlite/scripts/demo_learning.py \
+  --task-id regional_performance --domain gridtool \
+  --sessions 9 --start-session 60001 --max-steps 8 \
+  --bootstrap --mixed-errors --clear-lessons \
+  --replay-detail full
+```
+4. **Consistency check (3 independent curves)**
+```bash
+python3 tracks/cli_sqlite/scripts/demo_learning.py \
+  --task-id regional_performance --domain gridtool \
+  --sessions 9 --start-session 70001 --max-steps 8 \
+  --bootstrap --mixed-errors --clear-lessons --replay-detail compact
+
+python3 tracks/cli_sqlite/scripts/demo_learning.py \
+  --task-id regional_performance --domain gridtool \
+  --sessions 9 --start-session 80001 --max-steps 8 \
+  --bootstrap --mixed-errors --clear-lessons --replay-detail compact
+```
+
+### Evidence Gate (What Counts as Success)
+- Three curves all show fail-heavy start then stable pass tail.
+- First PASS appears around run 5-6 (±1 across runs).
+- No regression after first PASS in the same curve.
+
+### Transferability Follow-Up (Required Before Broad Claims)
+- Build a **new fictional holdout tool** with remapped command names/operators (not just same syntax family).
+- Re-run the same learning protocol to measure whether critic/judge quality holds under true domain shift.
+- Until this holdout passes, avoid claiming broad cross-domain generalization.
+
+---
+
 ## Day 2 Plan: FL Studio Learning Loop Demo
 
 **Goal:** Show the same learning-from-failure pattern on FL Studio Desktop via computer_use.

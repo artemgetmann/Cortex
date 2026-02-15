@@ -55,13 +55,21 @@ def _check(name: str, condition: bool, detail: str = ""):
         print(f"  FAIL: {name} — {detail}")
 
 
-def _run_gridtool(commands: str, *, semi_helpful: bool = False, cryptic: bool = False) -> tuple[int, str, str]:
+def _run_gridtool(
+    commands: str,
+    *,
+    semi_helpful: bool = False,
+    cryptic: bool = False,
+    error_mode_map: str | None = None,
+) -> tuple[int, str, str]:
     """Run gridtool and return (exit_code, stdout, stderr)."""
     cmd = ["python3", str(GRIDTOOL_PATH), "--workdir", str(FIXTURE_DIR)]
     if semi_helpful:
         cmd.append("--semi-helpful")
     elif cryptic:
         cmd.append("--cryptic")
+    if error_mode_map:
+        cmd.extend(["--error-mode-map", error_mode_map])
     result = subprocess.run(cmd, input=commands, capture_output=True, text=True, timeout=5)
     return result.returncode, result.stdout, result.stderr
 
@@ -133,6 +141,25 @@ def test_gridtool_error_modes():
     assert "invalid argument" in err_c.lower() or "syntax error" in err_c.lower(), f"Cryptic mode should be opaque, got: {err_c}"
 
 
+def test_gridtool_mixed_error_mode_map():
+    """Per-command error mode map should override global formatting mode."""
+    # Force global cryptic, but make LOAD semi-helpful for this command.
+    _, _, err_load = _run_gridtool(
+        "LOAD fixture.csv",
+        cryptic=True,
+        error_mode_map="LOAD=semi",
+    )
+    assert "double quotes" in err_load, f"Expected semi-helpful LOAD error, got: {err_load}"
+
+    # Force global semi-helpful, but make TALLY cryptic for this command.
+    _, _, err_tally = _run_gridtool(
+        'LOAD "fixture.csv"\nTALLY region total=sum(amount)',
+        semi_helpful=True,
+        error_mode_map="TALLY=cryptic",
+    )
+    assert err_tally.strip() == "ERROR at line 2: TALLY: syntax error.", err_tally
+
+
 def test_lesson_quality_filter():
     """Section 2: Good gridtool lessons pass, generic advice rejected."""
     good_lessons = [
@@ -158,6 +185,16 @@ def test_lesson_quality_filter():
         lesson = _make_lesson(text)
         score = _lesson_quality_score(lesson, domain_keywords=_GRIDTOOL_KEYWORDS)
         assert score < 0.15, f"Bad lesson scored too high ({score}): {text[:60]}"
+
+
+def test_negative_lesson_quality_boost():
+    """Negative lessons should get a small quality boost when syntax-rich."""
+    body = "WRONG: TALLY GROUP BY region -> CORRECT: TALLY region -> total=sum(amount). WHY: not SQL."
+    negative = _make_lesson(body, category="negative")
+    generic = _make_lesson(body, category="insight")
+    score_negative = _lesson_quality_score(negative, domain_keywords=_GRIDTOOL_KEYWORDS)
+    score_generic = _lesson_quality_score(generic, domain_keywords=_GRIDTOOL_KEYWORDS)
+    assert score_negative >= score_generic + 0.10, f"expected boost, got negative={score_negative} generic={score_generic}"
 
 
 def test_known_wrong_patterns():

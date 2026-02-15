@@ -42,6 +42,20 @@ _GRIDTOOL_ALIASES: dict[str, ToolAlias] = {
     ),
 }
 
+# Mixed mode for demo calibration: keep loading/filtering hints somewhat readable,
+# make core transformation commands harder so lessons are required to converge.
+DEFAULT_MIXED_ERROR_MODE_MAP: dict[str, str] = {
+    "LOAD": "semi",
+    "TOSS": "semi",
+    "SHOW": "semi",
+    "TALLY": "cryptic",
+    "MERGE": "cryptic",
+    "DERIVE": "cryptic",
+    "KEEP": "cryptic",
+    "RANK": "cryptic",
+    "PICK": "cryptic",
+}
+
 
 def _get_tool_api_name(canonical: str, opaque: bool) -> str:
     alias = _GRIDTOOL_ALIASES.get(canonical)
@@ -60,9 +74,22 @@ def _get_tool_description(canonical: str, opaque: bool) -> str:
 class GridtoolAdapter:
     """DomainAdapter implementation for the custom gridtool CLI."""
 
-    def __init__(self, *, cryptic_errors: bool = False, semi_helpful_errors: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        cryptic_errors: bool = False,
+        semi_helpful_errors: bool = False,
+        mixed_errors: bool = False,
+        error_mode_map: dict[str, str] | None = None,
+    ) -> None:
         self._cryptic = cryptic_errors
         self._semi_helpful = semi_helpful_errors
+        if error_mode_map:
+            self._error_mode_map = {str(k).upper(): str(v).lower() for k, v in error_mode_map.items()}
+        elif mixed_errors:
+            self._error_mode_map = dict(DEFAULT_MIXED_ERROR_MODE_MAP)
+        else:
+            self._error_mode_map = {}
 
     @property
     def name(self) -> str:
@@ -120,6 +147,9 @@ class GridtoolAdapter:
                 cmd.append("--cryptic")
             elif self._semi_helpful:
                 cmd.append("--semi-helpful")
+            if self._error_mode_map:
+                map_text = ",".join(f"{cmd_name}={mode}" for cmd_name, mode in sorted(self._error_mode_map.items()))
+                cmd.extend(["--error-mode-map", map_text])
             result = subprocess.run(
                 cmd,
                 input=commands,

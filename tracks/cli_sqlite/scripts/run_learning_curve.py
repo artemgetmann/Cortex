@@ -36,6 +36,7 @@ def main() -> int:
     ap.add_argument("--bootstrap", action="store_true", help="No skill docs, lessons only")
     ap.add_argument("--cryptic-errors", action="store_true", help="Cryptic errors: strip hints from error messages")
     ap.add_argument("--semi-helpful-errors", action="store_true", help="Semi-helpful errors: hint at fixes without full syntax")
+    ap.add_argument("--mixed-errors", action="store_true", help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
@@ -54,7 +55,7 @@ def main() -> int:
     print(f"\n{'='*60}")
     print(f"  Learning Curve Experiment")
     print(f"  task={args.task_id}  domain={args.domain}  bootstrap={args.bootstrap}")
-    print(f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  sessions={args.sessions}  model={args.model_executor}")
+    print(f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  sessions={args.sessions}  model={args.model_executor}")
     print(f"{'='*60}\n")
 
     for i in range(args.sessions):
@@ -84,6 +85,7 @@ def main() -> int:
             bootstrap=args.bootstrap,
             cryptic_errors=args.cryptic_errors,
             semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
         )
 
         m = result.metrics

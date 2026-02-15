@@ -40,6 +40,8 @@ def main() -> int:
                      help="Cryptic error mode: strip helpful hints from tool error messages")
     ap.add_argument("--semi-helpful-errors", action="store_true",
                      help="Semi-helpful error mode: hint at fixes without full syntax")
+    ap.add_argument("--mixed-errors", action="store_true",
+                     help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -65,6 +67,7 @@ def main() -> int:
         bootstrap=bool(args.bootstrap),
         cryptic_errors=bool(args.cryptic_errors),
         semi_helpful_errors=bool(args.semi_helpful_errors),
+        mixed_errors=bool(args.mixed_errors),
     )
     print(json_dump(result.metrics))
     return 0

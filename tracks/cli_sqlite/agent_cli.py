@@ -16,6 +16,7 @@ from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_ju
 from tracks.cli_sqlite.learning_cli import (
     find_lessons_for_error,
     generate_lessons,
+    LessonGenerationResult,
     load_lesson_objects,
     load_relevant_lessons,
     prune_lessons,
@@ -63,6 +64,20 @@ SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 class CliRunResult:
     messages: list[dict[str, Any]]
     metrics: dict[str, Any]
+    task_text: str
+    system_prompt: str
+    lessons_text: str
+    tools: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class CliPromptPreview:
+    """Resolved runtime prompt bundle for display/debug tooling."""
+
+    task_text: str
+    system_prompt: str
+    lessons_text: str
+    tools: list[dict[str, Any]]
 
 
 def _load_task_text(tasks_root: Path, task_id: str) -> str:
@@ -256,8 +271,131 @@ def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_
         return SqliteAdapter()
     if domain == "gridtool":
         from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
-        return GridtoolAdapter(cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
+        return GridtoolAdapter(
+            cryptic_errors=cryptic_errors,
+            semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=False,
+        )
     raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool")
+
+
+def _resolve_adapter_with_mode(
+    domain: str,
+    *,
+    cryptic_errors: bool,
+    semi_helpful_errors: bool,
+    mixed_errors: bool,
+) -> DomainAdapter:
+    """Resolve adapter with optional mixed per-command error policy."""
+    if domain == "gridtool":
+        from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
+        return GridtoolAdapter(
+            cryptic_errors=cryptic_errors,
+            semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=mixed_errors,
+        )
+    return _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
+
+
+def _serialize_lesson(lesson: Any) -> dict[str, Any]:
+    return {
+        "category": getattr(lesson, "category", ""),
+        "lesson": getattr(lesson, "lesson", ""),
+        "evidence_steps": getattr(lesson, "evidence_steps", []),
+        "eval_score": getattr(lesson, "eval_score", 0.0),
+        "eval_passed": getattr(lesson, "eval_passed", False),
+    }
+
+
+def prepare_cli_prompt_preview(
+    *,
+    task_id: str,
+    task: str | None,
+    domain: str = "sqlite",
+    bootstrap: bool = False,
+    require_skill_read: bool = True,
+    opaque_tools: bool = False,
+    cryptic_errors: bool = False,
+    semi_helpful_errors: bool = False,
+    mixed_errors: bool = False,
+) -> CliPromptPreview:
+    """Build the exact prompt/tools payload without executing a session."""
+    adapter = _resolve_adapter_with_mode(
+        domain,
+        cryptic_errors=cryptic_errors,
+        semi_helpful_errors=semi_helpful_errors,
+        mixed_errors=mixed_errors,
+    )
+    task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
+    if bootstrap:
+        task_text = re.sub(r"- Read the .*?skill document.*?\n", "", task_text)
+        task_text = re.sub(r",?\s*read_skill,?", "", task_text)
+
+    # Prompt assembly mirrors run_cli_agent to guarantee dump parity.
+    skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
+    if bootstrap:
+        routed_entries: list[SkillManifestEntry] = []
+        routed_refs: list[str] = []
+        required_skill_refs: set[str] = set()
+        skills_text = (
+            "(bootstrap mode — no skill docs available, ignore any task instructions about reading skills. "
+            "Learn from trial, error messages, and prior lessons below.)"
+        )
+    else:
+        routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
+        routed_refs = [entry.skill_ref for entry in routed_entries]
+        required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
+        skills_text = manifest_summaries_text(routed_entries)
+
+    domain_keywords = adapter.quality_keywords()
+    lessons_text, _ = load_relevant_lessons(
+        path=LESSONS_PATH,
+        task_id=task_id,
+        task=task_text,
+        max_lessons=12,
+        max_sessions=8,
+        domain_keywords=domain_keywords,
+    )
+    domain_fragment = adapter.system_prompt_fragment()
+    if bootstrap:
+        domain_fragment = re.sub(
+            r"- Before starting.*?do not guess or invent skill_ref names\.\n",
+            "",
+            domain_fragment,
+            flags=re.DOTALL,
+        )
+    system_prompt = _build_system_prompt(
+        task_id=task_id,
+        skills_text=skills_text,
+        lessons_text=lessons_text,
+        domain_fragment=domain_fragment,
+    )
+    if required_skill_refs:
+        executor_tool = adapter.executor_tool_name
+        system_prompt += (
+            "\nSkill gate requirement:\n"
+            f"- Before first {executor_tool} call, read at least one of: {sorted(required_skill_refs)}\n"
+        )
+    if opaque_tools:
+        system_prompt += "\nTool names are opaque. Read your routed skills for usage semantics.\n"
+
+    task_dir = TASKS_ROOT / task_id
+    if not task_dir.exists():
+        raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
+    fixture_refs = sorted(p.name for p in task_dir.glob("*.csv"))
+    if (task_dir / "task.md").exists():
+        fixture_refs.append("task.md")
+    tools = adapter.tool_defs(fixture_refs, opaque=opaque_tools)
+    if bootstrap:
+        read_skill_api_name = "read_skill" if not opaque_tools else "probe"
+        tools = [tool for tool in tools if tool.get("name") != read_skill_api_name]
+
+    return CliPromptPreview(
+        task_text=task_text,
+        system_prompt=system_prompt,
+        lessons_text=lessons_text,
+        tools=tools,
+    )
 
 
 def run_cli_agent(
@@ -285,10 +423,16 @@ def run_cli_agent(
     opaque_tools: bool = False,
     cryptic_errors: bool = False,
     semi_helpful_errors: bool = False,
+    mixed_errors: bool = False,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
-    adapter = _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
+    adapter = _resolve_adapter_with_mode(
+        domain,
+        cryptic_errors=cryptic_errors,
+        semi_helpful_errors=semi_helpful_errors,
+        mixed_errors=mixed_errors,
+    )
 
     # Load task text: explicit arg > task.md file > fallback
     task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
@@ -392,6 +536,7 @@ def run_cli_agent(
         "task": task_text,
         "domain": domain,
         "bootstrap": bootstrap,
+        "mixed_errors": mixed_errors,
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,
@@ -416,6 +561,10 @@ def run_cli_agent(
         "judge_score": None,
         "judge_passed": None,
         "judge_reasons": [],
+        "judge_critique": "",
+        "critic_raw_lessons": [],
+        "critic_filtered_lessons": [],
+        "critic_rejected_lessons": [],
         "critic_no_updates_streak": int(escalation_state.get("critic_no_updates_streak", 0)),
         "low_score_streak": int(escalation_state.get("low_score_streak", 0)),
         "escalation_state": {
@@ -590,6 +739,7 @@ def run_cli_agent(
         metrics["judge_passed"] = judge_result.passed
         metrics["judge_score"] = judge_result.score
         metrics["judge_reasons"] = judge_result.reasons
+        metrics["judge_critique"] = judge_result.raw_response
 
         # If no CONTRACT exists, use judge as primary eval signal
         if not contract_path.exists():
@@ -615,7 +765,7 @@ def run_cli_agent(
         routed_refs = [entry.skill_ref for entry in routed_entries]
         skill_snapshots, skill_digests = _load_skill_snapshots(entries=skill_manifest_entries, routed_refs=routed_refs)
         domain_keywords = adapter.quality_keywords()
-        lessons = generate_lessons(
+        lesson_result: LessonGenerationResult = generate_lessons(
             client=client,
             model=critic_model_for_run,
             session_id=session_id,
@@ -627,7 +777,12 @@ def run_cli_agent(
             domain_name=domain,
             domain_keywords=domain_keywords,
         )
-        metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lessons)
+        metrics["critic_raw_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.raw_lessons]
+        metrics["critic_filtered_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.filtered_lessons]
+        filtered_texts = {lesson.lesson for lesson in lesson_result.filtered_lessons}
+        rejected = [lesson for lesson in lesson_result.raw_lessons if lesson.lesson not in filtered_texts]
+        metrics["critic_rejected_lessons"] = [_serialize_lesson(lesson) for lesson in rejected]
+        metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lesson_result.filtered_lessons)
         prune_lessons(LESSONS_PATH, max_per_task=20, domain_keywords=domain_keywords)
 
         proposed_updates, confidence, reflection_raw = propose_skill_updates(
@@ -744,4 +899,11 @@ def run_cli_agent(
     metrics["elapsed_s"] = round(time.time() - float(metrics["time_start"]), 3)
 
     write_metrics(paths.metrics_path, metrics)
-    return CliRunResult(messages=messages, metrics=metrics)
+    return CliRunResult(
+        messages=messages,
+        metrics=metrics,
+        task_text=task_text,
+        system_prompt=system_prompt,
+        lessons_text=lessons_text,
+        tools=tools,
+    )

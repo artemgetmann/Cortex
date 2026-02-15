@@ -15,17 +15,22 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_CRITIC_MODEL,
     LESSONS_PATH,
+    prepare_cli_prompt_preview,
     run_cli_agent,
 )
 from tracks.cli_sqlite.demo_display import (
     console,
     show_demo_header,
     show_final_summary,
+    show_critic_output,
+    show_judge_reasoning,
     show_learning_progress,
     show_lessons_generated,
+    show_loaded_lessons,
     show_session_header,
     show_session_replay,
     show_session_score,
+    show_system_prompt,
     show_step,
 )
 
@@ -43,7 +48,12 @@ def main() -> int:
     ap.add_argument("--bootstrap", action="store_true")
     ap.add_argument("--cryptic-errors", action="store_true")
     ap.add_argument("--semi-helpful-errors", action="store_true")
+    ap.add_argument("--mixed-errors", action="store_true",
+                    help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--clear-lessons", action="store_true", help="Clear lessons before starting")
+    ap.add_argument("--dump-prompt", action="store_true",
+                    help="Print exact executor prompt + task + tool schema, then exit")
+    ap.add_argument("--dump-prompt-format", choices=["text", "json"], default="text")
     ap.add_argument("--replay-detail", choices=["full", "compact", "none"], default="compact")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -51,21 +61,57 @@ def main() -> int:
     cfg = load_config()
     model = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
 
-    # Clear escalation state for clean experiment
-    escalation_path = Path(__file__).resolve().parents[1] / "learning" / "critic_escalation_state.json"
-    if escalation_path.exists():
-        escalation_path.unlink()
-
     # Clear lessons if requested
     if args.clear_lessons and LESSONS_PATH.exists():
         shutil.copy2(LESSONS_PATH, LESSONS_PATH.with_suffix(".jsonl.bak"))
         LESSONS_PATH.write_text("")
         console.print("[yellow]  Lessons cleared (backup saved)[/yellow]")
 
+    if args.dump_prompt:
+        preview = prepare_cli_prompt_preview(
+            task_id=args.task_id,
+            task=None,
+            domain=args.domain,
+            bootstrap=args.bootstrap,
+            require_skill_read=not args.bootstrap,
+            opaque_tools=False,
+            cryptic_errors=args.cryptic_errors,
+            semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
+        )
+        if args.dump_prompt_format == "json":
+            import json
+            print(json.dumps(
+                {
+                    "task_text": preview.task_text,
+                    "system_prompt": preview.system_prompt,
+                    "tools": preview.tools,
+                },
+                indent=2,
+                ensure_ascii=True,
+            ))
+        else:
+            print("=== TASK ===")
+            print(preview.task_text)
+            print("\n=== SYSTEM PROMPT ===")
+            print(preview.system_prompt)
+            print("\n=== TOOLS ===")
+            for tool in preview.tools:
+                print(tool)
+                print()
+        return 0
+
+    # Clear escalation state for clean experiment.
+    # Skip this in --dump-prompt mode so prompt inspection is side-effect free.
+    escalation_path = Path(__file__).resolve().parents[1] / "learning" / "critic_escalation_state.json"
+    if escalation_path.exists():
+        escalation_path.unlink()
+
     show_demo_header(args.task_id, model, args.sessions, args.domain)
 
     results: list[dict] = []
     scores: list[float] = []
+    printed_system_prompt = False
 
     for i in range(args.sessions):
         session_id = args.start_session + i
@@ -76,7 +122,23 @@ def main() -> int:
         if LESSONS_PATH.exists() and LESSONS_PATH.stat().st_size > 0:
             lesson_count = sum(1 for _ in open(LESSONS_PATH))
 
+        preview = prepare_cli_prompt_preview(
+            task_id=args.task_id,
+            task=None,
+            domain=args.domain,
+            bootstrap=args.bootstrap,
+            require_skill_read=not args.bootstrap,
+            opaque_tools=False,
+            cryptic_errors=args.cryptic_errors,
+            semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
+        )
+        if not printed_system_prompt:
+            show_system_prompt(preview.system_prompt)
+            printed_system_prompt = True
+
         show_session_header(run_num, args.sessions, session_id, lesson_count)
+        show_loaded_lessons(preview.lessons_text, lesson_count)
 
         t0 = time.time()
         result = run_cli_agent(
@@ -97,6 +159,7 @@ def main() -> int:
             bootstrap=args.bootstrap,
             cryptic_errors=args.cryptic_errors,
             semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
             on_step=show_step,
         )
         elapsed = time.time() - t0
@@ -113,6 +176,12 @@ def main() -> int:
         reasons = m.get("eval_reasons") or m.get("judge_reasons")
 
         show_session_score(score, passed, reasons)
+        show_critic_output(
+            m.get("critic_raw_lessons"),
+            m.get("critic_filtered_lessons"),
+            m.get("critic_rejected_lessons"),
+        )
+        show_judge_reasoning(m.get("judge_reasons"), m.get("judge_critique"))
         show_lessons_generated(m.get("lessons_generated", 0))
 
         scores.append(score)

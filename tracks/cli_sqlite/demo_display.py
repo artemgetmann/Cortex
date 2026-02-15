@@ -1,12 +1,16 @@
 """Rich terminal display for Cortex CLI Learning Demo."""
 from __future__ import annotations
 
+from typing import Any
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 console = Console()
+
+HINT_MARKER = "--- HINT from prior sessions ---"
 
 
 def show_demo_header(task_id: str, model: str, sessions: int, domain: str) -> None:
@@ -33,6 +37,32 @@ def show_demo_header(task_id: str, model: str, sessions: int, domain: str) -> No
     console.print()
 
 
+def show_system_prompt(prompt: str) -> None:
+    """Display exact system prompt shown to executor model."""
+    console.print(
+        Panel(
+            prompt.strip() or "(empty system prompt)",
+            title="[bold blue]SYSTEM PROMPT[/bold blue]",
+            border_style="blue",
+            padding=(1, 1),
+        )
+    )
+
+
+def show_loaded_lessons(lessons_text: str, lessons_loaded: int) -> None:
+    """Display the literal lessons injected into runtime prompt."""
+    if lessons_loaded <= 0:
+        return
+    console.print(
+        Panel(
+            lessons_text.strip() or "(no lesson text)",
+            title=f"[bold yellow]LESSONS INJECTED ({lessons_loaded})[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 1),
+        )
+    )
+
+
 def show_session_header(run_num: int, total_runs: int, session_id: int, lessons_loaded: int) -> None:
     """Session start banner."""
     header = Text()
@@ -55,11 +85,10 @@ def show_step(step: int, tool_name: str, ok: bool, error: str | None) -> None:
     line.append(f"  Step {step}: ", style="dim")
     line.append(f"{tool_name} ", style="bold white")
     if ok:
-        line.append("✓", style="bold green")
+        line.append("OK", style="bold green")
     else:
-        line.append("✗ ", style="bold red")
+        line.append("ERR ", style="bold red")
         if error:
-            # Truncate long errors for display
             short = error[:120].replace("\n", " ")
             if len(error) > 120:
                 short += "..."
@@ -67,16 +96,52 @@ def show_step(step: int, tool_name: str, ok: bool, error: str | None) -> None:
     console.print(line)
 
 
-def show_session_replay(messages: list[dict], detail: str = "compact") -> None:
-    """Walk the messages list and display agent activity.
+def show_agent_thinking(text: str) -> None:
+    """Render assistant reasoning with no truncation."""
+    console.print(
+        Panel(
+            text.strip(),
+            title="[dim]AGENT THINKING[/dim]",
+            border_style="grey54",
+            style="dim",
+            padding=(0, 1),
+        )
+    )
 
-    detail: 'compact' = tool calls only, 'full' = reasoning + tools, 'none' = skip
-    """
+
+def show_hint_injection(error_text: str, hint_text: str) -> None:
+    """Render original error plus injected prior-session hints."""
+    content = Text()
+    content.append("Base error:\n", style="bold red")
+    content.append((error_text or "").strip() + "\n\n", style="red")
+    content.append("Injected hint block:\n", style="bold yellow")
+    content.append((hint_text or "").strip(), style="yellow")
+    console.print(
+        Panel(
+            content,
+            title="[bold yellow]HINT INJECTION[/bold yellow]",
+            border_style="bright_yellow",
+            padding=(0, 1),
+        )
+    )
+
+
+def _flatten_tool_result(content: Any) -> str:
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content if isinstance(b, dict)]
+        return " ".join(parts)
+    if isinstance(content, str):
+        return content
+    return str(content)
+
+
+def show_session_replay(messages: list[dict], detail: str = "compact") -> None:
+    """Walk message list and display agent activity."""
     if detail == "none":
         return
 
     console.print()
-    console.print("  [dim]─── Agent Replay ───[/dim]")
+    console.print("  [dim]--- Agent Replay ---[/dim]")
 
     for msg in messages:
         role = msg.get("role", "")
@@ -92,47 +157,37 @@ def show_session_replay(messages: list[dict], detail: str = "compact") -> None:
             if btype == "text" and detail == "full" and role == "assistant":
                 text = (block.get("text") or "").strip()
                 if text:
-                    short = text[:200].replace("\n", " ")
-                    if len(text) > 200:
-                        short += "..."
-                    console.print(f"    [dim italic]💭 {short}[/dim italic]")
+                    show_agent_thinking(text)
 
             elif btype == "tool_use":
                 name = block.get("name", "?")
                 inp = block.get("input", {})
-                inp_short = str(inp)[:100]
-                if len(str(inp)) > 100:
+                inp_short = str(inp)[:140]
+                if len(str(inp)) > 140:
                     inp_short += "..."
-                console.print(f"    [cyan]🔧 {name}[/cyan] [dim]{inp_short}[/dim]")
+                console.print(f"    [cyan][TOOL][/cyan] {name} [dim]{inp_short}[/dim]")
 
             elif btype == "tool_result":
                 is_err = block.get("is_error", False)
-                result_content = block.get("content", "")
-                if isinstance(result_content, list):
-                    parts = [b.get("text", "") for b in result_content if isinstance(b, dict)]
-                    result_text = " ".join(parts)
-                elif isinstance(result_content, str):
-                    result_text = result_content
+                result_text = _flatten_tool_result(block.get("content", ""))
+                if is_err and detail == "full" and HINT_MARKER in result_text:
+                    base, hint = result_text.split(HINT_MARKER, 1)
+                    show_hint_injection(base.strip(), HINT_MARKER + hint)
                 else:
-                    result_text = str(result_content)
-                short = result_text[:120].replace("\n", " ")
-                if len(result_text) > 120:
-                    short += "..."
-                if is_err:
-                    console.print(f"    [red]  ↳ ERROR: {short}[/red]")
-                else:
-                    console.print(f"    [green]  ↳ {short}[/green]")
+                    short = result_text[:160].replace("\n", " ")
+                    if len(result_text) > 160:
+                        short += "..."
+                    if is_err:
+                        console.print(f"    [red][RESULT][/red] ERROR: {short}")
+                    else:
+                        console.print(f"    [green][RESULT][/green] {short}")
 
-    console.print("  [dim]───────────────────[/dim]")
+    console.print("  [dim]--------------------[/dim]")
 
 
 def show_session_score(score: float, passed: bool, reasons: list[str] | str | None) -> None:
     """Bold score display."""
-    if passed:
-        label = Text(f"PASS {score:.2f}", style="bold green")
-    else:
-        label = Text(f"FAIL {score:.2f}", style="bold red")
-
+    label = Text(f"{'PASS' if passed else 'FAIL'} {score:.2f}", style="bold green" if passed else "bold red")
     reason_text = ""
     if isinstance(reasons, list) and reasons:
         reason_text = "; ".join(str(r) for r in reasons[:3])
@@ -148,12 +203,96 @@ def show_session_score(score: float, passed: bool, reasons: list[str] | str | No
     console.print(panel)
 
 
+def _category_style(category: str) -> str:
+    lowered = category.lower()
+    if lowered in {"negative", "mistake"}:
+        return "bold red"
+    if lowered == "shortcut":
+        return "bold green"
+    return "bold cyan"
+
+
+def show_critic_output(
+    raw_lessons: list[dict[str, Any]] | None,
+    filtered_lessons: list[dict[str, Any]] | None,
+    rejected_lessons: list[dict[str, Any]] | None,
+) -> None:
+    """Display critic proposal and quality-filter result."""
+    raw_lessons = raw_lessons or []
+    filtered_lessons = filtered_lessons or []
+    rejected_lessons = rejected_lessons or []
+    if not raw_lessons and not filtered_lessons and not rejected_lessons:
+        return
+
+    table = Table(show_header=True, header_style="bold white", border_style="magenta")
+    table.add_column("Set", width=9)
+    table.add_column("Category", width=12)
+    table.add_column("Lesson")
+    table.add_column("Steps", width=10)
+
+    def _add_rows(label: str, lessons: list[dict[str, Any]]) -> None:
+        for lesson in lessons:
+            category = str(lesson.get("category", ""))
+            text = str(lesson.get("lesson", ""))
+            steps = ",".join(str(step) for step in lesson.get("evidence_steps", []))
+            table.add_row(
+                label,
+                Text(category, style=_category_style(category)),
+                text,
+                steps or "-",
+            )
+
+    _add_rows("raw", raw_lessons)
+    _add_rows("kept", filtered_lessons)
+    _add_rows("reject", rejected_lessons)
+    console.print(
+        Panel(
+            table,
+            title=(
+                f"[bold magenta]CRITIC OUTPUT[/bold magenta] "
+                f"[dim](raw={len(raw_lessons)}, kept={len(filtered_lessons)}, reject={len(rejected_lessons)})[/dim]"
+            ),
+            border_style="magenta",
+            padding=(0, 1),
+        )
+    )
+
+
+def show_judge_reasoning(reasons: list[str] | str | None, critique: str | None) -> None:
+    """Display judge reasoning payload from metrics."""
+    reason_lines: list[str] = []
+    if isinstance(reasons, list):
+        reason_lines = [str(item) for item in reasons if str(item).strip()]
+    elif isinstance(reasons, str) and reasons.strip():
+        reason_lines = [reasons.strip()]
+
+    content = Text()
+    if reason_lines:
+        content.append("Reasons:\n", style="bold magenta")
+        for line in reason_lines:
+            content.append(f"- {line}\n", style="magenta")
+    if critique and critique.strip():
+        content.append("\nRaw judge output:\n", style="bold dim")
+        content.append(critique.strip(), style="dim")
+    if not reason_lines and not (critique and critique.strip()):
+        content.append("(no judge reasoning captured)", style="dim")
+
+    console.print(
+        Panel(
+            content,
+            title="[bold magenta]JUDGE REASONING[/bold magenta]",
+            border_style="magenta",
+            padding=(0, 1),
+        )
+    )
+
+
 def show_lessons_generated(count: int) -> None:
     """Lesson generation summary."""
     if count > 0:
-        console.print(f"  [yellow]📝 {count} lesson{'s' if count != 1 else ''} generated[/yellow]")
+        console.print(f"  [yellow]LESSONS GENERATED: {count}[/yellow]")
     else:
-        console.print("  [dim]📝 no new lessons[/dim]")
+        console.print("  [dim]LESSONS GENERATED: 0[/dim]")
 
 
 def show_learning_progress(scores: list[float]) -> None:
@@ -171,7 +310,7 @@ def show_learning_progress(scores: list[float]) -> None:
             style = "red"
         parts.append(f"{s:.2f}", style=style)
         if i < len(scores) - 1:
-            parts.append(" → ", style="dim")
+            parts.append(" -> ", style="dim")
     console.print(parts)
 
 
@@ -179,7 +318,6 @@ def show_final_summary(results: list[dict]) -> None:
     """Final summary table."""
     console.print()
 
-    # Build table
     table = Table(
         title="Learning Curve Results",
         border_style="cyan",
@@ -196,100 +334,25 @@ def show_final_summary(results: list[dict]) -> None:
     table.add_column("Lessons Out", justify="center", width=11)
     table.add_column("Time", justify="right", width=7)
 
-    for r in results:
-        score = r.get("score", 0)
-        passed = r.get("passed", False)
+    for row in results:
+        score = row.get("score", 0)
+        passed = row.get("passed", False)
         score_style = "bold green" if score >= 0.9 else ("yellow" if score >= 0.5 else "red")
         result_text = Text("PASS", style="bold green") if passed else Text("FAIL", style="bold red")
-
-        # Visual bar for score
         bar_width = 5
         filled = round(score * bar_width)
         bar = "█" * filled + "░" * (bar_width - filled)
-
         table.add_row(
-            str(r.get("run", "")),
-            str(r.get("session_id", "")),
+            str(row.get("run", "")),
+            str(row.get("session_id", "")),
             Text(f"{bar} {score:.2f}", style=score_style),
             result_text,
-            str(r.get("steps", 0)),
-            str(r.get("tool_errors", 0)),
-            str(r.get("lessons_loaded", 0)),
-            str(r.get("lessons_generated", 0)),
-            f"{r.get('elapsed_s', 0):.1f}s",
+            str(row.get("steps", 0)),
+            str(row.get("tool_errors", 0)),
+            str(row.get("lessons_loaded", 0)),
+            str(row.get("lessons_generated", 0)),
+            f"{row.get('elapsed_s', 0):.1f}s",
         )
 
     console.print(table)
 
-    # Summary stats
-    scores = [r.get("score", 0) for r in results]
-    steps_list = [r.get("steps", 0) for r in results]
-    errors_list = [r.get("tool_errors", 0) for r in results]
-    total_lessons = sum(r.get("lessons_generated", 0) for r in results)
-    passes = [i + 1 for i, r in enumerate(results) if r.get("passed")]
-
-    console.print()
-    stats = Text()
-
-    # Score trajectory
-    stats.append("Score trajectory: ", style="dim")
-    for i, s in enumerate(scores):
-        style = "bold green" if s >= 0.9 else ("yellow" if s >= 0.5 else "red")
-        stats.append(f"{s:.2f}", style=style)
-        if i < len(scores) - 1:
-            stats.append(" → ", style="dim")
-    stats.append("\n")
-
-    # Total lessons
-    stats.append(f"Total lessons accumulated: ", style="dim")
-    stats.append(f"{total_lessons}", style="yellow")
-    stats.append("\n")
-
-    # Steps trend
-    if len(steps_list) >= 2:
-        delta_steps = steps_list[-1] - steps_list[0]
-        trend = "↓ improving" if delta_steps < 0 else ("→ stable" if delta_steps == 0 else "↑ more steps")
-        trend_style = "green" if delta_steps < 0 else ("dim" if delta_steps == 0 else "yellow")
-        stats.append(f"Steps trend: {steps_list[0]} → {steps_list[-1]} ", style="dim")
-        stats.append(f"({trend})", style=trend_style)
-        stats.append("\n")
-
-    # Errors trend
-    if len(errors_list) >= 2:
-        delta_errs = errors_list[-1] - errors_list[0]
-        trend = "↓ fewer errors" if delta_errs < 0 else ("→ stable" if delta_errs == 0 else "↑ more errors")
-        trend_style = "green" if delta_errs < 0 else ("dim" if delta_errs == 0 else "red")
-        stats.append(f"Error trend: {errors_list[0]} → {errors_list[-1]} ", style="dim")
-        stats.append(f"({trend})", style=trend_style)
-        stats.append("\n")
-
-    # Mastery
-    if passes:
-        stats.append(f"First perfect score: Run {passes[0]}", style="bold green")
-        if len(passes) == len(results):
-            stats.append(" (all runs passed!)", style="green")
-    else:
-        stats.append("No passing runs yet", style="red")
-    stats.append("\n")
-
-    # Learning speed
-    if len(scores) >= 2:
-        improvement = scores[-1] - scores[0]
-        if improvement > 0.3:
-            speed = "Fast learner! 🚀"
-            style = "bold green"
-        elif improvement > 0:
-            speed = "Steady progress 📈"
-            style = "yellow"
-        elif improvement == 0:
-            speed = "Plateaued"
-            style = "dim"
-        else:
-            speed = "Regression detected"
-            style = "red"
-        stats.append(f"Learning: ", style="dim")
-        stats.append(speed, style=style)
-
-    panel = Panel(stats, title="[bold cyan]Summary[/bold cyan]", border_style="cyan", padding=(1, 2))
-    console.print(panel)
-    console.print()

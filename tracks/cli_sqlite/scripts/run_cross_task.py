@@ -54,6 +54,7 @@ def _run_phase(
     bootstrap: bool,
     cryptic_errors: bool,
     semi_helpful_errors: bool,
+    mixed_errors: bool,
     verbose: bool,
 ) -> list[dict]:
     results = []
@@ -84,6 +85,7 @@ def _run_phase(
             bootstrap=bootstrap,
             cryptic_errors=cryptic_errors,
             semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=mixed_errors,
         )
 
         m = result.metrics
@@ -131,6 +133,8 @@ def main() -> int:
     ap.add_argument("--bootstrap", action="store_true")
     ap.add_argument("--cryptic-errors", action="store_true")
     ap.add_argument("--semi-helpful-errors", action="store_true")
+    ap.add_argument("--mixed-errors", action="store_true",
+                    help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
@@ -151,7 +155,7 @@ def main() -> int:
     print(f"  Cross-Task Transfer Experiment")
     print(f"  train={args.train_task}  test={args.test_tasks}")
     print(f"  domain={args.domain}  bootstrap={args.bootstrap}  max_steps={args.max_steps}")
-    print(f"  semi_helpful={args.semi_helpful_errors}  model={args.model_executor}")
+    print(f"  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  model={args.model_executor}")
     if args.no_train:
         print(f"  ** CONTROL: no training phase (baseline) **")
     print(f"{'='*70}\n")
@@ -175,6 +179,7 @@ def main() -> int:
             bootstrap=args.bootstrap,
             cryptic_errors=args.cryptic_errors,
             semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
             verbose=args.verbose,
         )
         all_results.extend(train_results)
@@ -201,6 +206,7 @@ def main() -> int:
             bootstrap=args.bootstrap,
             cryptic_errors=args.cryptic_errors,
             semi_helpful_errors=args.semi_helpful_errors,
+            mixed_errors=args.mixed_errors,
             verbose=args.verbose,
         )
         all_results.extend(test_results)

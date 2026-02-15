@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail", "domain_detail"}
+ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "sql_detail", "domain_detail", "negative"}
 
 
 def _tokenize(text: str) -> set[str]:
@@ -71,6 +71,14 @@ class Lesson:
             "skill_refs_used": self.skill_refs_used,
             "timestamp": self.timestamp,
         }
+
+
+@dataclass(frozen=True)
+class LessonGenerationResult:
+    """Container for critic output before and after quality filtering."""
+
+    raw_lessons: list[Lesson]
+    filtered_lessons: list[Lesson]
 
 
 def load_lessons(path: Path) -> list[Lesson]:
@@ -252,6 +260,10 @@ def _lesson_quality_score(lesson: Lesson, *, domain_keywords: re.Pattern[str] | 
         score += 0.15
     if lesson.evidence_steps:
         score += 0.1
+    # Failure-native lessons carry high signal if they include concrete syntax
+    # corrections, so give them a modest baseline boost.
+    if lesson.category == "negative":
+        score += 0.15
     # Boost: lessons containing syntax examples (quotes, arrows, operators) are valuable
     if re.search(r'["\']|->|=\w+\(', text):
         score += 0.2
@@ -411,7 +423,7 @@ def generate_lessons(
     skill_refs_used: list[str],
     domain_name: str = "sqlite",
     domain_keywords: re.Pattern[str] | None = None,
-) -> list[Lesson]:
+) -> LessonGenerationResult:
     passed = bool(eval_result.get("passed", False))
     try:
         score = float(eval_result.get("score", 0.0))
@@ -440,13 +452,17 @@ def generate_lessons(
         system = (
             f"You are a post-run {domain_name} learning critic.\n"
             "Return STRICT JSON array only. Each item must match:\n"
-            '{"category":"mistake|insight|shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+            '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
             "Rules:\n"
             "- For each error in the events, extract the CORRECT syntax from the error hint.\n"
+            "- Prefer category='negative' for failure lessons that encode WRONG vs CORRECT syntax.\n"
+            "- For category='negative', use lesson format:\n"
+            "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
             "- Each lesson MUST include: what went wrong + the correct syntax to use instead.\n"
             "- REJECT generic advice like 'always read the skill', 'be careful', 'remember to check'.\n"
             "- Focus on SPECIFIC syntax errors and their fixes.\n"
             f"- Good for gridtool: 'TALLY requires arrow syntax: TALLY group_col -> alias=func(agg_col). The agent used GROUP BY instead.'\n"
+            f"- Good negative: 'WRONG: TALLY GROUP BY region -> CORRECT: TALLY region -> total=sum(amount). WHY: gridtool does not support SQL GROUP BY.'\n"
             f"- Good: 'LOAD path must be in double quotes: LOAD \"file.csv\". The agent wrote LOAD file.csv without quotes.'\n"
             f"- Good: 'Functions are case-sensitive, must be lowercase: sum, count, avg, min, max. The agent used SUM.'\n"
             "- Bad: 'Always read the skill document before executing commands'\n"
@@ -472,7 +488,7 @@ def generate_lessons(
             messages=[{"role": "user", "content": [{"type": "text", "text": user}]}],
         )
     except Exception:
-        return []
+        return LessonGenerationResult(raw_lessons=[], filtered_lessons=[])
 
     raw = ""
     for block in response.content:
@@ -482,7 +498,7 @@ def generate_lessons(
 
     parsed = _extract_json_array(raw)
     now = datetime.now(timezone.utc).isoformat()
-    lessons: list[Lesson] = []
+    raw_lessons: list[Lesson] = []
     for item in parsed[:6]:
         if not isinstance(item, dict):
             continue
@@ -494,7 +510,7 @@ def generate_lessons(
             continue
         raw_steps = item.get("evidence_steps", [])
         steps = [int(step) for step in raw_steps if isinstance(step, int) and step > 0][:8] if isinstance(raw_steps, list) else []
-        lessons.append(
+        raw_lessons.append(
             Lesson(
                 session_id=session_id,
                 task_id=task_id,
@@ -508,4 +524,5 @@ def generate_lessons(
                 timestamp=now,
             )
         )
-    return filter_lessons(lessons, domain_keywords=domain_keywords)
+    filtered_lessons = filter_lessons(raw_lessons, domain_keywords=domain_keywords)
+    return LessonGenerationResult(raw_lessons=raw_lessons, filtered_lessons=filtered_lessons)

@@ -18,6 +18,11 @@ import sys
 CRYPTIC_MODE = False
 # Global flag: when True, error messages hint without giving full answers
 SEMI_HELPFUL_MODE = False
+# Optional per-command error policy map, e.g. {"LOAD": "semi", "TALLY": "cryptic"}.
+ERROR_MODE_BY_COMMAND = {}
+# Current command being executed (set in dispatcher loop) so _fail can route
+# error formatting without touching every call site.
+CURRENT_COMMAND = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +195,40 @@ def _semi_helpful_hints(msg: str) -> str:
 
 def _fail(lineno: int, msg: str):
     """Print error to stderr and exit."""
-    if CRYPTIC_MODE:
+    mode = None
+    if isinstance(CURRENT_COMMAND, str):
+        mode = ERROR_MODE_BY_COMMAND.get(CURRENT_COMMAND.upper())
+    if mode == "cryptic":
+        msg = _strip_hints(msg)
+    elif mode == "semi":
+        msg = _semi_helpful_hints(msg)
+    elif CRYPTIC_MODE:
         msg = _strip_hints(msg)
     elif SEMI_HELPFUL_MODE:
         msg = _semi_helpful_hints(msg)
     print(f"ERROR at line {lineno}: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _parse_error_mode_map(raw: str):
+    """Parse CLI map text: LOAD=semi,TALLY=cryptic,..."""
+    mapping = {}
+    text = (raw or "").strip()
+    if not text:
+        return mapping
+    for pair in text.split(","):
+        item = pair.strip()
+        if not item or "=" not in item:
+            continue
+        command, mode = [chunk.strip() for chunk in item.split("=", 1)]
+        command = command.upper()
+        mode = mode.lower()
+        if command not in COMMANDS:
+            continue
+        if mode not in {"helpful", "semi", "cryptic"}:
+            continue
+        mapping[command] = mode
+    return mapping
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +483,7 @@ COMMANDS = {"LOAD", "KEEP", "TOSS", "TALLY", "RANK", "PICK", "DERIVE", "MERGE", 
 
 
 def run(workdir: str, input_stream):
+    global CURRENT_COMMAND
     rows = []
     lines = input_stream.read().splitlines()
 
@@ -462,6 +496,7 @@ def run(workdir: str, input_stream):
         parts = line.split(None, 1)
         cmd = parts[0].upper()
         args = parts[1] if len(parts) > 1 else ""
+        CURRENT_COMMAND = cmd
 
         if cmd not in COMMANDS:
             suggestion = SQL_MISTAKES.get(cmd)
@@ -490,16 +525,22 @@ def run(workdir: str, input_stream):
 
 
 def main():
-    global CRYPTIC_MODE, SEMI_HELPFUL_MODE
+    global CRYPTIC_MODE, SEMI_HELPFUL_MODE, ERROR_MODE_BY_COMMAND
     parser = argparse.ArgumentParser(description="gridtool: pipeline CSV data processor")
     parser.add_argument("--workdir", required=True, help="Working directory for CSV file resolution")
     parser.add_argument("--cryptic", action="store_true",
                         help="Cryptic error mode: strip helpful hints from error messages")
     parser.add_argument("--semi-helpful", action="store_true",
                         help="Semi-helpful error mode: hint at fixes without giving full syntax")
+    parser.add_argument(
+        "--error-mode-map",
+        default="",
+        help="Optional per-command mode map, e.g. LOAD=semi,TALLY=cryptic",
+    )
     args = parser.parse_args()
     CRYPTIC_MODE = args.cryptic
     SEMI_HELPFUL_MODE = args.semi_helpful
+    ERROR_MODE_BY_COMMAND = _parse_error_mode_map(args.error_mode_map)
     if not os.path.isdir(args.workdir):
         print(f"ERROR: --workdir '{args.workdir}' is not a directory", file=sys.stderr)
         sys.exit(1)
