@@ -71,6 +71,62 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, float | int]:
     }
 
 
+def _render_markdown_summary(
+    *,
+    payload: dict[str, Any],
+    full_agg: dict[str, float | int],
+    simplified_agg: dict[str, float | int],
+    deltas: dict[str, float | int],
+) -> str:
+    config = payload["config"]
+    caveats = payload.get("caveats", [])
+    lines = [
+        "# Architecture A/B Summary",
+        "",
+        "## Config",
+        "",
+        f"- domain: `{config['domain']}`",
+        f"- task_id: `{config['task_id']}`",
+        f"- learning_mode: `{config['learning_mode']}`",
+        f"- sessions_per_arm: `{config['sessions_per_arm']}`",
+        f"- max_steps: `{config['max_steps']}`",
+        f"- bootstrap: `{config['bootstrap']}`",
+        f"- mixed_errors: `{config['mixed_errors']}`",
+        f"- cryptic_errors: `{config['cryptic_errors']}`",
+        f"- semi_helpful_errors: `{config['semi_helpful_errors']}`",
+        "",
+        "## Arm Metrics",
+        "",
+        "| arm | pass_rate | mean_score | mean_steps | mean_tool_errors | total_tokens_est | total_elapsed_s |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| full | {float(full_agg['pass_rate']):.2%} | {float(full_agg['mean_score']):.3f} | "
+            f"{float(full_agg['mean_steps']):.2f} | {float(full_agg['mean_tool_errors']):.2f} | "
+            f"{int(full_agg['total_tokens_est'])} | {float(full_agg['total_elapsed_s']):.2f} |"
+        ),
+        (
+            f"| simplified | {float(simplified_agg['pass_rate']):.2%} | {float(simplified_agg['mean_score']):.3f} | "
+            f"{float(simplified_agg['mean_steps']):.2f} | {float(simplified_agg['mean_tool_errors']):.2f} | "
+            f"{int(simplified_agg['total_tokens_est'])} | {float(simplified_agg['total_elapsed_s']):.2f} |"
+        ),
+        "",
+        "## Delta (simplified - full)",
+        "",
+        f"- pass_rate: `{float(deltas['pass_rate']):+.2%}`",
+        f"- mean_score: `{float(deltas['mean_score']):+.3f}`",
+        f"- mean_steps: `{float(deltas['mean_steps']):+.2f}`",
+        f"- mean_tool_errors: `{float(deltas['mean_tool_errors']):+.2f}`",
+        f"- total_tokens_est: `{int(deltas['total_tokens_est']):+d}`",
+        f"- total_elapsed_s: `{float(deltas['total_elapsed_s']):+.2f}`",
+    ]
+    if caveats:
+        lines.extend(["", "## Caveats", ""])
+        for caveat in caveats:
+            lines.append(f"- {caveat}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _run_agent_for_arm(
     *,
     architecture_mode: str,
@@ -115,6 +171,8 @@ def main() -> int:
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
     ap.add_argument("--clear-lessons-between-arms", action="store_true")
+    ap.add_argument("--output-json", default="", help="Optional path to write JSON summary payload")
+    ap.add_argument("--output-md", default="", help="Optional path to write Markdown summary")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -290,6 +348,26 @@ def main() -> int:
     print("\nJSON summary:")
     print(json.dumps(payload, indent=2, ensure_ascii=True))
     print()
+
+    if args.output_json:
+        output_json = Path(args.output_json)
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+        print(f"Wrote JSON summary: {output_json}")
+
+    if args.output_md:
+        output_md = Path(args.output_md)
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        output_md.write_text(
+            _render_markdown_summary(
+                payload=payload,
+                full_agg=full_agg,
+                simplified_agg=simplified_agg,
+                deltas=deltas,
+            ),
+            encoding="utf-8",
+        )
+        print(f"Wrote Markdown summary: {output_md}")
     return 0
 
 

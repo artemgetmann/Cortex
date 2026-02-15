@@ -5,6 +5,16 @@
 
 ---
 
+## Architecture Evidence Snapshot
+
+- Canonical findings doc: `docs/AB-FINDINGS.md`
+- Latest large A/B run (`10 sessions/arm`, strict bootstrap, mixed-errors):
+  - gridtool: simplified outperformed full (`90%` vs `80%` pass rate)
+  - fluxtool holdout: full outperformed simplified (`100%` vs `60%` pass rate)
+- Demo-safe framing: architecture choice is a measured tradeoff, not ideology.
+
+---
+
 ## Day 1 Status: CLI Learning Demo ✅ COMPLETE
 
 ### Wave 1: Build (DONE)

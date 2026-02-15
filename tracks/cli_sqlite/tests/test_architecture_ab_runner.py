@@ -35,7 +35,11 @@ def test_ab_helpers_compute_expected_metrics() -> None:
     }
 
 
-def test_ab_main_emits_payload_with_both_arms_and_deltas(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_ab_main_emits_payload_with_both_arms_and_deltas(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path,
+) -> None:
     monkeypatch.setattr(run_architecture_ab, "load_config", lambda: object())
     monkeypatch.setattr(run_architecture_ab, "_clear_lessons_and_escalation", lambda: None)
 
@@ -84,6 +88,10 @@ def test_ab_main_emits_payload_with_both_arms_and_deltas(monkeypatch: pytest.Mon
             "--bootstrap",
             "--mixed-errors",
             "--clear-lessons-between-arms",
+            "--output-json",
+            str(tmp_path / "summary.json"),
+            "--output-md",
+            str(tmp_path / "summary.md"),
         ],
     )
 
@@ -91,7 +99,8 @@ def test_ab_main_emits_payload_with_both_arms_and_deltas(monkeypatch: pytest.Mon
     assert rc == 0
 
     out = capsys.readouterr().out
-    payload = json.loads(out.split("JSON summary:\n", 1)[1].strip())
+    assert "JSON summary:" in out
+    payload = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert set(payload["arms"].keys()) == {"full", "simplified"}
     assert {"pass_rate", "mean_score", "mean_steps", "mean_tool_errors", "total_tokens_est", "total_elapsed_s"} <= set(
         payload["deltas"].keys()
@@ -99,6 +108,10 @@ def test_ab_main_emits_payload_with_both_arms_and_deltas(monkeypatch: pytest.Mon
     assert payload["arms"]["simplified"]["pass_rate"] >= payload["arms"]["full"]["pass_rate"]
     assert len(payload["runs"]["full"]) == 2
     assert len(payload["runs"]["simplified"]) == 2
+    assert (tmp_path / "summary.json").exists()
+    assert (tmp_path / "summary.md").exists()
+    summary_md = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert "| arm | pass_rate | mean_score |" in summary_md
 
 
 def test_architecture_mode_normalization_rejects_invalid() -> None:
