@@ -1,0 +1,15 @@
+region,category,revenue,cost
+East,active,1200,800
+West,active,950,600
+North,discontinued,400,500
+South,active,1800,1100
+East,active,1500,900
+West,discontinued,600,700
+North,active,1300,850
+South,active,2200,1400
+East,discontinued,300,350
+West,active,1100,650
+North,active,1600,1000
+South,discontinued,500,600
+East,active,1400,850
+West,active,1250,750

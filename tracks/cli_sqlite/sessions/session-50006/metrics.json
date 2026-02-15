@@ -1,0 +1,109 @@
+{
+  "auto_promotion_applied": 0,
+  "auto_promotion_reason": "score_not_improving",
+  "bootstrap": true,
+  "critic_model": "claude-haiku-4-5",
+  "critic_no_updates_streak": 0,
+  "domain": "gridtool",
+  "elapsed_s": 22.249,
+  "escalation_state": {
+    "auto_escalate_critic": true,
+    "last_trigger": null,
+    "override_runs_remaining": 0,
+    "tier": "haiku"
+  },
+  "eval_passed": true,
+  "eval_reasons": [
+    "Task requirement 1 (Load sales_data.csv): Successfully loaded using 'LOAD \"sales_data.csv\"' command",
+    "Task requirement 2 (Filter out discontinued category): Correctly filtered using 'TOSS category eq discontinued' after initial syntax error was corrected",
+    "Task requirement 3 (Derive margin column): Successfully derived margin using 'DERIVE margin = revenue - cost'",
+    "Task requirement 4 (Group by region with aggregations): Correctly grouped using 'TALLY region -> total_rev=sum(revenue), avg_margin=avg(margin), deals=count(region)' producing expected aggregations",
+    "Task requirement 5 (Rank by avg_margin descending): Successfully ranked using 'RANK avg_margin desc' with South (750.0) first, North (525.0) second, East (516.67) third, West (433.33) fourth",
+    "Task requirement 6 (Select specified columns): Correctly selected only region, total_rev, avg_margin, deals using 'PICK region,total_rev,avg_margin,deals'"
+  ],
+  "eval_score": 1.0,
+  "executor_model": "claude-haiku-4-5",
+  "judge_model": "claude-sonnet-4-5",
+  "judge_passed": true,
+  "judge_reasons": [
+    "Task requirement 1 (Load sales_data.csv): Successfully loaded using 'LOAD \"sales_data.csv\"' command",
+    "Task requirement 2 (Filter out discontinued category): Correctly filtered using 'TOSS category eq discontinued' after initial syntax error was corrected",
+    "Task requirement 3 (Derive margin column): Successfully derived margin using 'DERIVE margin = revenue - cost'",
+    "Task requirement 4 (Group by region with aggregations): Correctly grouped using 'TALLY region -> total_rev=sum(revenue), avg_margin=avg(margin), deals=count(region)' producing expected aggregations",
+    "Task requirement 5 (Rank by avg_margin descending): Successfully ranked using 'RANK avg_margin desc' with South (750.0) first, North (525.0) second, East (516.67) third, West (433.33) fourth",
+    "Task requirement 6 (Select specified columns): Correctly selected only region, total_rev, avg_margin, deals using 'PICK region,total_rev,avg_margin,deals'"
+  ],
+  "judge_score": 1.0,
+  "lesson_activations": 2,
+  "lessons_generated": 3,
+  "lessons_loaded": 12,
+  "low_score_streak": 0,
+  "posttask_candidates_queued": 0,
+  "posttask_patch_applied": 0,
+  "posttask_patch_attempted": true,
+  "require_skill_read": false,
+  "required_skill_refs": [],
+  "session_id": 50006,
+  "skill_gate_blocks": 0,
+  "skill_reads": 0,
+  "steps": 4,
+  "task": "gridtool task: multi_agg_pipeline.\n\nGoal:\n1) Load the sales data from sales_data.csv\n2) Filter out all rows where category equals \"discontinued\"\n3) Derive a new column \"margin\" calculated as revenue minus cost\n4) Group (tally) by region, computing: total revenue, average margin, and count of deals\n5) Rank results by average margin in descending order\n6) Select only the columns: region, total_rev, avg_margin, deals\n7) Show all results\n\nConstraints:\n- Use only run_gridtool and show_fixture tools.\n- gridtool has its own syntax \u2014 it is NOT SQL.",
+  "task_id": "multi_agg_pipeline",
+  "time_start": 1771150148.149251,
+  "tool_actions": 4,
+  "tool_errors": 1,
+  "usage": [
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1630,
+      "output_tokens": 134,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2149,
+      "output_tokens": 157,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2434,
+      "output_tokens": 148,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 2665,
+      "output_tokens": 332,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    }
+  ]
+}
