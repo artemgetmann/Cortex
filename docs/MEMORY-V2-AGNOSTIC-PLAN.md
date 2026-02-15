@@ -38,16 +38,38 @@ This keeps lessons interpretable while enabling graph-style retrieval (HippoRAG-
 
 ## Core Logic
 
+### 0) Universal feedback interface (not CLI-only)
+
+Every domain adapter must expose the same four feedback channels:
+1. `hard_failure`: binary signal (exception, non-zero exit, API/tool error, safety violation).
+2. `constraint_failure`: required condition not met (wrong output shape, missing artifact, invariant broken).
+3. `progress_signal`: scalar distance/progress metric toward goal (can be heuristic).
+4. `efficiency_signal`: steps/time/cost.
+
+This makes "mistake detection" task-agnostic. CLI parser errors are only one source of `hard_failure`.
+
+Examples:
+- CLI: syntax error, exit code, failed query, wrong table output.
+- Robot navigation: collision, no distance reduction to target room, repeated stuck state.
+- FL Studio/computer-use: target BPM/pattern not reached, repeated ineffective UI actions, safety guard hit.
+
 ### 1) Domain-agnostic error capture
 
-On each tool failure:
-1. Normalize error text into `error_fingerprint`:
+On each failed step (from `hard_failure` or `constraint_failure` or "no progress"):
+1. Build `error_fingerprint` from available evidence:
+   - normalize error text if available,
+   - otherwise normalize failed state-transition signature (`state_before + action + state_after + failure_reason`),
    - lowercase,
    - strip volatile literals/paths/numbers,
-   - keep structural failure language (`syntax`, `unknown`, `missing`, `expected`, `not found`).
-2. Extract generic tags from error and failed command text:
+   - keep structural failure language (`syntax`, `unknown`, `missing`, `expected`, `not found`, `stuck`, `no_progress`, `constraint_failed`).
+2. Extract generic tags from error text and action/state context:
    - `syntax_structure`, `unknown_symbol`, `path_quote`, `operator_mismatch`, `arity_mismatch`, `column_reference`, `function_case`, `sort_direction`, `unknown_command`, etc.
-3. Write `ErrorEvent` to `memory_events.jsonl`.
+   - add non-CLI tags: `no_progress`, `constraint_failed`, `state_stall`, `unsafe_action`, `goal_distance_increase`.
+3. Write `ErrorEvent` to `memory_events.jsonl` with:
+   - fingerprint,
+   - tags,
+   - action attempted,
+   - local outcome deltas (progress/efficiency/constraint flags).
 
 No command-name regex table is required for this path.
 
@@ -88,7 +110,8 @@ Promote candidate if, across at least 3 relevant runs:
 
 #### When deterministic evaluator does not exist
 
-Use proxy utility from independent referee + runtime signals:
+Use proxy utility from independent referee + runtime signals.
+This is the default path for unseen tasks.
 
 `utility = 0.65*error_reduction + 0.35*step_efficiency_gain` if only runtime/referee-lite is available.
 
@@ -101,6 +124,15 @@ Promote if:
 - evidence window >= 3 runs,
 - no major regressions.
 
+How "positive utility" is computed in real-world/no-contract settings:
+1. Track each lesson activation event.
+2. For each activation, compare short-horizon outcomes against baseline:
+   - did matched fingerprint recurrence drop?
+   - did progress improve after activation?
+   - did extra failures decrease?
+3. Aggregate over runs into lesson-level utility.
+4. Promote only if aggregated utility stays positive and stable across independent runs.
+
 ### 5) Suppression (harmfulness test)
 
 A lesson is suppressed if:
@@ -109,6 +141,10 @@ A lesson is suppressed if:
 - it participates in a contradiction cluster and consistently loses to an alternative lesson.
 
 Suppressed lessons remain in store for audit, but are excluded from retrieval.
+
+Interpretation in no-contract tasks:
+- "non-positive utility" means lesson activations did not improve recurrence/progress/efficiency over repeated opportunities.
+- This avoids requiring a pre-programmed evaluator for every new task.
 
 ### 6) Dedup + contradiction + lifecycle
 
@@ -125,6 +161,18 @@ This scales across tasks/domains because:
 2. utility is outcome-based, not task-template-based,
 3. retrieval uses fingerprints+tags+similarity+reliability, not fixed task IDs,
 4. suppression prevents memory pollution from growing unchecked.
+
+## Unseen-task adaptation flow (explicit)
+
+When user gives a task the system has never seen:
+1. Use docs/internet/context to attempt execution (executor behavior).
+2. Run feedback interface (`hard_failure`, `constraint_failure`, `progress`, `efficiency`) at each step.
+3. First run builds initial error map (fingerprints + tags).
+4. Generate candidate lessons from repeated failures and failed transitions.
+5. Next runs retrieve those lessons and re-attempt.
+6. Promote/suppress based on measured utility, not handcrafted task logic.
+
+This is the core autonomous learning loop: attempt -> detect failure/progress -> store -> retrieve -> verify impact.
 
 ## Experimental protocol (locked to your requested flow)
 
