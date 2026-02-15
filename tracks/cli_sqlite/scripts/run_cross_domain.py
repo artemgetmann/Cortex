@@ -114,6 +114,10 @@ def _run_phase(
 
 
 def _transfer_metrics(test_rows: list[dict]) -> dict[str, float | int]:
+    # Metrics semantics:
+    # - first_pass_index: earliest 1-based test run that passed (-1 if none)
+    # - post_pass_regressions: failures after first pass (stability signal)
+    # - delta: last_score - first_score (trajectory signal)
     scores = [float(r["score"]) for r in test_rows]
     passes = [bool(r["passed"]) for r in test_rows]
     first_pass_index = -1
@@ -242,6 +246,8 @@ def main() -> int:
             f"{row['lessons_generated']:>8} {row['lesson_activations']:>6}"
         )
 
+    # Emit machine-readable payload so CI/tests can parse transfer outcomes
+    # without scraping the pretty-printed table.
     payload = {
         "config": {
             "train_domain": args.train_domain,

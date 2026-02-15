@@ -44,6 +44,8 @@ GRID_TO_OP = {v: k for k, v in OP_TO_GRID.items()}
 
 
 def _convert_error_mode_map(raw: str) -> str:
+    # Convert fluxtool command keys (IMPORT/GROUP/...) to underlying gridtool
+    # command keys so per-command error policy still works after translation.
     out: list[str] = []
     text = (raw or "").strip()
     if not text:
@@ -86,6 +88,8 @@ def _translate_line(line: str, lineno: int) -> str:
     if cmd in {"FILTER", "EXCLUDE"}:
         return _translate_filter(cmd, args, lineno)
     if cmd == "GROUP":
+        # Holdout syntax intentionally remaps arrow token (`=>`) while keeping
+        # aggregation semantics equivalent to gridtool TALLY.
         m = re.match(r"(\S+)\s*=>\s*(.*)", args)
         if not m:
             raise ValueError(
@@ -122,6 +126,7 @@ def _translate_line(line: str, lineno: int) -> str:
 
 
 def _translate_script(text: str) -> str:
+    # Parse line-by-line to preserve deterministic line numbers in error output.
     translated: list[str] = []
     for idx, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()

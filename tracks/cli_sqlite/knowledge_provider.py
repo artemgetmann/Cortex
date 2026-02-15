@@ -8,6 +8,7 @@ from tracks.cli_sqlite.domain_adapter import DomainDoc
 
 
 def _tokenize(text: str) -> set[str]:
+    # Keep retrieval scoring deterministic and cheap: lowercase alnum tokens only.
     normalized = "".join(ch.lower() if ch.isalnum() else " " for ch in text)
     return {tok for tok in normalized.split() if tok}
 
@@ -47,6 +48,8 @@ class LocalDocsKnowledgeProvider:
         self._chunk_chars = max(250, int(chunk_chars))
 
     def _read_chunks(self, path: Path) -> list[str]:
+        # Chunk by paragraph-ish blocks so retrieved context preserves local syntax
+        # patterns (examples + surrounding rules) without blowing token budget.
         try:
             text = path.read_text(encoding="utf-8")
         except Exception:
@@ -88,6 +91,10 @@ class LocalDocsKnowledgeProvider:
         docs: list[DomainDoc],
         max_chunks: int = 4,
     ) -> list[RetrievedChunk]:
+        # Two-stage local ranking:
+        # 1) lexical similarity via Jaccard(query, chunk)
+        # 2) small tag bonus from adapter-provided doc tags
+        # This keeps strict-mode retrieval domain-agnostic and reproducible.
         ranked: list[RetrievedChunk] = []
         q = (query or "").strip()
         if not q:

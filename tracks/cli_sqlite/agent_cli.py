@@ -342,6 +342,11 @@ def _build_critic_context_query(
     eval_result: dict[str, Any],
     events_tail: list[dict[str, Any]],
 ) -> str:
+    # Query composition deliberately mixes:
+    # - task intent
+    # - evaluator failure reasons
+    # - recent concrete runtime errors
+    # so strict retrieval can pull docs that are actionable for this run.
     eval_reasons = eval_result.get("reasons", [])
     reasons_text = ", ".join(str(r) for r in eval_reasons) if isinstance(eval_reasons, list) else str(eval_reasons)
     error_snippets: list[str] = []
@@ -354,6 +359,8 @@ def _build_critic_context_query(
 
 
 def _format_critic_context(chunks: list[Any]) -> str:
+    # Keep explicit source IDs in critic context so downstream analysis can
+    # audit which docs the strict critic relied on.
     if not chunks:
         return ""
     lines: list[str] = []
@@ -498,6 +505,8 @@ def run_cli_agent(
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     learning_mode = _normalize_learning_mode(learning_mode)
+    # Local retrieval provider is intentionally lightweight and deterministic.
+    # Strict mode uses it for critic context; legacy ignores it.
     knowledge_provider = LocalDocsKnowledgeProvider()
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     adapter = _resolve_adapter_with_mode(
@@ -847,6 +856,9 @@ def run_cli_agent(
         critic_context = ""
         critic_context_sources: list[str] = []
         if learning_mode == "strict":
+            # Strict-only critic retrieval path:
+            # adapter exposes domain docs -> retrieval selects relevant chunks ->
+            # critic prompt gets only those chunks as contextual grounding.
             docs = adapter.docs_manifest()
             retrieval_query = _build_critic_context_query(
                 task_text=task_text,
@@ -860,6 +872,8 @@ def run_cli_agent(
             )
             critic_context = _format_critic_context(retrieved_chunks)
             critic_context_sources = [str(getattr(chunk, "source_id", "")) for chunk in retrieved_chunks]
+        # Metrics always include provenance for observability/debugging, even
+        # when strict mode yields no retrieved chunks.
         metrics["critic_context_sources"] = critic_context_sources
         lesson_result: LessonGenerationResult = generate_lessons(
             client=client,

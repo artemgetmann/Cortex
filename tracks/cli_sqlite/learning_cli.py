@@ -343,6 +343,9 @@ _STRICT_TAG_PATTERNS: dict[str, re.Pattern[str]] = {
 
 
 def _extract_tags(text: str) -> set[str]:
+    # Tags are intentionally broad, domain-agnostic semantic buckets.
+    # Strict mode uses these only as relevance hints; legacy keeps explicit
+    # command-pattern routing for backwards comparability.
     tags: set[str] = set()
     for tag, pattern in _STRICT_TAG_PATTERNS.items():
         if pattern.search(text):
@@ -356,6 +359,8 @@ def _find_lessons_for_error_legacy(
     *,
     max_hints: int,
 ) -> list[str]:
+    # Legacy path: command-name anchored routing with error-type boosts.
+    # This is intentionally conservative to preserve historical behavior.
     if not error_text or not lessons:
         return []
 
@@ -407,6 +412,8 @@ def _find_lessons_for_error_strict(
     max_hints: int,
 ) -> list[str]:
     """Generic strict-mode retrieval using semantic + tag overlap."""
+    # Strict path avoids command-name hard dependencies and instead scores
+    # lesson relevance from error/lesson text similarity + shared semantic tags.
     if not error_text or not lessons:
         return []
 
@@ -449,7 +456,8 @@ def find_lessons_for_error(
     """Find error-relevant lesson hints for runtime correction."""
     mode = _normalize_learning_mode(learning_mode)
     if mode == "strict":
-        # Strict mode intentionally caps hint injection to avoid over-scaffolding.
+        # Strict mode intentionally caps hint injection to avoid over-scaffolding:
+        # the goal is self-correction, not spoon-feeding.
         hint_cap = 2 if max_hints is None else min(2, max(1, int(max_hints)))
         return _find_lessons_for_error_strict(error_text, lessons, max_hints=hint_cap)
     hint_cap = 3 if max_hints is None else max(1, int(max_hints))
@@ -515,6 +523,8 @@ def generate_lessons(
         score = 0.0
 
     if mode == "strict":
+        # Strict critic contract: schema-only instructions + retrieved context.
+        # No domain-specific exemplars here by design.
         if passed and score >= 1.0:
             system = (
                 "You are a post-run learning critic analyzing a SUCCESSFUL CLI run.\n"
@@ -541,6 +551,8 @@ def generate_lessons(
                 "- 2 to 5 lessons total.\n"
             )
     else:
+        # Legacy critic contract preserves the existing domain-tuned guidance.
+        # This keeps demo baselines and historical behavior stable.
         if passed and score >= 1.0:
             # Legacy path preserves the existing gridtool-tuned examples.
             system = (

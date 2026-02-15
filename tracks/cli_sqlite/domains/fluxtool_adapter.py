@@ -141,6 +141,9 @@ class FluxtoolAdapter:
         if not isinstance(commands, str):
             return ToolResult(error=f"run_fluxtool requires string commands, got {commands!r}")
         try:
+            # Adapter delegates execution to fluxtool wrapper, which in turn
+            # translates to gridtool and maps outputs/errors back to holdout
+            # vocabulary. This isolates holdout remapping in one place.
             cmd = ["python3", str(FLUXTOOL_PATH), "--workdir", str(workspace.work_dir)]
             if self._cryptic:
                 cmd.append("--cryptic")
@@ -172,6 +175,8 @@ class FluxtoolAdapter:
         fixture_paths: dict[str, Path] = {}
         import shutil
 
+        # Mirror gridtool workspace behavior so transfer comparisons isolate
+        # syntax remapping effects rather than filesystem/environment drift.
         for csv_path in sorted(task_dir.glob("*.csv")):
             dest = work_dir / csv_path.name
             shutil.copy2(csv_path, dest)
@@ -230,6 +235,8 @@ class FluxtoolAdapter:
         return result
 
     def docs_manifest(self) -> list[DomainDoc]:
+        # Strict-mode critic retrieval consumes this manifest. Keep it short and
+        # domain-focused to avoid irrelevant context leakage from other domains.
         docs = [
             DomainDoc(
                 doc_id="fluxtool/reference",
