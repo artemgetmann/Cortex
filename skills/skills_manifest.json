@@ -2,7 +2,7 @@
   {
     "confidence": 0.7,
     "description": "Use when creating or updating local skills under skills/; enforces SKILL.md folder format, valid frontmatter, and trigger-focused descriptions.",
-    "last_updated": "2026-02-13T15:21:57.118087+00:00",
+    "last_updated": "2026-02-14T17:48:19.322344+00:00",
     "path": "skills/core/skill-creator/SKILL.md",
     "skill_ref": "core/skill-creator",
     "title": "skill-creator",
@@ -11,7 +11,7 @@
   {
     "confidence": 0.7,
     "description": "Use when any task is executed in FL Studio; provides universal UI rules (Hint Bar usage, Channel Rack orientation, numeric entry, and anti-loop behavior).",
-    "last_updated": "2026-02-13T15:21:28.139227+00:00",
+    "last_updated": "2026-02-16T15:29:52.181303+00:00",
     "path": "skills/fl-studio/basics/SKILL.md",
     "skill_ref": "fl-studio/basics",
     "title": "fl-studio-basics",
@@ -20,7 +20,7 @@
   {
     "confidence": 0.7,
     "description": "Use when the task is to create a 4-on-the-floor kick pattern in FL Studio Channel Rack (steps 1,5,9,13) with keyboard-first verification.",
-    "last_updated": "2026-02-13T16:32:10.364210+00:00",
+    "last_updated": "2026-02-16T15:30:02.786629+00:00",
     "path": "skills/fl-studio/drum-pattern/SKILL.md",
     "skill_ref": "fl-studio/drum-pattern",
     "title": "fl-studio-drum-pattern",

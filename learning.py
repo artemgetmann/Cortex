@@ -9,6 +9,13 @@ from typing import Any
 
 LESSONS_PATH = Path("learning/lessons.jsonl")
 ALLOWED_CATEGORIES = {"mistake", "insight", "shortcut", "ui_detail"}
+PERMISSION_NOISE_TERMS = (
+    "permission",
+    "accessibility",
+    "axisprocesstrusted",
+    "cgpreflightposteventaccess",
+    "window not found",
+)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -146,6 +153,20 @@ def _score_lesson_relevance(task: str, lesson: Lesson) -> float:
     return score
 
 
+def _is_permission_noise(lesson: Lesson) -> bool:
+    text = f"{lesson.task} {lesson.lesson}".lower()
+    return any(tok in text for tok in PERMISSION_NOISE_TERMS)
+
+
+def _lesson_quality_score(lesson: Lesson) -> float:
+    quality = float(lesson.eval_score)
+    if lesson.eval_passed:
+        quality += 0.25
+    if _is_permission_noise(lesson):
+        quality -= 0.4
+    return quality
+
+
 def load_relevant_lessons(
     task: str,
     *,
@@ -158,10 +179,17 @@ def load_relevant_lessons(
         return "No prior lessons loaded.", 0
 
     scored: list[tuple[float, Lesson]] = []
+    task_lower = task.lower()
     for lesson in all_lessons:
+        # Avoid stale environment blockers being replayed in normal FL runs.
+        if "fl studio" in task_lower and _is_permission_noise(lesson) and "permission" not in task_lower:
+            continue
         rel = _score_lesson_relevance(task, lesson)
+        quality = _lesson_quality_score(lesson)
         if rel > 0:
-            scored.append((rel, lesson))
+            if quality < 0.0:
+                continue
+            scored.append((rel + (0.25 * quality), lesson))
     if not scored:
         return "No prior lessons loaded.", 0
 
@@ -169,10 +197,14 @@ def load_relevant_lessons(
 
     selected: list[Lesson] = []
     used_sessions: set[int] = set()
+    selected_texts: list[str] = []
     for _, lesson in scored:
         if lesson.session_id and len(used_sessions) >= max_sessions and lesson.session_id not in used_sessions:
             continue
+        if any(_jaccard(lesson.lesson, seen) > 0.86 for seen in selected_texts):
+            continue
         selected.append(lesson)
+        selected_texts.append(lesson.lesson)
         if lesson.session_id:
             used_sessions.add(lesson.session_id)
         if len(selected) >= max_lessons:
@@ -278,4 +310,3 @@ def generate_lessons(
             )
         )
     return out
-

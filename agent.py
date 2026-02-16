@@ -11,6 +11,13 @@ import anthropic
 
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
+from fl_state import (
+    EXTRACT_FL_STATE_TOOL_NAME,
+    extract_fl_state_from_image,
+    fl_state_tool_param,
+    resolve_reference_images,
+)
+from fl_visual_judge import VisualJudgeResult, judge_fl_visual
 from learning import generate_lessons, load_relevant_lessons, store_lessons
 from memory import ensure_session, write_event, write_metrics
 from run_eval import evaluate_drum_run
@@ -38,6 +45,7 @@ Rules:
 - Keep verification lightweight. Confirm ambiguous targets once, then act.
 - Do not loop on inspection actions. If two inspections fail to increase confidence, switch to a decisive action.
 - After every action, verify the UI changed as expected. If not, try one alternative and move on.
+- Use extract_fl_state to convert screenshots into structured UI facts before repeating zooms.
 - Use app-specific skills for UI conventions and domain workflows.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
@@ -65,6 +73,7 @@ PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 READ_SKILL_TOOL_NAME = "read_skill"
 NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
 RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
+MAX_SAME_STEP_RETRIES = 2
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
@@ -204,6 +213,41 @@ def _load_fl_reference_snippet(*, max_chars: int = 1600) -> str:
         return ""
     text = " ".join(text.split())
     return text[:max_chars]
+
+
+def _read_session_events(events_path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return events
+    for line in lines:
+        try:
+            parsed = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return events
+
+
+def _latest_screenshot_from_events(events: list[dict[str, Any]]) -> Path | None:
+    latest_step = -1
+    latest_path: Path | None = None
+    for ev in events:
+        raw_path = ev.get("screenshot")
+        raw_step = ev.get("step")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        if not isinstance(raw_step, int):
+            continue
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        if raw_step >= latest_step:
+            latest_step = raw_step
+            latest_path = path
+    return latest_path
 
 
 def _build_fallback_updates(
@@ -349,11 +393,15 @@ def run_agent(
             "- If a listed skill may help, call read_skill with that exact skill_ref to fetch full steps.\n"
             "- Do not assume full skill contents without calling read_skill.\n"
             "- Keep read_skill calls targeted; avoid reading every skill."
+            "\n"
+            "State policy:\n"
+            "- Use extract_fl_state after screenshot when UI is ambiguous.\n"
+            "- Prefer extracting structured state (rows/active steps) over repeated zoom loops.\n"
         ),
     }
     system_blocks = [base_system_block, skills_system_block, lessons_system_block, skill_usage_block]
 
-    tools: list[dict[str, Any]] = [computer.to_tool_param()]
+    tools: list[dict[str, Any]] = [computer.to_tool_param(), fl_state_tool_param()]
     if load_skills:
         tools.append(_read_skill_tool_param())
 
@@ -391,6 +439,22 @@ def run_agent(
         "lessons_generated": 0,
         "auto_promotion_applied": 0,
         "auto_promotion_reason": None,
+        "eval_passed": None,
+        "eval_score": None,
+        "eval_reasons": [],
+        "eval_final_verdict": "unknown",
+        "eval_source": "none",
+        "eval_disagreement": False,
+        "eval_det_passed": None,
+        "eval_det_score": None,
+        "eval_det_reasons": [],
+        "judge_model": cfg.model_visual_judge,
+        "judge_passed": None,
+        "judge_score": None,
+        "judge_confidence": None,
+        "judge_reasons": [],
+        "judge_reference_images": [],
+        "judge_observed_steps": [],
         "usage": [],
     }
     # Hard guardrail for Opus path: stop inspection loops and force decisive actions.
@@ -398,7 +462,9 @@ def run_agent(
     loop_guard_enabled = computer_api_type == "computer_20251124"
     read_skill_refs: set[str] = set()
 
-    for step in range(1, max_steps + 1):
+    step = 1
+    same_step_retries = 0
+    while step <= max_steps:
         metrics["steps"] = step
         if cfg.enable_prompt_caching:
             _inject_prompt_caching(messages, breakpoints=user_cache_breakpoints)
@@ -440,6 +506,8 @@ def run_agent(
         messages.append({"role": "assistant", "content": assistant_blocks})
 
         tool_results: list[dict[str, Any]] = []
+        retry_same_step = False
+        decisive_action_succeeded = False
 
         for block in assistant_blocks:
             if not (isinstance(block, dict) and block.get("type") == "tool_use"):
@@ -461,6 +529,7 @@ def run_agent(
                             )
                         )
                         metrics["loop_guard_blocks"] += 1
+                        retry_same_step = True
                     elif allowed_actions is not None:
                         if not isinstance(action, str) or action not in allowed_actions:
                             result = ToolResult(error=f"Action not allowed in this run: {action!r}")
@@ -473,11 +542,36 @@ def run_agent(
                         non_productive_streak += 1
                     elif action in RESET_NON_PRODUCTIVE_ACTIONS and not result.is_error():
                         non_productive_streak = 0
+                        decisive_action_succeeded = True
 
                 except Exception as e:
                     # Don't crash the loop on unexpected local tool errors; surface it to the model.
                     result = ToolResult(error=f"Local tool exception: {type(e).__name__}: {e}")
                 if result.is_error():
+                    metrics["tool_errors"] += 1
+            elif tool_name == EXTRACT_FL_STATE_TOOL_NAME:
+                tool_in = tool_input if isinstance(tool_input, dict) else {}
+                goal = str(tool_in.get("goal", "")).strip()
+                task_hint = str(tool_in.get("task_hint", "")).strip() or task
+                try:
+                    shot = computer.run({"action": "screenshot"})
+                    if shot.is_error() or not shot.base64_image_png:
+                        result = ToolResult(error=shot.error or "extract_fl_state could not capture screenshot")
+                        metrics["tool_errors"] += 1
+                    else:
+                        state = extract_fl_state_from_image(
+                            client=client,
+                            model=cfg.model_decider,
+                            screenshot_b64=shot.base64_image_png,
+                            goal=goal,
+                            task_hint=task_hint,
+                        )
+                        result = ToolResult(
+                            output=json.dumps(state, ensure_ascii=True),
+                            base64_image_png=shot.base64_image_png,
+                        )
+                except Exception as e:
+                    result = ToolResult(error=f"extract_fl_state exception: {type(e).__name__}: {e}")
                     metrics["tool_errors"] += 1
             elif tool_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
@@ -532,35 +626,144 @@ def run_agent(
             break
 
         messages.append({"role": "user", "content": tool_results})
+        if retry_same_step and not decisive_action_succeeded and same_step_retries < MAX_SAME_STEP_RETRIES:
+            same_step_retries += 1
+            if verbose:
+                print(
+                    f"[step {step:03d}] governor retry without step burn ({same_step_retries}/{MAX_SAME_STEP_RETRIES})",
+                    flush=True,
+                )
+            continue
+        same_step_retries = 0
+        step += 1
+
+    # End-of-run evaluation: deterministic contract + independent visual judge.
+    all_events: list[dict[str, Any]] = _read_session_events(paths.jsonl_path)
+    tail_events: list[dict[str, Any]] = []
+    for ev in all_events[-20:]:
+        tail_events.append(
+            {
+                "step": ev.get("step"),
+                "tool": ev.get("tool"),
+                "tool_input": ev.get("tool_input"),
+                "ok": ev.get("ok"),
+                "error": ev.get("error"),
+            }
+        )
+
+    drum_eval = evaluate_drum_run(task, all_events).to_dict()
+    det_passed = bool(drum_eval.get("passed"))
+    try:
+        det_score = float(drum_eval.get("score", 0.0))
+    except (TypeError, ValueError):
+        det_score = 0.0
+    det_reasons = drum_eval.get("reasons")
+    if not isinstance(det_reasons, list):
+        det_reasons = []
+
+    visual_judge: VisualJudgeResult | None = None
+    final_shot = _latest_screenshot_from_events(all_events)
+    if final_shot is not None:
+        try:
+            screenshot_b64 = base64.b64encode(final_shot.read_bytes()).decode("ascii")
+            judge_refs = resolve_reference_images()
+            visual_judge = judge_fl_visual(
+                client=client,
+                model=cfg.model_visual_judge,
+                final_screenshot_b64=screenshot_b64,
+                task=task,
+                rubric=(
+                    "Pass only if FL Studio kick row uses 4-on-the-floor pattern with active steps 1,5,9,13 "
+                    "and without obvious step-index mismatches."
+                ),
+                reference_images=judge_refs,
+            )
+            write_event(
+                paths.jsonl_path,
+                {
+                    "step": metrics["steps"],
+                    "tool": "visual_judge",
+                    "tool_input": {
+                        "model": cfg.model_visual_judge,
+                        "final_screenshot": str(final_shot),
+                        "reference_images": [str(p) for p in judge_refs],
+                    },
+                    "ok": True,
+                    "error": None,
+                    "output": visual_judge.to_dict(),
+                    "screenshot": str(final_shot),
+                    "usage": None,
+                },
+            )
+        except Exception as exc:
+            write_event(
+                paths.jsonl_path,
+                {
+                    "step": metrics["steps"],
+                    "tool": "visual_judge",
+                    "tool_input": {"model": cfg.model_visual_judge},
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "output": None,
+                    "screenshot": str(final_shot),
+                    "usage": None,
+                },
+            )
+
+    final_verdict = "pass" if det_passed else "fail"
+    final_score = det_score
+    final_reasons = list(det_reasons)
+    eval_source = "deterministic"
+    eval_disagreement = False
+    if visual_judge is not None:
+        judge_unparseable = any(str(r) == "visual_judge_unparseable" for r in visual_judge.reasons)
+        if judge_unparseable:
+            # If judge output is structurally invalid, do not let parser noise override
+            # objective deterministic signals. Keep judge diagnostics in metrics.
+            eval_source = "deterministic_fallback"
+            final_reasons.extend(["judge_unparseable_fallback"])
+        else:
+            eval_source = "hybrid"
+            if bool(visual_judge.passed) == bool(det_passed):
+                final_verdict = "pass" if det_passed else "fail"
+                final_score = round((det_score + float(visual_judge.score)) / 2.0, 3)
+                if visual_judge.reasons:
+                    final_reasons.extend([f"judge:{r}" for r in visual_judge.reasons])
+            else:
+                final_verdict = "uncertain"
+                final_score = round(min(det_score, float(visual_judge.score)), 3)
+                eval_disagreement = True
+                final_reasons.extend(
+                    [
+                        "judge_disagreement",
+                        f"deterministic_passed={det_passed}",
+                        f"visual_judge_passed={visual_judge.passed}",
+                    ]
+                )
+
+    metrics["eval_det_passed"] = det_passed
+    metrics["eval_det_score"] = round(det_score, 3)
+    metrics["eval_det_reasons"] = det_reasons
+    metrics["eval_source"] = eval_source
+    metrics["eval_disagreement"] = eval_disagreement
+    metrics["eval_final_verdict"] = final_verdict
+    metrics["eval_passed"] = final_verdict == "pass"
+    metrics["eval_score"] = round(final_score, 3)
+    metrics["eval_reasons"] = final_reasons[:12]
+    if visual_judge is not None:
+        metrics["judge_passed"] = visual_judge.passed
+        metrics["judge_score"] = visual_judge.score
+        metrics["judge_confidence"] = visual_judge.confidence
+        metrics["judge_reasons"] = visual_judge.reasons
+        metrics["judge_reference_images"] = visual_judge.reference_images_used
+        metrics["judge_observed_steps"] = visual_judge.observed_active_steps
 
     if load_skills and posttask_learn and skill_manifest_entries:
         metrics["posttask_patch_attempted"] = True
         # Keep reflection payload compact and deterministic.
-        all_events: list[dict[str, Any]] = []
-        tail_events = []
+        eval_passed = bool(metrics.get("eval_passed"))
         try:
-            ev_lines = paths.jsonl_path.read_text(encoding="utf-8").splitlines()
-            for ln in ev_lines:
-                ev = json.loads(ln)
-                all_events.append(ev)
-            for ev in all_events[-20:]:
-                tail_events.append(
-                    {
-                        "step": ev.get("step"),
-                        "tool": ev.get("tool"),
-                        "tool_input": ev.get("tool_input"),
-                        "ok": ev.get("ok"),
-                        "error": ev.get("error"),
-                    }
-                )
-        except Exception:
-            all_events = []
-            tail_events = []
-
-        drum_eval = evaluate_drum_run(task, all_events).to_dict()
-        eval_passed = bool(drum_eval.get("passed"))
-        try:
-            eval_score = float(drum_eval.get("score", 0.0))
+            eval_score = float(metrics.get("eval_score", 0.0))
         except (TypeError, ValueError):
             eval_score = 0.0
 
@@ -611,6 +814,10 @@ def run_agent(
             f"{json.dumps(metrics, ensure_ascii=True)}\n\n"
             "DETERMINISTIC_EVAL:\n"
             f"{json.dumps(drum_eval, ensure_ascii=True)}\n\n"
+            "VISUAL_JUDGE:\n"
+            f"{json.dumps(visual_judge.to_dict() if visual_judge is not None else {}, ensure_ascii=True)}\n\n"
+            "FINAL_EVAL:\n"
+            f"{json.dumps({'verdict': metrics.get('eval_final_verdict'), 'passed': metrics.get('eval_passed'), 'score': metrics.get('eval_score')}, ensure_ascii=True)}\n\n"
             "EVENTS_TAIL:\n"
             f"{json.dumps(tail_events, ensure_ascii=True)}\n\n"
             "ROUTED_SKILLS:\n"

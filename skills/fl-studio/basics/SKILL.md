@@ -20,6 +20,7 @@ Apply these rules for all FL Studio tasks before domain-specific steps.
 - `F6` focuses Channel Rack.
 - Rows are instruments, steps run left-to-right (1..16).
 - Confirm row label once (for example "808 Kick"), then execute step clicks.
+- If row identity or active-step state is unclear, call `extract_fl_state` instead of repeating zoom loops.
 
 ## Numeric fields (tempo/values)
 
@@ -37,3 +38,4 @@ Apply these rules for all FL Studio tasks before domain-specific steps.
 ## Anti-loop rule
 
 - Do not perform more than two consecutive inspection-only actions (`zoom`/`mouse_move`) without a decisive action (`left_click` or `key`).
+- When blocked by ambiguity after two inspections, use `extract_fl_state` and then execute a decisive action immediately.

@@ -34,6 +34,9 @@ sessions/session-*/
 sessions/fullscreen-test/
 
 # CLI learning artifacts (lessons/memory dump don’t belong in commits).
+learning/*.jsonl
+learning/*.json
+learning/*.bak*
 tracks/cli_sqlite/learning/*.jsonl
 tracks/cli_sqlite/learning/*.json
 tracks/cli_sqlite/learning/*.bak*

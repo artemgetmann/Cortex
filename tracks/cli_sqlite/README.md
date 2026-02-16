@@ -78,12 +78,14 @@ python3 tracks/cli_sqlite/scripts/score_cli_session.py \
 - Validation command matrix and expected signatures: `docs/STRICT-TRANSFER-VALIDATION.md`.
 
 ## Hackathon Demo (One Command)
-
-Run this from repo root:
+Clean presentation mode (`--pretty`) suppresses giant JSON dumps and prints compact summaries:
 
 ```bash
-AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
+bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 ```
+
+If you want full raw payloads in terminal output, run without `--pretty`.
 
 What this command does:
 - Runs 3 waves of mixed protocol:

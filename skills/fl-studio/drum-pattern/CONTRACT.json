@@ -54,5 +54,7 @@
     "step_spacing_out_of_range",
     "inspection_loop"
   ],
-  "reference_images": []
+  "reference_images": [
+    "../../../docs/references/fl-studio/kick-four-on-floor-reference.png"
+  ]
 }
