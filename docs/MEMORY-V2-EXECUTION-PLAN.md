@@ -4,6 +4,12 @@ Status: in-progress (execution started)
 Owner: user + Codex  
 Last updated: 2026-02-16
 
+## 0) Canonical Docs (Read First)
+- Current runtime map: `docs/MEMORY-V2-CURRENT-FLOW.html`
+- Legacy FL Studio diagram: `docs/archive/fl-studio-legacy/cortex-architecture.html`
+- Legacy vs current comparison: `docs/MEMORY-V2-ARCHITECTURE-COMPARE.md`
+- Benchmark commands + interpretation: `docs/MEMORY-V2-BENCHMARKS.md`
+
 ## 1) Goal
 Build a demo-ready memory system that is:
 - transparent (people can see exactly what the agent saw/tried/failed/learned),
@@ -29,7 +35,7 @@ This document is the source of truth until user says: "use the plan document to 
   - Artifacts:
     - `/tmp/memory_stability_30001_hard12.json`
     - `/tmp/memory_health_30001_hard12.json`
-  - Baseline note: `docs/MEMORY-V2-BASELINE-2026-02-16.md`
+  - Baseline note: `docs/archive/memory-v2-history/MEMORY-V2-BASELINE-2026-02-16.md`
   - Commit: `2c08e2d`
 - Phase 1 observability hardening: completed.
   - Added explicit sections for preloaded vs on-error injected lessons and retrieval score breakdown in timeline.
@@ -174,7 +180,7 @@ Scope:
 - first pilot target is one Artic API task, then one file-manipulation task (xlsx or equivalent),
 - memory capture/retrieval/promotion enabled,
 - repeat-run improvement measured.
-- Implementation brief + scaffold reference: `docs/AGENT-SDK-PILOT-PLAN.md` and `tracks/cli_sqlite/scripts/run_agent_sdk_pilot.py`.
+- Historical brief + scaffold reference: `docs/archive/memory-v2-history/AGENT-SDK-PILOT-PLAN.md` and `tracks/cli_sqlite/scripts/run_agent_sdk_pilot.py`.
 
 Acceptance:
 - run-2/3 show fewer repeated fingerprints and higher completion quality.

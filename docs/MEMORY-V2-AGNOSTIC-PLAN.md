@@ -1,5 +1,9 @@
 # Memory V2 Agnostic Plan (Executor + Referee + Learning Memory)
 
+## Current Runtime References
+- Runtime flow map: `docs/MEMORY-V2-CURRENT-FLOW.html`
+- Legacy vs current comparison: `docs/MEMORY-V2-ARCHITECTURE-COMPARE.md`
+
 ## Goal
 
 Build a domain/task-agnostic memory system that:
@@ -217,7 +221,7 @@ This is the core autonomous learning loop: attempt -> detect failure/progress ->
 6. Add benchmark scripts:
    - `run_memory_stability.py`,
    - `report_memory_health.py`.
-7. Document results in `docs/AB-FINDINGS.md` and a new memory benchmark doc.
+7. Document results in `docs/archive/memory-v2-history/AB-FINDINGS.md` and a new memory benchmark doc.
 
 ## Acceptance criteria
 

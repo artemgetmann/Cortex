@@ -1,5 +1,10 @@
 # Memory V2 Benchmarks
 
+## Canonical References
+- Current architecture map: `docs/MEMORY-V2-CURRENT-FLOW.html`
+- Legacy FL Studio map: `docs/archive/fl-studio-legacy/cortex-architecture.html`
+- Diagram comparison: `docs/MEMORY-V2-ARCHITECTURE-COMPARE.md`
+
 ## Purpose
 This document defines how to run and read the Memory V2 stability benchmarks for task/domain-agnostic memory.
 
@@ -15,7 +20,7 @@ The protocol validates:
 - whether lesson utility remains positive.
 
 ## Commands
-Run stability protocol:
+Run stability protocol (strict lane default):
 
 ```bash
 python3 tracks/cli_sqlite/scripts/run_memory_stability.py \
@@ -30,6 +35,49 @@ python3 tracks/cli_sqlite/scripts/run_memory_stability.py \
   --posttask-mode candidate \
   --output-json tracks/cli_sqlite/sessions/memory_stability_16001.json
 ```
+
+Inspect one session as a visual timeline:
+
+```bash
+python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py \
+  --session 16001 \
+  --show-ok-steps \
+  --show-all-tools \
+  --show-tool-output \
+  --show-lessons 8
+```
+
+Check strict-vs-transfer behavior on the same task (no script-level aggregate yet):
+
+```bash
+# strict (default, transfer off)
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id shell_excel_build_report \
+  --domain shell \
+  --session 17001 \
+  --max-steps 5 \
+  --bootstrap \
+  --learning-mode strict \
+  --posttask-mode candidate
+
+# transfer lane enabled
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id shell_excel_build_report \
+  --domain shell \
+  --session 17002 \
+  --max-steps 5 \
+  --bootstrap \
+  --learning-mode strict \
+  --posttask-mode candidate \
+  --enable-transfer-retrieval
+```
+
+Compare `metrics.json` fields:
+- `v2_transfer_retrieval_enabled`
+- `v2_transfer_lane_activations`
+- `v2_prerun_lesson_ids`
+- `v2_lesson_activations`
+- `v2_retrieval_help_ratio`
 
 Summarize one or more benchmark payloads:
 
