@@ -1,5 +1,7 @@
 # Strict Transfer Refactor Plan
 
+Note: active planning for next iteration is now tracked in `docs/MEMORY-V2-EXECUTION-PLAN.md` (living doc).
+
 ## Summary
 Refactor CLI learning from domain-hardcoded assistance to a strict, retrieval-driven learning loop that can be validated on a real holdout domain. Keep a legacy mode for comparability and demo fallback.
 
