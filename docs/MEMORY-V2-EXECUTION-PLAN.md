@@ -151,9 +151,11 @@ Acceptance:
 Scope:
 - Add benchmark flag to suppress legacy skill-patch events or disable hooks in Memory V2 mode.
 - Keep backward compatibility for old scripts.
+- Integrate the FL Studio 4-on-the-floor demo as the visual benchmark that exercises zoom/screenshot loops and serves as the reference for judge-required imagery.
 
 Acceptance:
 - Timeline contains only Memory V2 + executor/referee events in demo mode.
+- Judge evaluations cite the recorded zooms/screenshots and explain how the observed images match (or fail) the demo success criteria.
 
 ### Phase 3: Strict + Transfer retrieval lanes
 Scope:

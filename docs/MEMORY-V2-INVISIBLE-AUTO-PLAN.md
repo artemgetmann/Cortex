@@ -258,11 +258,18 @@ Required interfaces:
 - `agent.py` loop -> retrieval hook parity with CLI path: pre-run hint retrieval and on-error hint injection.
 - Outcome evaluator contract for computer-use tasks: deterministic or judge-assisted success signal per run so utility and promotion logic remain measurable.
 
+FL Studio demo path (Phase 2 reference):
+- Primary validation task: the `4-on-the-floor kick pattern` demo already documented in `skills/fl-studio/drum-pattern`. Use it to prove memory + judge alignment on visual evidence.
+- Store canonical `success_image`/`failure_image` snapshots for that task (e.g., clean step grid vs mis-clicked row) in the session metadata so downstream reporting and the judge prompt can reference them.
+- Record the expected zoom/screenshot checkpoints (zoom region → screenshot → decisive clicks) as part of the demo trace. These steps become the planner for the judge prompt, which now validates whether the recorded imagery aligns with the claimed outcome.
+- Include the FL demo timeline (zoom hits, screenshots, lesson injections, final image match) in the Phase 2 acceptance note so reviewers can see the observable trace that justifies the success signal.
+
 Success criteria for enabling Phase 2:
 - Lower repeated computer-use failure fingerprints across repeated FL Studio sessions.
 - Equal or better task completion rate with no increase in cross-task contamination.
 - Observable trace parity with CLI demo (attempt -> failure -> injected hint -> corrected action).
 - No new user-facing knobs; context scoping remains backend-only (`auto_context`).
+- Judge evaluation must cite zooms/screenshots/images captured during each Phase 2 run; missing or mismatched visual evidence counts as a failure signal.
 
 ## Risks
 - Over-reliance on deterministic context keys can reduce transfer.
