@@ -20,6 +20,17 @@ The protocol validates:
 - whether lesson utility remains positive.
 
 ## Commands
+Run the 3-wave hackathon demo with compact console output:
+
+```bash
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
+bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
+```
+
+Notes:
+- `--pretty` keeps benchmark tables and writes JSON artifacts, but skips the giant inline JSON block.
+- Outputs are still written to `/tmp/memory_mixed_wave*.json`, `/tmp/memory_timeline_wave*.txt`, `/tmp/memory_mixed_tokens_*.json`.
+
 Run stability protocol (strict lane default):
 
 ```bash

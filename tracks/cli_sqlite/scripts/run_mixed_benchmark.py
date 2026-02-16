@@ -291,6 +291,11 @@ def main() -> int:
     )
     ap.add_argument("--clear-lessons", action="store_true")
     ap.add_argument("--output-json", default="", help="Optional path to write JSON summary")
+    ap.add_argument(
+        "--no-print-json-summary",
+        action="store_true",
+        help="Skip printing full JSON payload to stdout (useful for cleaner demo logs)",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -460,9 +465,10 @@ def main() -> int:
         output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
         print(f"\nWrote JSON summary: {output_path}")
 
-    print("\nJSON summary:")
-    print(json.dumps(payload, indent=2, ensure_ascii=True))
-    print()
+    if not bool(args.no_print_json_summary):
+        print("\nJSON summary:")
+        print(json.dumps(payload, indent=2, ensure_ascii=True))
+        print()
     return 0
 
 
