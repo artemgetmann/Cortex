@@ -141,6 +141,7 @@ Scope:
 - one API task + one file-manipulation task (xlsx or equivalent),
 - memory capture/retrieval/promotion enabled,
 - repeat-run improvement measured.
+- Implementation brief + scaffold reference: `docs/AGENT-SDK-PILOT-PLAN.md` and `tracks/cli_sqlite/scripts/run_agent_sdk_pilot.py`.
 
 Acceptance:
 - run-2/3 show fewer repeated fingerprints and higher completion quality.
