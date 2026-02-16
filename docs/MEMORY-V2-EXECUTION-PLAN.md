@@ -41,6 +41,19 @@ This document is the source of truth until user says: "use the plan document to 
 - Agent-SDK pilot preparation: started (planning + scaffold complete).
   - Added pilot brief and non-production scaffold runner.
   - Commit: `b1df824`
+- Phase 3 strict+transfer retrieval lanes: completed.
+  - Added two-lane on-error retrieval:
+    - strict lane (domain/task scoped, primary),
+    - transfer lane (cross-domain backfill, lower score weight, capped quota).
+  - Added lane-level observability in event payload/timeline and metrics.
+  - Added retrieval-lane tests and CLI flags to control transfer behavior.
+  - Commit: `5782e95`
+- Artic benchmark domain integration: completed.
+  - Added `artic` adapter (`run_artic`) with HTTP/parse error surfacing and compact JSON output.
+  - Added progressive Artic tasks (`artic_search_basic`, `artic_followup_fetch`, `artic_pagination_extract`).
+  - Wired `--domain artic` into CLI and benchmark scripts.
+  - Added adapter/timeline integration tests.
+  - Commit: `5782e95`
 
 ## 3) Known Frictions
 - Confusion between:
@@ -145,6 +158,8 @@ Scope:
 Acceptance:
 - No obvious syntax bleed across tools,
 - measurable improvement on cross-domain holdout vs strict-only baseline.
+Status:
+- Completed in current CLI harness (`5782e95`).
 
 ### Phase 4: Judge-first unseen-task protocol
 Scope:
@@ -163,6 +178,10 @@ Scope:
 
 Acceptance:
 - run-2/3 show fewer repeated fingerprints and higher completion quality.
+Status:
+- In progress:
+  - CLI-harness Artic domain is now integrated as the first real API benchmark target (`5782e95`).
+  - Agent-SDK path remains planned/scaffolded, not yet the primary execution path.
 
 ### Phase 6: Agent-SDK migration decision
 Scope:
