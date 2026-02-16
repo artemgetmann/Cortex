@@ -1,6 +1,6 @@
 # Memory V2 Execution Plan (Living Doc)
 
-Status: planning-only (no new implementation from this doc yet)  
+Status: in-progress (execution started)  
 Owner: user + Codex  
 Last updated: 2026-02-16
 
@@ -23,6 +23,24 @@ This document is the source of truth until user says: "use the plan document to 
   - optional tool outputs,
   - lesson snapshot for the session domain/task.
 - Hard-mode benchmark exists and produces failure/recovery trajectories.
+
+## 2.1) Execution Log (2026-02-16)
+- Phase 0 baseline capture: completed.
+  - Artifacts:
+    - `/tmp/memory_stability_30001_hard12.json`
+    - `/tmp/memory_health_30001_hard12.json`
+  - Baseline note: `docs/MEMORY-V2-BASELINE-2026-02-16.md`
+  - Commit: `2c08e2d`
+- Phase 1 observability hardening: completed.
+  - Added explicit sections for preloaded vs on-error injected lessons and retrieval score breakdown in timeline.
+  - Commit: `1616c16`
+- Phase 2 clean Memory V2 demo mode: completed.
+  - Added `memory_v2_demo_mode` flag to suppress legacy `posttask_hook`/`promotion_gate` in demo/benchmark runs.
+  - Wired through `run_cli_agent.py`, `run_memory_stability.py`, and `agent_cli.py`.
+  - Commit: `1616c16`
+- Agent-SDK pilot preparation: started (planning + scaffold complete).
+  - Added pilot brief and non-production scaffold runner.
+  - Commit: `b1df824`
 
 ## 3) Known Frictions
 - Confusion between:
