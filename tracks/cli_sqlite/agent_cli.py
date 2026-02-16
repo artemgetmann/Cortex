@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import time
@@ -75,6 +77,7 @@ SONNET_MODEL = "claude-sonnet-4-5"
 OPUS_MODEL = "claude-opus-4-6"
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
+COMPUTER_TOOL_NAME = "computer"
 LEARNING_MODES = ("strict", "legacy")
 DEFAULT_LEARNING_MODE = "legacy"
 ARCHITECTURE_MODES = ("full", "simplified")
@@ -191,6 +194,75 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _hash_base64_png(image_b64: str | None) -> str | None:
+    if not isinstance(image_b64, str):
+        return None
+    try:
+        data = base64.b64decode(image_b64.encode("ascii"), validate=True)
+    except Exception:
+        return None
+    digest = hashlib.sha256(data).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _normalize_coordinate(coord: Any) -> tuple[int, int] | None:
+    if not (isinstance(coord, (list, tuple)) and len(coord) == 2):
+        return None
+    try:
+        x = int(coord[0])
+        y = int(coord[1])
+    except (TypeError, ValueError):
+        return None
+    return x, y
+
+
+def _normalize_region(region: Any) -> tuple[int, int, int, int] | None:
+    if not (isinstance(region, (list, tuple)) and len(region) == 4):
+        return None
+    try:
+        coords = tuple(int(value) for value in region)
+    except (TypeError, ValueError):
+        return None
+    return coords
+
+
+def _extract_computer_use_metadata(tool_input: Any, result: Any) -> dict[str, Any]:
+    if not isinstance(tool_input, dict):
+        return {}
+    metadata: dict[str, Any] = {}
+
+    action = tool_input.get("action")
+    if isinstance(action, str) and action.strip():
+        metadata["action"] = action.strip()
+
+    coordinate = _normalize_coordinate(tool_input.get("coordinate"))
+    if coordinate:
+        metadata["coordinate"] = [coordinate[0], coordinate[1]]
+
+    start = _normalize_coordinate(tool_input.get("start_coordinate"))
+    if start:
+        metadata["start_coordinate"] = [start[0], start[1]]
+    end = _normalize_coordinate(tool_input.get("coordinate"))
+    if end and start:
+        metadata["end_coordinate"] = [end[0], end[1]]
+
+    region = _normalize_region(tool_input.get("region"))
+    if region:
+        metadata["region"] = [region[0], region[1], region[2], region[3]]
+        if metadata.get("action") == "zoom":
+            metadata["zoom_region"] = metadata["region"]
+
+    screenshot_hash = _hash_base64_png(getattr(result, "base64_image_png", None))
+    if screenshot_hash:
+        metadata["screenshot_hash"] = screenshot_hash
+
+    modifiers = tool_input.get("modifiers")
+    if isinstance(modifiers, (list, tuple)) and modifiers:
+        metadata["modifiers"] = [str(mod).strip() for mod in modifiers if str(mod).strip()]
+
+    return metadata
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -1049,11 +1121,16 @@ def run_cli_agent(
             if not is_validation_failure:
                 saw_non_validation_tool_call = True
 
+            computer_metadata: dict[str, Any] = {}
+            if canonical_name == COMPUTER_TOOL_NAME:
+                computer_metadata = _extract_computer_use_metadata(tool_input, result)
+
             # Memory V2 capture + retrieval path:
             # - capture failure events via universal channels
             # - fetch fingerprint-aligned hints in the same run
             # - fallback to legacy lesson matcher if V2 has no signal yet
-            if result.is_error() and canonical_name == executor_tool_name and not is_validation_failure:
+            capture_tool = canonical_name == executor_tool_name or canonical_name == COMPUTER_TOOL_NAME
+            if result.is_error() and capture_tool and not is_validation_failure:
                 error_text = result.error or ""
                 action_state = {
                     "tool": canonical_name,
@@ -1062,6 +1139,9 @@ def run_cli_agent(
                     "task_id": task_id,
                     "domain": domain,
                 }
+                if computer_metadata:
+                    action_state.setdefault("tool_input", {})
+                    action_state["tool_input"]["computer_metadata"] = computer_metadata
                 error_fingerprint = build_error_fingerprint(error=error_text, state=action_state, action=tool_input)
                 error_tags = extract_tags(error=error_text, state=action_state, action=tool_input)
 
@@ -1121,6 +1201,8 @@ def run_cli_agent(
                 memory_events_path = paths.session_dir / "memory_events.jsonl"
                 for event in failure_events:
                     event_row = event.to_dict()
+                    if computer_metadata:
+                        event_row.setdefault("metadata", {})["computer_metadata"] = computer_metadata
                     write_event(memory_events_path, event_row)
                     write_event(MEMORY_EVENTS_PATH, event_row)
                     run_error_events.append(event)
