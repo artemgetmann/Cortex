@@ -176,9 +176,9 @@ Success criteria:
 - Auto policy is live (`off|auto|always`) with strict-first default.
 - Transfer lane in `auto` mode is evidence-gated to reduce low-signal cross-domain contamination.
 
-3. Context inference: partial.
+3. Context inference: deferred (out of hackathon scope).
 - Domain/task metadata scoping is live.
-- Task-cluster derivation/persistence beyond current domain/task keys is not implemented yet.
+- Task-cluster derivation/persistence beyond current domain/task keys is intentionally deferred.
 
 4. Observability: completed.
 - Timeline now surfaces transfer policy, validation retry/cap stats, injected lessons, and lane labels.
@@ -186,7 +186,40 @@ Success criteria:
 5. Benchmarks: partial.
 - Dedicated mixed-protocol one-command runner is implemented (`run_mixed_benchmark.py`).
 - Transfer-pressure benchmark runner is implemented (`run_transfer_pressure.py`).
-- Full benchmark interpretation/reporting still needs larger multi-run sweeps.
+- High-N transfer-pressure sweeps are intentionally deferred for hackathon scope.
+
+## Hackathon Scope Decisions
+1. Transfer policy validation:
+- Keep safety-first behavior; do not require proving aggressive cross-domain transfer gains for this demo.
+- High-N transfer-pressure runs are optional and currently skipped.
+
+2. Task-cluster inference:
+- Deferred. Current domain/task scoping is sufficient for hackathon demo goals.
+
+3. Demo priority:
+- Live reproducibility of mixed protocol + timeline observability is the primary success criterion.
+
+## Live Demo Script (Prepared)
+Script:
+- `tracks/cli_sqlite/scripts/run_hackathon_demo.sh`
+
+Status:
+- Created and documented.
+- Not executed by assistant (manual run only).
+
+What it does:
+- Runs 3 sequential mixed-benchmark waves with stable flags.
+- Wave 1 clears lessons (cold start).
+- Waves 2 and 3 reuse memory from prior waves.
+- Writes JSON artifacts for each wave to `/tmp` by default.
+- Prints timeline commands for step-by-step narration in demo video.
+
+Manual run:
+- `bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh`
+- Optional overrides:
+  - `START_SESSION=56001`
+  - `MAX_STEPS=5`
+  - `OUTPUT_DIR=/tmp`
 
 ## Benchmark Status (Executed)
 Executed mixed protocol in 3 waves using sessions:
@@ -207,13 +240,7 @@ Interpretation:
 - Auto transfer policy is currently conservative/safe in this benchmark (no transfer hints injected).
 
 ## Still Not Done
-1. Task-cluster inference and persistence.
-- `domain/task` scoped memory is live, but automatic task-cluster keys are not yet stored/used.
-
-2. Larger transfer-pressure validation sweeps.
-- Runner exists, but we still need higher-N experiments with sparse strict matches to show reliable transfer wins (not just safety/no contamination).
-
-3. FL Studio / computer-use integration.
+1. FL Studio / computer-use integration.
 - Deferred to Phase 2 and not implemented in active code.
 
 ## Phase 2: FL Studio / Computer-Use Integration (Deferred)
