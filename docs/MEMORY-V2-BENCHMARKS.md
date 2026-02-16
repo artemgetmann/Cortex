@@ -36,6 +36,42 @@ python3 tracks/cli_sqlite/scripts/run_memory_stability.py \
   --output-json tracks/cli_sqlite/sessions/memory_stability_16001.json
 ```
 
+Run the mixed 5-phase protocol in one command (`grid -> fluxtool -> shell(excel) -> sqlite -> grid retention`):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py \
+  --grid-task-id aggregate_report \
+  --fluxtool-task-id aggregate_report_holdout \
+  --shell-task-id shell_excel_build_report \
+  --sqlite-task-id import_aggregate \
+  --retention-runs 1 \
+  --start-session 52001 \
+  --max-steps 8 \
+  --learning-mode strict \
+  --posttask-mode candidate \
+  --output-json tracks/cli_sqlite/sessions/memory_mixed_52001.json
+```
+
+Run strict-only vs auto-transfer pressure benchmark (same seed, cloned learning state):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_transfer_pressure.py \
+  --seed-domain gridtool \
+  --seed-task-id aggregate_report \
+  --pressure-domain fluxtool \
+  --pressure-task-id aggregate_report_holdout \
+  --seed-sessions 3 \
+  --pressure-sessions 5 \
+  --start-session 53001 \
+  --max-steps 8 \
+  --learning-mode strict \
+  --bootstrap \
+  --mixed-errors \
+  --cryptic-errors \
+  --output-json tracks/cli_sqlite/sessions/transfer_pressure_53001.json \
+  --output-md tracks/cli_sqlite/sessions/transfer_pressure_53001.md
+```
+
 Inspect one session as a visual timeline:
 
 ```bash

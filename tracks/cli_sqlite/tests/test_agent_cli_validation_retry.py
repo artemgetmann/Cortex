@@ -109,6 +109,22 @@ class _RetryAdapter:
         return []
 
 
+class _SequencedRetryAdapter(_RetryAdapter):
+    def __init__(self, results: list[ToolResult]) -> None:
+        super().__init__()
+        self._results = list(results)
+
+    def execute(self, tool_name: str, tool_input: dict[str, Any], workspace: DomainWorkspace) -> ToolResult:
+        del workspace
+        if tool_name != "run_sqlite":
+            return ToolResult(error=f"unknown tool {tool_name}")
+        self.execute_calls.append(dict(tool_input))
+        idx = len(self.execute_calls) - 1
+        if idx < len(self._results):
+            return self._results[idx]
+        return ToolResult(output="ok")
+
+
 def _tool_use_response(*, tool_use_id: str, tool_input: dict[str, Any]) -> _FakeResponse:
     return _FakeResponse(
         [
@@ -126,6 +142,7 @@ def _configure_retry_harness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     responses: list[_FakeResponse],
+    adapter: _RetryAdapter | None = None,
 ) -> tuple[Path, _RetryAdapter]:
     track_root = tmp_path / "track"
     tasks_root = track_root / "tasks"
@@ -146,7 +163,7 @@ def _configure_retry_harness(
     monkeypatch.setattr(agent_cli, "PROMOTED_PATH", learning_root / "promoted_skill_patches.json")
     monkeypatch.setattr(agent_cli, "ESCALATION_STATE_PATH", learning_root / "critic_escalation_state.json")
 
-    adapter = _RetryAdapter()
+    adapter = adapter or _RetryAdapter()
     monkeypatch.setattr(agent_cli, "_resolve_adapter_with_mode", lambda *args, **kwargs: adapter)
     monkeypatch.setattr(agent_cli.anthropic, "Anthropic", lambda **kwargs: _FakeAnthropicClient(responses))
     monkeypatch.setattr(agent_cli, "build_skill_manifest", lambda **kwargs: [])
@@ -243,3 +260,49 @@ def test_validation_retry_cap_records_metric_and_queues_reflection(
     )
     assert any("Trigger: validation_retry_cap." in text for text in _collect_user_text_messages(result.messages))
     assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
+
+
+def test_repeated_dependency_setup_failures_trigger_fallback_reflection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+        _tool_use_response(tool_use_id="tool-2", tool_input={"sql": "SELECT 1;"}),
+        _tool_use_response(tool_use_id="tool-3", tool_input={"sql": "SELECT 1;"}),
+    ]
+    adapter = _SequencedRetryAdapter(
+        [
+            ToolResult(error="ModuleNotFoundError: No module named 'openpyxl'"),
+            ToolResult(error="ModuleNotFoundError: No module named 'openpyxl'"),
+            ToolResult(output="ok"),
+        ]
+    )
+    sessions_root, _ = _configure_retry_harness(monkeypatch, tmp_path, responses, adapter=adapter)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=603,
+        max_steps=3,
+        domain="shell",
+        posttask_learn=False,
+        require_skill_read=False,
+    )
+
+    events = read_events(sessions_root / "session-603" / "events.jsonl")
+    assert [int(event.get("step", 0)) for event in events] == [1, 2, 3]
+    assert result.metrics["v2_dependency_fallback_checks"] == 1
+    assert any(
+        row.get("reason") == "dependency_setup_repeat"
+        for row in result.metrics.get("v2_reflection_reasons", [])
+    )
+    reflection_texts = [
+        text for text in _collect_user_text_messages(result.messages)
+        if "Trigger: dependency_setup_repeat." in text
+    ]
+    assert reflection_texts
+    assert "Deterministic fallback check:" in reflection_texts[0]
+    assert "pip install" not in reflection_texts[0]

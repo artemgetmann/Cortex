@@ -83,6 +83,25 @@ DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
+DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
+
+DEPENDENCY_SETUP_TAGS: frozenset[str] = frozenset(
+    {
+        "command_not_found",
+        "network",
+        "not_found",
+        "permission",
+        "resource",
+    }
+)
+
+DEPENDENCY_SETUP_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bmodule\s+not\s+found\b", re.IGNORECASE),
+    re.compile(r"\bno\s+module\s+named\b", re.IGNORECASE),
+    re.compile(r"\bimporterror\b", re.IGNORECASE),
+    re.compile(r"\bmissing\s+dependency\b", re.IGNORECASE),
+    re.compile(r"\bdependency\s+missing\b", re.IGNORECASE),
+)
 
 
 @dataclass
@@ -127,7 +146,13 @@ def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
     }
 
 
-def _build_reflection_prompt(*, error_text: str, fingerprint: str, reason: str) -> str:
+def _build_reflection_prompt(
+    *,
+    error_text: str,
+    fingerprint: str,
+    reason: str,
+    include_dependency_fallback: bool = False,
+) -> str:
     """
     Create a deterministic reflection request for stuck/error-heavy runs.
 
@@ -135,7 +160,7 @@ def _build_reflection_prompt(*, error_text: str, fingerprint: str, reason: str) 
     instructs the model to continue with tool use in the same turn.
     """
     reason_line = f"Trigger: {reason}." if reason else "Trigger: error escalation."
-    return (
+    prompt = (
         "Reflection required before the next tool call.\n"
         f"{reason_line}\n"
         f"Last error: {error_text.strip()}\n"
@@ -143,6 +168,23 @@ def _build_reflection_prompt(*, error_text: str, fingerprint: str, reason: str) 
         "Explain why the failure happened and the smallest corrective change. "
         "Then proceed with the next tool call."
     )
+    if not include_dependency_fallback:
+        return prompt
+    return (
+        f"{prompt}\n"
+        "Deterministic fallback check:\n"
+        "- Treat this fingerprint as a repeated dependency/setup failure.\n"
+        "- Do not repeat the same failing setup path.\n"
+        "- Choose the smallest local alternative that avoids the missing dependency."
+    )
+
+
+def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -> bool:
+    tags = {str(tag).strip().lower() for tag in error_tags if str(tag).strip()}
+    if tags & DEPENDENCY_SETUP_TAGS:
+        return True
+    lowered = str(error_text or "").strip().lower()
+    return any(pattern.search(lowered) for pattern in DEPENDENCY_SETUP_PATTERNS)
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
@@ -821,6 +863,7 @@ def run_cli_agent(
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
         "v2_reflection_reasons": [],
+        "v2_dependency_fallback_checks": 0,
         "v2_promoted": 0,
         "v2_suppressed": 0,
         "v2_fingerprint_recurrence_before": 0,
@@ -867,6 +910,8 @@ def run_cli_agent(
     reflection_pending: str | None = None
     reflection_threshold_triggered = False
     reflection_fingerprints: set[str] = set()
+    dependency_setup_retries: Counter[str] = Counter()
+    dependency_setup_reflections: set[str] = set()
     hard_failure_count = 0
     lesson_activation_records: list[dict[str, Any]] = []
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
@@ -1083,7 +1128,20 @@ def run_cli_agent(
                 seen_error_fingerprints.append(error_fingerprint)
 
                 reflection_reason = ""
-                if error_fingerprint not in reflection_fingerprints and seen_error_fingerprints.count(error_fingerprint) >= 2:
+                dependency_reflection = False
+                if _is_dependency_or_setup_failure(error_text=error_text, error_tags=error_tags):
+                    dependency_setup_retries[error_fingerprint] += 1
+
+                if (
+                    error_fingerprint not in dependency_setup_reflections
+                    and dependency_setup_retries.get(error_fingerprint, 0) >= DEPENDENCY_SETUP_REPEAT_THRESHOLD
+                ):
+                    # Deterministic fallback check for repeated setup/dependency
+                    # failures. This is fingerprint + tag based and domain-agnostic.
+                    reflection_reason = "dependency_setup_repeat"
+                    dependency_reflection = True
+                    dependency_setup_reflections.add(error_fingerprint)
+                elif error_fingerprint not in reflection_fingerprints and seen_error_fingerprints.count(error_fingerprint) >= 2:
                     reflection_reason = "repeat_fingerprint"
                     reflection_fingerprints.add(error_fingerprint)
                 elif not reflection_threshold_triggered and hard_failure_count >= REFLECTION_ERROR_THRESHOLD:
@@ -1097,8 +1155,11 @@ def run_cli_agent(
                         error_text=error_text,
                         fingerprint=error_fingerprint,
                         reason=reflection_reason,
+                        include_dependency_fallback=dependency_reflection,
                     )
                     metrics["v2_reflection_prompts"] += 1
+                    if dependency_reflection:
+                        metrics["v2_dependency_fallback_checks"] += 1
                     metrics["v2_reflection_reasons"].append(
                         {
                             "step": step,

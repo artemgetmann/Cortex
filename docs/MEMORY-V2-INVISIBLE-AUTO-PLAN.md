@@ -184,8 +184,9 @@ Success criteria:
 - Timeline now surfaces transfer policy, validation retry/cap stats, injected lessons, and lane labels.
 
 5. Benchmarks: partial.
-- Mixed protocol was executed sequentially (no dedicated one-command runner yet).
-- Dedicated mixed-protocol runner/report script is still pending.
+- Dedicated mixed-protocol one-command runner is implemented (`run_mixed_benchmark.py`).
+- Transfer-pressure benchmark runner is implemented (`run_transfer_pressure.py`).
+- Full benchmark interpretation/reporting still needs larger multi-run sweeps.
 
 ## Benchmark Status (Executed)
 Executed mixed protocol in 3 waves using sessions:
@@ -209,13 +210,10 @@ Interpretation:
 1. Task-cluster inference and persistence.
 - `domain/task` scoped memory is live, but automatic task-cluster keys are not yet stored/used.
 
-2. Dedicated mixed-protocol benchmark script/report.
-- Mixed protocol has been run sequentially, but there is no single-command runner that emits a unified report artifact for this exact 5-phase sweep.
+2. Larger transfer-pressure validation sweeps.
+- Runner exists, but we still need higher-N experiments with sparse strict matches to show reliable transfer wins (not just safety/no contamination).
 
-3. Transfer-pressure benchmark where strict matches are sparse.
-- Current results show safe behavior (no contamination), but not strong positive transfer utilization yet.
-
-4. FL Studio / computer-use integration.
+3. FL Studio / computer-use integration.
 - Deferred to Phase 2 and not implemented in active code.
 
 ## Phase 2: FL Studio / Computer-Use Integration (Deferred)
