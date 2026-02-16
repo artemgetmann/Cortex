@@ -5,7 +5,7 @@ Owner: user + Codex
 Last updated: 2026-02-16
 
 ## Objective
-- Ship an API-first pilot that runs through Anthropic Agent SDK while using `memory.usemindmirror.com` as the memory backend.
+- Ship an Artic API-first pilot that runs through Anthropic Agent SDK.
 - Preserve Memory V2 behavior signals from the current CLI harness so we can compare run quality apples-to-apples.
 
 ## Minimum Architecture (Parity Floor)
@@ -30,7 +30,7 @@ Last updated: 2026-02-16
 ## Current CLI Loop -> Agent SDK Loop Mapping
 | Current CLI Harness (`agent_cli.py`) | Agent SDK Pilot Target |
 | --- | --- |
-| Build system prompt + lessons (`retrieve_pre_run`) | Build Agent SDK context with pre-run memory retrieval from `memory.usemindmirror.com` |
+| Build system prompt + lessons (`retrieve_pre_run`) | Build Agent SDK context with pre-run Memory V2 retrieval for Artic API tasks |
 | `client.messages.create(...)` loop | Agent SDK run/continue loop with tool-use turn handling |
 | Adapter `execute(...)` tool call | Agent SDK tool handler delegates to same domain adapter command path |
 | On error: fingerprint + tags (`build_error_fingerprint`, `extract_tags`) | Same capture payload shape before memory write/retrieval |

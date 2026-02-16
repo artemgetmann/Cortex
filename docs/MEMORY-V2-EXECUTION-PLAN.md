@@ -156,7 +156,7 @@ Acceptance:
 
 ### Phase 5: Real-world tool pilot (Agent SDK path)
 Scope:
-- one API task + one file-manipulation task (xlsx or equivalent),
+- first pilot target is one Artic API task, then one file-manipulation task (xlsx or equivalent),
 - memory capture/retrieval/promotion enabled,
 - repeat-run improvement measured.
 - Implementation brief + scaffold reference: `docs/AGENT-SDK-PILOT-PLAN.md` and `tracks/cli_sqlite/scripts/run_agent_sdk_pilot.py`.
@@ -214,6 +214,7 @@ Before implementation starts:
 1. confirm Phase 1 starts first
 2. confirm benchmark profile for baseline (`hard12` or custom)
 3. confirm first Agent-SDK pilot target (API or XLSX)
+   - locked ordering: Artic API first, XLSX/file-manip second.
 
 ## 10) Clarifications From Latest Review
 

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 
 @dataclass(frozen=True)
 class PilotArgs:
-    """CLI input contract for the Agent SDK pilot scaffold."""
+    """CLI input contract for the Artic API-first Agent SDK pilot scaffold."""
 
     task: str
     session: int
@@ -19,33 +19,34 @@ class PilotArgs:
 
 def _parse_args() -> PilotArgs:
     ap = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Scaffold-only Agent SDK pilot entrypoint. "
-            "This file is intentionally non-production until memory/judge parity is implemented."
+            "Artic API-first Agent SDK pilot scaffold entrypoint. "
+            "This file remains non-production until memory/judge parity is implemented."
         )
     )
     ap.add_argument(
         "--task",
         required=True,
-        help="Task text or task identifier for pilot wiring tests.",
+        help="Task text or task identifier for Artic API pilot wiring tests.",
     )
     ap.add_argument(
         "--session",
         required=True,
         type=int,
-        help="Session id for pilot artifact naming.",
+        help="Session id for pilot artifact naming and parity tracking.",
     )
     ap.add_argument(
         "--max-steps",
         default=12,
         type=int,
-        help="Upper bound for planned Agent SDK turn loop.",
+        help="Upper bound for planned Artic API Agent SDK turn loop.",
     )
     ap.add_argument(
         "--mode",
         default="dry-run",
         choices=("dry-run", "pilot"),
-        help="dry-run prints wiring plan only; pilot is reserved for future implementation.",
+        help="dry-run prints wiring plan only; pilot mode stays blocked until Artic parity is implemented.",
     )
     ns = ap.parse_args()
     return PilotArgs(
@@ -69,7 +70,7 @@ def main() -> int:
         return 2
 
     # TODO(agent-sdk): Instantiate Agent SDK client (ClaudeSDKClient path, not query()).
-    # TODO(memory-v2): Add pre-run retrieval call to memory.usemindmirror.com.
+    # TODO(memory-v2): Add pre-run retrieval call for the Artic API pilot target.
     # TODO(agent-loop): Implement tool-use turn loop with domain adapter delegation.
     # TODO(memory-v2): Capture error/state/action on executor failures and persist to memory backend.
     # TODO(memory-v2): Inject on-error retrieval hints into the next model turn.
