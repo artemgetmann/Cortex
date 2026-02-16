@@ -716,23 +716,30 @@ def run_agent(
     eval_source = "deterministic"
     eval_disagreement = False
     if visual_judge is not None:
-        eval_source = "hybrid"
-        if bool(visual_judge.passed) == bool(det_passed):
-            final_verdict = "pass" if det_passed else "fail"
-            final_score = round((det_score + float(visual_judge.score)) / 2.0, 3)
-            if visual_judge.reasons:
-                final_reasons.extend([f"judge:{r}" for r in visual_judge.reasons])
+        judge_unparseable = any(str(r) == "visual_judge_unparseable" for r in visual_judge.reasons)
+        if judge_unparseable:
+            # If judge output is structurally invalid, do not let parser noise override
+            # objective deterministic signals. Keep judge diagnostics in metrics.
+            eval_source = "deterministic_fallback"
+            final_reasons.extend(["judge_unparseable_fallback"])
         else:
-            final_verdict = "uncertain"
-            final_score = round(min(det_score, float(visual_judge.score)), 3)
-            eval_disagreement = True
-            final_reasons.extend(
-                [
-                    "judge_disagreement",
-                    f"deterministic_passed={det_passed}",
-                    f"visual_judge_passed={visual_judge.passed}",
-                ]
-            )
+            eval_source = "hybrid"
+            if bool(visual_judge.passed) == bool(det_passed):
+                final_verdict = "pass" if det_passed else "fail"
+                final_score = round((det_score + float(visual_judge.score)) / 2.0, 3)
+                if visual_judge.reasons:
+                    final_reasons.extend([f"judge:{r}" for r in visual_judge.reasons])
+            else:
+                final_verdict = "uncertain"
+                final_score = round(min(det_score, float(visual_judge.score)), 3)
+                eval_disagreement = True
+                final_reasons.extend(
+                    [
+                        "judge_disagreement",
+                        f"deterministic_passed={det_passed}",
+                        f"visual_judge_passed={visual_judge.passed}",
+                    ]
+                )
 
     metrics["eval_det_passed"] = det_passed
     metrics["eval_det_score"] = round(det_score, 3)
