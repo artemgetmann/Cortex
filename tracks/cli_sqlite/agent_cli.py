@@ -573,6 +573,7 @@ def run_cli_agent(
     bootstrap: bool = False,
     posttask_mode: str = "candidate",
     posttask_learn: bool = True,
+    memory_v2_demo_mode: bool = False,
     verbose: bool = False,
     auto_escalate_critic: bool = True,
     escalation_score_threshold: float = 0.75,
@@ -747,10 +748,12 @@ def run_cli_agent(
         "v2_lessons_generated": 0,
         "posttask_patch_attempted": False,
         "posttask_skill_patching_skipped_by_mode": False,
+        "posttask_skill_patching_skip_reason": None,
         "posttask_candidates_queued": 0,
         "posttask_patch_applied": 0,
         "auto_promotion_applied": 0,
         "auto_promotion_reason": None,
+        "memory_v2_demo_mode": bool(memory_v2_demo_mode),
         "executor_model": model_executor,
         "critic_model": critic_model_for_run,
         "judge_model": effective_judge_model,
@@ -1067,7 +1070,9 @@ def run_cli_agent(
     critic_no_updates = False
 
     if posttask_learn and skill_manifest_entries:
-        patching_enabled = architecture_mode == "full"
+        # Demo mode keeps Memory V2 lesson generation/promotion active while
+        # suppressing legacy skill patching hooks/events for cleaner demos.
+        patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
         metrics["posttask_patch_attempted"] = patching_enabled
         tail_events = [
             {
@@ -1238,6 +1243,10 @@ def run_cli_agent(
         # Simplified architecture stores lessons only and skips post-task skill patches.
         if not patching_enabled:
             metrics["posttask_skill_patching_skipped_by_mode"] = True
+            if memory_v2_demo_mode:
+                metrics["posttask_skill_patching_skip_reason"] = "memory_v2_demo_mode"
+            else:
+                metrics["posttask_skill_patching_skip_reason"] = "architecture_mode"
         else:
             proposed_updates, confidence, reflection_raw = propose_skill_updates(
                 client=client,

@@ -347,6 +347,7 @@ def _run_phase(
     semi_helpful_errors: bool,
     mixed_errors: bool,
     posttask_learn: bool,
+    memory_v2_demo_mode: bool,
     verbose: bool,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -371,6 +372,7 @@ def _run_phase(
             model_judge=model_judge,
             posttask_mode=posttask_mode,
             posttask_learn=posttask_learn,
+            memory_v2_demo_mode=memory_v2_demo_mode,
             verbose=verbose,
             auto_escalate_critic=True,
             escalation_score_threshold=0.75,
@@ -437,6 +439,11 @@ def main() -> int:
     ap.add_argument("--model-judge", default=None)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument(
+        "--memory-v2-demo-mode",
+        action="store_true",
+        help="Suppress legacy posttask_hook/promotion_gate skill patching while keeping Memory V2 active",
+    )
     ap.add_argument("--clear-lessons", action="store_true")
     ap.add_argument("--output-json", default="", help="Optional path to write JSON summary")
     ap.add_argument("--verbose", action="store_true")
@@ -460,7 +467,8 @@ def main() -> int:
     )
     print(
         f"  learning_mode={args.learning_mode} bootstrap={args.bootstrap} max_steps={args.max_steps} "
-        f"posttask_mode={args.posttask_mode} posttask_learn={posttask_learn}"
+        f"posttask_mode={args.posttask_mode} posttask_learn={posttask_learn} "
+        f"memory_v2_demo_mode={bool(args.memory_v2_demo_mode)}"
     )
     print(
         f"  runs: grid={args.grid_runs} flux={args.fluxtool_runs} retention={args.retention_runs} "
@@ -497,6 +505,7 @@ def main() -> int:
             semi_helpful_errors=args.semi_helpful_errors,
             mixed_errors=args.mixed_errors,
             posttask_learn=posttask_learn,
+            memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
             verbose=args.verbose,
         )
         rows.extend(phase_rows)
@@ -592,6 +601,7 @@ def main() -> int:
             "mixed_errors": args.mixed_errors,
             "posttask_mode": args.posttask_mode,
             "posttask_learn": posttask_learn,
+            "memory_v2_demo_mode": bool(args.memory_v2_demo_mode),
             "model_executor": model_executor,
             "model_critic": model_critic,
             "model_judge": model_judge,

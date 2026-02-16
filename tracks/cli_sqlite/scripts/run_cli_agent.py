@@ -39,6 +39,11 @@ def main() -> int:
     ap.add_argument("--require-skill-read", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
     ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument(
+        "--memory-v2-demo-mode",
+        action="store_true",
+        help="Suppress legacy posttask_hook/promotion_gate skill patching while keeping Memory V2 active",
+    )
     ap.add_argument("--opaque-tools", action="store_true", help="Use opaque tool names to test skill-reading behavior")
     ap.add_argument("--bootstrap", action="store_true",
                      help="Bootstrap mode: no skill docs, agent learns from scratch via lessons only")
@@ -66,6 +71,7 @@ def main() -> int:
         model_judge=args.model_judge.strip() if args.model_judge else None,
         posttask_mode=args.posttask_mode,
         posttask_learn=not args.no_posttask_learn,
+        memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
         verbose=args.verbose,
         auto_escalate_critic=bool(args.auto_escalate_critic),
         escalation_score_threshold=args.escalation_score_threshold,

@@ -102,6 +102,274 @@ def _group_memory_events_by_step(rows: list[dict[str, Any]]) -> dict[int, list[d
     return grouped
 
 
+def _first_present(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any | None:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _to_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    rows: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            rows.append(text)
+    return rows
+
+
+def _try_parse_json_dict(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return {}
+    text = raw.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _candidate_payloads_for_step(row: dict[str, Any], mem_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Build a tolerant payload list for observability parsing.
+
+    Session artifacts changed multiple times during the hackathon, so injected
+    lessons and retrieval diagnostics may appear in different nested keys. We
+    collect several likely containers and parse them uniformly.
+    """
+    payloads: list[dict[str, Any]] = []
+    for candidate in (
+        row,
+        row.get("tool_input"),
+        row.get("memory_v2"),
+        row.get("memory"),
+        row.get("v2"),
+        _try_parse_json_dict(row.get("output")),
+    ):
+        parsed = _as_dict(candidate)
+        if not parsed:
+            continue
+        payloads.append(parsed)
+        for nested_key in ("result", "memory_v2", "memory", "v2", "retrieval", "diagnostics"):
+            nested = _as_dict(parsed.get(nested_key))
+            if nested:
+                payloads.append(nested)
+    for mem_row in mem_rows:
+        payloads.append(mem_row)
+        metadata = _as_dict(mem_row.get("metadata"))
+        if metadata:
+            payloads.append(metadata)
+    return payloads
+
+
+def _collect_injected_step_payload(
+    *,
+    row: dict[str, Any],
+    mem_rows: list[dict[str, Any]],
+    max_hints: int,
+) -> dict[str, Any]:
+    hints: list[str] = []
+    lesson_ids: list[str] = []
+
+    err = str(row.get("error", "") or "")
+    for hint in _extract_hints(err, max_hints=max_hints):
+        if hint and hint not in hints:
+            hints.append(hint)
+
+    for payload in _candidate_payloads_for_step(row, mem_rows):
+        injected_lists = []
+        for key in ("injected_lessons", "on_error_injected_lessons", "injected_hints", "hints"):
+            injected_lists.extend(_as_list(payload.get(key)))
+        for item in injected_lists:
+            if isinstance(item, str):
+                text = item.strip()
+                if text and text not in hints and len(hints) < max_hints:
+                    hints.append(text)
+                continue
+            if not isinstance(item, dict):
+                continue
+            text = str(
+                _first_present(
+                    item,
+                    ("rule_text", "hint", "text", "lesson", "message"),
+                )
+                or ""
+            ).strip()
+            if text and text not in hints and len(hints) < max_hints:
+                hints.append(text)
+            lesson_id = str(_first_present(item, ("lesson_id", "id")) or "").strip()
+            if lesson_id and lesson_id not in lesson_ids:
+                lesson_ids.append(lesson_id)
+
+        for key in ("lesson_ids", "injected_lesson_ids", "v2_lesson_ids"):
+            for lesson_id in _as_str_list(payload.get(key)):
+                if lesson_id not in lesson_ids:
+                    lesson_ids.append(lesson_id)
+
+    return {
+        "hints": hints[:max_hints],
+        "lesson_ids": lesson_ids,
+    }
+
+
+def _collect_retrieval_scores(
+    *,
+    row: dict[str, Any],
+    mem_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    score_rows: list[dict[str, Any]] = []
+    for payload in _candidate_payloads_for_step(row, mem_rows):
+        raw_rows: list[Any] = []
+        for key in (
+            "retrieval_scores",
+            "retrieval_score_breakdown",
+            "score_breakdown",
+            "v2_retrieval_scores",
+        ):
+            raw_rows.extend(_as_list(payload.get(key)))
+        for item in raw_rows:
+            item_dict = _as_dict(item)
+            if not item_dict:
+                continue
+            score_dict = _as_dict(item_dict.get("score"))
+            lesson_dict = _as_dict(item_dict.get("lesson"))
+            lesson_id = str(
+                _first_present(
+                    item_dict,
+                    ("lesson_id", "id"),
+                )
+                or _first_present(score_dict, ("lesson_id",))
+                or _first_present(lesson_dict, ("lesson_id", "id"))
+                or ""
+            ).strip()
+            raw_total = _first_present(item_dict, ("score_total", "total_score", "score"))
+            total = _to_float(raw_total)
+            if total is None and isinstance(raw_total, dict):
+                total = _to_float(raw_total.get("score"))
+            if total is None:
+                total = _to_float(score_dict.get("score"))
+            if total is None:
+                continue
+            normalized = {
+                "lesson_id": lesson_id,
+                "score": total,
+                "fingerprint_match": _to_float(_first_present(item_dict, ("fingerprint_match",)) or score_dict.get("fingerprint_match")),
+                "tag_overlap": _to_float(_first_present(item_dict, ("tag_overlap",)) or score_dict.get("tag_overlap")),
+                "text_similarity": _to_float(_first_present(item_dict, ("text_similarity",)) or score_dict.get("text_similarity")),
+                "reliability": _to_float(_first_present(item_dict, ("reliability",)) or score_dict.get("reliability")),
+                "recency": _to_float(_first_present(item_dict, ("recency",)) or score_dict.get("recency")),
+            }
+            score_rows.append(normalized)
+    return score_rows
+
+
+def _render_v2_observability_sections(
+    *,
+    metrics: dict[str, Any],
+    events: list[dict[str, Any]],
+    memory_by_step: dict[int, list[dict[str, Any]]],
+    max_hints_per_step: int,
+) -> tuple[list[str], dict[int, dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+    lines: list[str] = []
+    injected_by_step: dict[int, dict[str, Any]] = {}
+    score_by_step: dict[int, list[dict[str, Any]]] = {}
+
+    prerun_ids = _as_str_list(
+        _first_present(metrics, ("v2_prerun_lesson_ids", "prerun_lesson_ids", "memory_prerun_lesson_ids"))
+    )
+    prerun_loaded = _to_int(
+        _first_present(metrics, ("v2_lessons_loaded", "prerun_lessons_loaded")),
+        default=len(prerun_ids),
+    )
+    lines.append("  memory_v2_preloaded_lessons:")
+    lines.append(f"    count={prerun_loaded}")
+    if prerun_ids:
+        lines.append(f"    lesson_ids={','.join(prerun_ids)}")
+    else:
+        lines.append("    lesson_ids=(none)")
+
+    for row in events:
+        step = _to_int(row.get("step"), default=-1)
+        if step < 0:
+            continue
+        tool = str(row.get("tool", "")).strip()
+        if not _is_executor_tool(tool):
+            continue
+        if bool(row.get("ok", False)):
+            continue
+        mem_rows = memory_by_step.get(step, [])
+        injected = _collect_injected_step_payload(row=row, mem_rows=mem_rows, max_hints=max_hints_per_step)
+        if injected.get("hints") or injected.get("lesson_ids"):
+            injected_by_step[step] = injected
+        scores = _collect_retrieval_scores(row=row, mem_rows=mem_rows)
+        if scores:
+            score_by_step[step] = scores
+
+    lines.append("  memory_v2_on_error_injected_lessons:")
+    if not injected_by_step:
+        lines.append("    (none)")
+    else:
+        for step in sorted(injected_by_step):
+            row = injected_by_step[step]
+            hints = _as_list(row.get("hints"))
+            lesson_ids = _as_str_list(row.get("lesson_ids"))
+            lines.append(
+                f"    step {step:02d}: hints={len(hints)} lesson_ids={len(lesson_ids)}"
+            )
+            if lesson_ids:
+                lines.append(f"      ids={','.join(lesson_ids)}")
+            for hint in hints:
+                lines.append(f"      hint={_short(str(hint), max_chars=220)}")
+
+    lines.append("  memory_v2_retrieval_score_breakdown:")
+    if not score_by_step:
+        lines.append("    (unavailable)")
+    else:
+        for step in sorted(score_by_step):
+            lines.append(f"    step {step:02d}:")
+            for score in score_by_step[step]:
+                lesson_id = str(score.get("lesson_id", "")).strip() or "unknown"
+                score_text = f"{float(score.get('score', 0.0) or 0.0):.3f}"
+                parts = [
+                    f"total={score_text}",
+                ]
+                for key in ("fingerprint_match", "tag_overlap", "text_similarity", "reliability", "recency"):
+                    value = score.get(key)
+                    if isinstance(value, (int, float)):
+                        parts.append(f"{key}={float(value):.3f}")
+                lines.append(f"      lesson={lesson_id} " + " ".join(parts))
+
+    return lines, injected_by_step, score_by_step
+
+
 def _is_executor_tool(name: str) -> bool:
     lowered = str(name).strip().lower()
     return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite"}
@@ -232,6 +500,13 @@ def _render_session(
             max_rows=show_lessons,
         )
     )
+    observability_lines, injected_by_step, _ = _render_v2_observability_sections(
+        metrics=metrics,
+        events=events,
+        memory_by_step=memory_by_step,
+        max_hints_per_step=max_hints_per_step,
+    )
+    lines.extend(observability_lines)
 
     for row in events:
         tool = str(row.get("tool", ""))
@@ -269,9 +544,15 @@ def _render_session(
                 if channel in {"progress_signal", "efficiency_signal", "constraint_failure"}:
                     lines.append(f"    memory: {channel}")
 
-        hints = _extract_hints(err, max_hints=max_hints_per_step)
+        injected = injected_by_step.get(step, {})
+        hints = _as_str_list(injected.get("hints"))
+        if not hints:
+            hints = _extract_hints(err, max_hints=max_hints_per_step)
         if hints:
             lines.append(f"    memory: injected_hints count={len(hints)}")
+        lesson_ids = _as_str_list(injected.get("lesson_ids"))
+        if lesson_ids:
+            lines.append(f"    memory: injected_lesson_ids={','.join(lesson_ids)}")
         for hint in hints:
             lines.append(f"    hint: {_short(hint, max_chars=220)}")
         if show_tool_output:
