@@ -101,6 +101,25 @@ def _is_executor_tool(name: str) -> bool:
     return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite"}
 
 
+def _extract_attempt_preview(tool_input: Any) -> str:
+    """
+    Extract a readable command/query preview from heterogeneous tool payloads.
+
+    Different domains use different field names (`command`, `commands`, `sql`),
+    so the viewer probes known keys first, then falls back to compact JSON.
+    """
+    if not isinstance(tool_input, dict):
+        return ""
+    for key in ("commands", "command", "sql", "query", "script"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    try:
+        return json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
+    except Exception:
+        return str(tool_input)
+
+
 def _render_session(
     *,
     sessions_root: Path,
@@ -142,7 +161,7 @@ def _render_session(
             continue
         state = "OK" if ok else "FAIL"
         lines.append(f"  step {step:02d} {tool} -> {state}")
-        command_preview = str((row.get("tool_input", {}) or {}).get("command", "")).strip()
+        command_preview = _extract_attempt_preview(row.get("tool_input", {}))
         if command_preview:
             lines.append(f"    cmd: {_short(command_preview)}")
 
