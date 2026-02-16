@@ -63,7 +63,8 @@ You should see:
 ## Run The Demo (One Command)
 
 ```bash
-AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
+bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 ```
 
 Outputs:
@@ -87,7 +88,6 @@ Real GUI/computer-use reliability (for harder domains like FL Studio) is still a
 ## Docs
 
 - `docs/README.md` - docs index
-- `docs/MEMORY-V2-EXECUTION-PLAN.md` - active execution plan
 - `docs/MEMORY-V2-AGNOSTIC-PLAN.md` - requirements/status
 - `docs/MEMORY-V2-BENCHMARKS.md` - benchmark protocol + interpretation
-- `docs/HACKATHON-DEMO-NARRATION.md` - narration script
+- `docs/archive/memory-v2-history/HACKATHON-DEMO-NARRATION.md` - archived narration script

@@ -41,5 +41,6 @@ That separation is what makes new adapters/tools pluggable without rewriting mem
 ## Canonical docs after cleanup
 - Current flow map: `docs/MEMORY-V2-CURRENT-FLOW.html`
 - Legacy FL Studio architecture: `docs/archive/fl-studio-legacy/cortex-architecture.html`
-- Execution plan: `docs/MEMORY-V2-EXECUTION-PLAN.md`
+- Agnostic plan: `docs/MEMORY-V2-AGNOSTIC-PLAN.md`
+- Historical execution plan: `docs/archive/memory-v2-history/MEMORY-V2-EXECUTION-PLAN.md`
 - Benchmark protocol: `docs/MEMORY-V2-BENCHMARKS.md`

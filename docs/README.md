@@ -3,10 +3,9 @@
 This folder is split into active Memory V2 docs and archived historical tracks.
 
 ## Active Source Of Truth
-- `docs/MEMORY-V2-EXECUTION-PLAN.md` - living execution plan and decision log.
 - `docs/MEMORY-V2-AGNOSTIC-PLAN.md` - architecture requirements and implementation status.
 - `docs/MEMORY-V2-BENCHMARKS.md` - benchmark protocol, commands, and interpretation.
-- `docs/MEMORY-V2-CURRENT-FLOW.html` - current end-to-end runtime flow diagram.
+- `docs/MEMORY-V2-CURRENT-FLOW.html` - current CLI Memory V2 runtime flow diagram.
 - `docs/MEMORY-V2-ARCHITECTURE-COMPARE.md` - legacy vs current architecture comparison.
 
 ## Archived (Historical, Not Active)
