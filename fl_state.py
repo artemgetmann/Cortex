@@ -116,6 +116,13 @@ def _resolve_reference_images() -> list[Path]:
     return out[:3]
 
 
+def resolve_reference_images() -> list[Path]:
+    """
+    Public helper for any FL vision component that needs the same reference set.
+    """
+    return _resolve_reference_images()
+
+
 def _normalize_state(raw: dict[str, Any]) -> dict[str, Any]:
     channel_rack_visible = bool(raw.get("channel_rack_visible", False))
     grid = raw.get("grid")

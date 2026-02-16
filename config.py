@@ -14,6 +14,8 @@ class CortexConfig:
     model_heavy: str
     # Critic is used by posttask reflection/patch proposal. Default to heavy model for quality.
     model_critic: str
+    # Dedicated visual judge for FL end-of-run screenshot adjudication.
+    model_visual_judge: str
 
     # What the model sees as the "screen" coordinate space.
     display_width_px: int
@@ -53,6 +55,7 @@ def load_config() -> CortexConfig:
     model_decider = os.getenv("CORTEX_MODEL_DECIDER", "claude-haiku-4-5").strip()
     model_heavy = os.getenv("CORTEX_MODEL_HEAVY", "claude-opus-4-6").strip()
     model_critic = os.getenv("CORTEX_MODEL_CRITIC", model_heavy).strip()
+    model_visual_judge = os.getenv("CORTEX_MODEL_VISUAL_JUDGE", model_heavy).strip()
 
     enable_prompt_caching = os.getenv("CORTEX_ENABLE_PROMPT_CACHING", "1").strip() not in (
         "",
@@ -66,6 +69,7 @@ def load_config() -> CortexConfig:
         model_decider=model_decider,
         model_heavy=model_heavy,
         model_critic=model_critic,
+        model_visual_judge=model_visual_judge,
         display_width_px=display_width_px,
         display_height_px=display_height_px,
         enable_prompt_caching=enable_prompt_caching,

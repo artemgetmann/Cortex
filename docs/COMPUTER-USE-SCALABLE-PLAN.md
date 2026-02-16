@@ -2,7 +2,22 @@
 
 Last updated: 2026-02-16
 Owner: Cortex FL + Memory V2 track
-Status: Draft (approved for iteration)
+Status: In progress
+
+## Execution Status (2026-02-16, sprint window)
+
+Completed in code:
+
+- Added separate visual judge module for FL end-of-run screenshot adjudication.
+- Wired hybrid authority in runtime: deterministic contract + visual judge + disagreement -> `uncertain`.
+- Added explicit judge metrics fields (`judge_model`, `judge_score`, `judge_confidence`, `judge_reasons`, `eval_final_verdict`).
+- Added visual judge event emission in session trace (`tool=visual_judge`).
+- Kept `extract_fl_state` advisory (planning helper), not final authority.
+
+Pending in code:
+
+- Timeline renderer updates to show deterministic verdict + visual judge verdict + final verdict on one line.
+- Full FL 10-step benchmark rerun on machine with Quartz permissions and final demo artifact export.
 
 ## Goal
 
