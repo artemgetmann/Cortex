@@ -1,7 +1,0 @@
-{
-  "tier": "sonnet",
-  "override_runs_remaining": 1,
-  "low_score_streak": 0,
-  "critic_no_updates_streak": 0,
-  "last_trigger": "low_score"
-}

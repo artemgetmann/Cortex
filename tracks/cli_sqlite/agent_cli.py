@@ -50,6 +50,7 @@ from tracks.cli_sqlite.skill_routing_cli import (
     resolve_skill_content,
     route_manifest_entries,
 )
+from tracks.cli_sqlite.tool_validation import build_tool_schema_map, validate_tool_input
 
 
 TRACK_ROOT = Path(__file__).resolve().parent
@@ -77,6 +78,7 @@ ARCHITECTURE_MODES = ("full", "simplified")
 DEFAULT_ARCHITECTURE_MODE = "full"
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
+REFLECTION_ERROR_THRESHOLD = 2
 
 
 @dataclass
@@ -119,6 +121,24 @@ def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
         "is_error": result.is_error(),
         "content": content or "",
     }
+
+
+def _build_reflection_prompt(*, error_text: str, fingerprint: str, reason: str) -> str:
+    """
+    Create a deterministic reflection request for stuck/error-heavy runs.
+
+    The prompt explicitly requests diagnosis + smallest correction, then
+    instructs the model to continue with tool use in the same turn.
+    """
+    reason_line = f"Trigger: {reason}." if reason else "Trigger: error escalation."
+    return (
+        "Reflection required before the next tool call.\n"
+        f"{reason_line}\n"
+        f"Last error: {error_text.strip()}\n"
+        f"Fingerprint: {fingerprint}\n"
+        "Explain why the failure happened and the smallest corrective change. "
+        "Then proceed with the next tool call."
+    )
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
@@ -718,6 +738,9 @@ def run_cli_agent(
         # Remove read_skill from tool list — no skill docs in bootstrap mode
         read_skill_api_name = "read_skill" if not opaque_tools else "probe"
         tools = [t for t in tools if t.get("name") != read_skill_api_name]
+    # Build a name->schema map for tool-agnostic input validation. This keeps
+    # validation structural (required keys, primitive types) instead of semantic.
+    tool_schema_map = build_tool_schema_map(tools)
 
     escalation_state = _load_escalation_state(base_model=model_critic)
     critic_model_for_run, escalation_state = _resolve_critic_model_for_run(
@@ -747,6 +770,7 @@ def run_cli_agent(
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,
+        "tool_validation_errors": 0,
         "skill_gate_blocks": 0,
         "skill_reads": 0,
         "required_skill_refs": sorted(required_skill_refs),
@@ -762,6 +786,8 @@ def run_cli_agent(
         "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
         "v2_transfer_retrieval_score_weight": transfer_retrieval_score_weight,
         "v2_transfer_lane_activations": 0,
+        "v2_reflection_prompts": 0,
+        "v2_reflection_reasons": [],
         "v2_promoted": 0,
         "v2_suppressed": 0,
         "v2_fingerprint_recurrence_before": 0,
@@ -805,11 +831,20 @@ def run_cli_agent(
     read_skill_refs: set[str] = set()
     run_error_events: list[ErrorEvent] = []
     seen_error_fingerprints: list[str] = []
+    reflection_pending: str | None = None
+    reflection_threshold_triggered = False
+    reflection_fingerprints: set[str] = set()
+    hard_failure_count = 0
     lesson_activation_records: list[dict[str, Any]] = []
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
 
     for step in range(1, max_steps + 1):
         metrics["steps"] = step
+        if reflection_pending:
+            # Force a brief self-diagnosis before the next tool call. This is
+            # domain-agnostic and helps break repeated failure loops.
+            messages.append({"role": "user", "content": [{"type": "text", "text": reflection_pending}]})
+            reflection_pending = None
         response = client.messages.create(
             model=model_executor,
             max_tokens=1800,
@@ -835,12 +870,23 @@ def run_cli_agent(
             tool_name_raw = str(block.get("name", ""))
             canonical_name = alias_map.get(tool_name_raw, tool_name_raw)
             tool_use_id = str(block.get("id", ""))
-            tool_input = block.get("input", {})
-            tool_input = tool_input if isinstance(tool_input, dict) else {}
+            tool_input_raw = block.get("input", {})
+            tool_input = tool_input_raw if isinstance(tool_input_raw, dict) else {}
             metrics["tool_actions"] += 1
             memory_v2_payload: dict[str, Any] = {}
 
-            if canonical_name == READ_SKILL_TOOL_NAME:
+            # Tool-agnostic structural validation happens before execution. This
+            # prevents obviously malformed calls from wasting a tool step.
+            schema = tool_schema_map.get(canonical_name) or tool_schema_map.get(tool_name_raw)
+            validation_error = validate_tool_input(
+                tool_name=canonical_name,
+                tool_input=tool_input_raw,
+                schema=schema,
+            )
+            if validation_error:
+                metrics["tool_validation_errors"] += 1
+                result = ToolResult(error=validation_error)
+            elif canonical_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 skill_ref = tool_input.get("skill_ref")
                 if not isinstance(skill_ref, str):
@@ -918,6 +964,9 @@ def run_cli_agent(
                         metadata={"session_id": session_id, "step": step},
                     )
                 ]
+                # Track hard failures separately from channel fan-out so we can
+                # gate reflection on true error count, not per-channel events.
+                hard_failure_count += 1
                 if any(tag in {"constraint", "constraint_failed"} for tag in error_tags):
                     failure_events.append(
                         ErrorEvent(
@@ -965,6 +1014,31 @@ def run_cli_agent(
                     run_error_events.append(event)
                     metrics["v2_error_events"] += 1
                 seen_error_fingerprints.append(error_fingerprint)
+
+                reflection_reason = ""
+                if error_fingerprint not in reflection_fingerprints and seen_error_fingerprints.count(error_fingerprint) >= 2:
+                    reflection_reason = "repeat_fingerprint"
+                    reflection_fingerprints.add(error_fingerprint)
+                elif not reflection_threshold_triggered and hard_failure_count >= REFLECTION_ERROR_THRESHOLD:
+                    reflection_reason = "error_threshold"
+                    reflection_threshold_triggered = True
+
+                if reflection_reason and not reflection_pending:
+                    # Queue a reflection prompt for the next turn so the model
+                    # explicitly diagnoses the failure before continuing.
+                    reflection_pending = _build_reflection_prompt(
+                        error_text=error_text,
+                        fingerprint=error_fingerprint,
+                        reason=reflection_reason,
+                    )
+                    metrics["v2_reflection_prompts"] += 1
+                    metrics["v2_reflection_reasons"].append(
+                        {
+                            "step": step,
+                            "fingerprint": error_fingerprint,
+                            "reason": reflection_reason,
+                        }
+                    )
 
                 v2_hints: list[str] = []
                 v2_matches, conflict_losers = retrieve_on_error(
