@@ -1,5 +1,7 @@
 # Cortex: Persistent Memory For Agents
 
+Claude Code Hackathon Project Feb 2026 (Built with Opus 4.6)
+
 Current AI agents usually improve only inside one chat.  
 New chat, same mistakes again.
 
