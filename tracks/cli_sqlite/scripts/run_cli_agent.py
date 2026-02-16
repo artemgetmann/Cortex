@@ -27,7 +27,7 @@ def main() -> int:
     ap.add_argument("--task", default="")
     ap.add_argument("--session", required=True, type=int)
     ap.add_argument("--max-steps", type=int, default=12)
-    ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool", "artic"],
+    ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"],
                      help="Domain adapter to use (default: sqlite)")
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--architecture-mode", default=DEFAULT_ARCHITECTURE_MODE, choices=ARCHITECTURE_MODES)

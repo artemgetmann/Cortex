@@ -371,7 +371,10 @@ def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_
     if domain == "artic":
         from tracks.cli_sqlite.domains.artic_adapter import ArticAdapter
         return ArticAdapter()
-    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool, artic")
+    if domain == "shell":
+        from tracks.cli_sqlite.domains.shell_adapter import ShellAdapter
+        return ShellAdapter()
+    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool, artic, shell")
 
 
 def _resolve_adapter_with_mode(

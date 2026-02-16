@@ -426,7 +426,7 @@ def _render_v2_observability_sections(
 
 def _is_executor_tool(name: str) -> bool:
     lowered = str(name).strip().lower()
-    return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite", "run_artic"}
+    return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite", "run_artic", "run_bash"}
 
 
 def _extract_attempt_text(tool_input: Any, *, tool_name: str) -> str:
