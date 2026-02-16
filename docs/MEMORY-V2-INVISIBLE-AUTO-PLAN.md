@@ -71,7 +71,7 @@ Those are handled by runtime failure capture:
 - ErrorEvent fingerprint + tags created.
 - Retrieval uses that signal to inject lessons.
 
-## Retry Without Spending Step (Planned)
+## Retry Without Spending Step (Completed)
 Goal: avoid wasting step budget on malformed tool payload loops.
 
 Flow:
@@ -167,35 +167,56 @@ Success criteria:
 - Lower fingerprint recurrence over runs.
 - Equal or better pass rate with no contamination spikes.
 
-## Implementation Workstreams
-1. Runtime loop:
-- Add same-step validation retry with cap and reflection fallback.
-- Track retry metrics.
+## Implementation Status by Workstream
+1. Runtime loop: completed.
+- Same-step validation retry (`max=2`) with reflection fallback is live.
+- Retry metrics are live (`tool_validation_retry_attempts`, `tool_validation_retry_capped_events`).
 
-2. Retrieval policy:
-- Replace user-facing toggle path with auto policy mode.
-- Keep strict-first, transfer-backfill behavior internal.
+2. Retrieval policy: completed.
+- Auto policy is live (`off|auto|always`) with strict-first default.
+- Transfer lane in `auto` mode is evidence-gated to reduce low-signal cross-domain contamination.
 
-3. Context inference:
-- Add automatic domain/task-cluster key derivation utilities.
-- Persist keys in lesson records.
+3. Context inference: partial.
+- Domain/task metadata scoping is live.
+- Task-cluster derivation/persistence beyond current domain/task keys is not implemented yet.
 
-4. Observability:
-- Expand timeline demo to print attempt -> failure -> hint -> correction chain.
+4. Observability: completed.
+- Timeline now surfaces transfer policy, validation retry/cap stats, injected lessons, and lane labels.
 
-5. Benchmarks:
-- Add mixed-domain protocol runner and strict-vs-auto comparison report.
+5. Benchmarks: partial.
+- Mixed protocol was executed sequentially (no dedicated one-command runner yet).
+- Dedicated mixed-protocol runner/report script is still pending.
 
-## Execution Status (Current)
-Completed now:
-- Runtime loop same-step validation retry (`max=2`) with reflection fallback and metrics.
-- Auto context retrieval policy wired (`off|auto|always`) with strict-first default and transfer backfill when strict signal is weak.
-- Timeline observability includes transfer policy and validation retry/cap metrics.
-- Test coverage added for validation retry behavior and retrieval auto-policy behavior.
+## Benchmark Status (Executed)
+Executed mixed protocol in 3 waves using sessions:
+- Wave 1: `51001..51005`
+- Wave 2: `51101..51105`
+- Wave 3: `51201..51205`
 
-Deferred to next execution slice:
-- Task-cluster context inference persistence beyond current domain/task metadata.
-- Mixed-domain benchmark runner/report script for one-command protocol execution.
+Results:
+- Wave 1 pass rate: `20%` (1/5)
+- Wave 2 pass rate: `80%` (4/5)
+- Wave 3 pass rate: `100%` (5/5)
+- Mean score: `0.421 -> 0.800 -> 1.000`
+- Mean steps: `4.60 -> 3.80 -> 3.40`
+- Transfer lane activations: `0` across all 15 runs (no observed cross-domain contamination in this sweep)
+
+Interpretation:
+- Memory-assisted improvement across repeated sessions is demonstrated.
+- Auto transfer policy is currently conservative/safe in this benchmark (no transfer hints injected).
+
+## Still Not Done
+1. Task-cluster inference and persistence.
+- `domain/task` scoped memory is live, but automatic task-cluster keys are not yet stored/used.
+
+2. Dedicated mixed-protocol benchmark script/report.
+- Mixed protocol has been run sequentially, but there is no single-command runner that emits a unified report artifact for this exact 5-phase sweep.
+
+3. Transfer-pressure benchmark where strict matches are sparse.
+- Current results show safe behavior (no contamination), but not strong positive transfer utilization yet.
+
+4. FL Studio / computer-use integration.
+- Deferred to Phase 2 and not implemented in active code.
 
 ## Phase 2: FL Studio / Computer-Use Integration (Deferred)
 Status:
