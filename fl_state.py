@@ -99,10 +99,15 @@ def _resolve_reference_images() -> list[Path]:
     if env_path:
         p = Path(env_path).expanduser()
         if p.exists():
-            out.append(p)
+            # Explicit user-provided reference is authoritative for demo runs.
+            # Avoid mixing unrelated fallback screenshots when this is set.
+            return [p]
     for p in _contract_reference_images():
         if p not in out:
             out.append(p)
+    if out:
+        # Contract references are intentionally curated; prefer them over generic fallback.
+        return out[:3]
     downloads_dir = Path.home() / "Downloads"
     if downloads_dir.exists():
         candidates = sorted(
