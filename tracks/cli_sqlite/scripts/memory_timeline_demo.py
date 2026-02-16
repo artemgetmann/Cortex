@@ -142,6 +142,19 @@ def _as_str_list(value: Any) -> list[str]:
     return rows
 
 
+def _as_str_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    rows: dict[str, str] = {}
+    for key, raw_value in value.items():
+        k = str(key).strip()
+        v = str(raw_value).strip()
+        if not k or not v:
+            continue
+        rows[k] = v
+    return rows
+
+
 def _try_parse_json_dict(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -198,6 +211,8 @@ def _collect_injected_step_payload(
 ) -> dict[str, Any]:
     hints: list[str] = []
     lesson_ids: list[str] = []
+    hint_lanes: dict[str, str] = {}
+    lesson_lanes: dict[str, str] = {}
 
     err = str(row.get("error", "") or "")
     for hint in _extract_hints(err, max_hints=max_hints):
@@ -216,6 +231,7 @@ def _collect_injected_step_payload(
                 continue
             if not isinstance(item, dict):
                 continue
+            lane = str(_first_present(item, ("lane", "source_lane", "retrieval_lane")) or "").strip()
             text = str(
                 _first_present(
                     item,
@@ -225,18 +241,32 @@ def _collect_injected_step_payload(
             ).strip()
             if text and text not in hints and len(hints) < max_hints:
                 hints.append(text)
+            if text and lane and text not in hint_lanes:
+                hint_lanes[text] = lane
             lesson_id = str(_first_present(item, ("lesson_id", "id")) or "").strip()
             if lesson_id and lesson_id not in lesson_ids:
                 lesson_ids.append(lesson_id)
+            if lesson_id and lane and lesson_id not in lesson_lanes:
+                lesson_lanes[lesson_id] = lane
 
         for key in ("lesson_ids", "injected_lesson_ids", "v2_lesson_ids"):
             for lesson_id in _as_str_list(payload.get(key)):
                 if lesson_id not in lesson_ids:
                     lesson_ids.append(lesson_id)
+        for key in ("lesson_lanes", "injected_lesson_lanes", "lane_by_lesson_id"):
+            for lesson_id, lane in _as_str_dict(payload.get(key)).items():
+                if lesson_id not in lesson_lanes:
+                    lesson_lanes[lesson_id] = lane
+        for key in ("hint_lanes", "injected_hint_lanes", "lane_by_hint"):
+            for hint_text, lane in _as_str_dict(payload.get(key)).items():
+                if hint_text not in hint_lanes:
+                    hint_lanes[hint_text] = lane
 
     return {
         "hints": hints[:max_hints],
         "lesson_ids": lesson_ids,
+        "hint_lanes": hint_lanes,
+        "lesson_lanes": lesson_lanes,
     }
 
 
@@ -281,6 +311,12 @@ def _collect_retrieval_scores(
             normalized = {
                 "lesson_id": lesson_id,
                 "score": total,
+                "lane": str(
+                    _first_present(item_dict, ("lane", "source_lane", "retrieval_lane"))
+                    or _first_present(lesson_dict, ("lane", "source_lane"))
+                    or _first_present(score_dict, ("lane", "source_lane"))
+                    or ""
+                ).strip(),
                 "fingerprint_match": _to_float(_first_present(item_dict, ("fingerprint_match",)) or score_dict.get("fingerprint_match")),
                 "tag_overlap": _to_float(_first_present(item_dict, ("tag_overlap",)) or score_dict.get("tag_overlap")),
                 "text_similarity": _to_float(_first_present(item_dict, ("text_similarity",)) or score_dict.get("text_similarity")),
@@ -341,13 +377,28 @@ def _render_v2_observability_sections(
             row = injected_by_step[step]
             hints = _as_list(row.get("hints"))
             lesson_ids = _as_str_list(row.get("lesson_ids"))
+            hint_lanes = _as_str_dict(row.get("hint_lanes"))
+            lesson_lanes = _as_str_dict(row.get("lesson_lanes"))
+            lane_values = sorted({lane for lane in [*hint_lanes.values(), *lesson_lanes.values()] if lane})
             lines.append(
-                f"    step {step:02d}: hints={len(hints)} lesson_ids={len(lesson_ids)}"
+                "    step {step:02d}: hints={hints_count} lesson_ids={id_count}{lane_suffix}".format(
+                    step=step,
+                    hints_count=len(hints),
+                    id_count=len(lesson_ids),
+                    lane_suffix=(f" lanes={','.join(lane_values)}" if lane_values else ""),
+                )
             )
             if lesson_ids:
-                lines.append(f"      ids={','.join(lesson_ids)}")
+                lesson_tokens: list[str] = []
+                for lesson_id in lesson_ids:
+                    lane = lesson_lanes.get(lesson_id, "").strip()
+                    lesson_tokens.append(f"{lesson_id}({lane})" if lane else lesson_id)
+                lines.append(f"      ids={','.join(lesson_tokens)}")
             for hint in hints:
-                lines.append(f"      hint={_short(str(hint), max_chars=220)}")
+                hint_text = str(hint)
+                lane = hint_lanes.get(hint_text, "").strip()
+                lane_prefix = f"[{lane}] " if lane else ""
+                lines.append(f"      hint={lane_prefix}{_short(hint_text, max_chars=220)}")
 
     lines.append("  memory_v2_retrieval_score_breakdown:")
     if not score_by_step:
@@ -361,6 +412,9 @@ def _render_v2_observability_sections(
                 parts = [
                     f"total={score_text}",
                 ]
+                lane = str(score.get("lane", "") or "").strip()
+                if lane:
+                    parts.append(f"lane={lane}")
                 for key in ("fingerprint_match", "tag_overlap", "text_similarity", "reliability", "recency"):
                     value = score.get(key)
                     if isinstance(value, (int, float)):
@@ -372,7 +426,7 @@ def _render_v2_observability_sections(
 
 def _is_executor_tool(name: str) -> bool:
     lowered = str(name).strip().lower()
-    return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite"}
+    return lowered in {"run_gridtool", "run_fluxtool", "run_sqlite", "run_artic"}
 
 
 def _extract_attempt_text(tool_input: Any, *, tool_name: str) -> str:
@@ -546,15 +600,23 @@ def _render_session(
 
         injected = injected_by_step.get(step, {})
         hints = _as_str_list(injected.get("hints"))
+        hint_lanes = _as_str_dict(injected.get("hint_lanes"))
         if not hints:
             hints = _extract_hints(err, max_hints=max_hints_per_step)
         if hints:
             lines.append(f"    memory: injected_hints count={len(hints)}")
         lesson_ids = _as_str_list(injected.get("lesson_ids"))
+        lesson_lanes = _as_str_dict(injected.get("lesson_lanes"))
         if lesson_ids:
-            lines.append(f"    memory: injected_lesson_ids={','.join(lesson_ids)}")
+            lesson_tokens: list[str] = []
+            for lesson_id in lesson_ids:
+                lane = lesson_lanes.get(lesson_id, "").strip()
+                lesson_tokens.append(f"{lesson_id}({lane})" if lane else lesson_id)
+            lines.append(f"    memory: injected_lesson_ids={','.join(lesson_tokens)}")
         for hint in hints:
-            lines.append(f"    hint: {_short(hint, max_chars=220)}")
+            lane = hint_lanes.get(hint, "").strip()
+            lane_prefix = f"[{lane}] " if lane else ""
+            lines.append(f"    hint: {lane_prefix}{_short(hint, max_chars=220)}")
         if show_tool_output:
             output = str(row.get("output", "") or "").strip()
             if output:

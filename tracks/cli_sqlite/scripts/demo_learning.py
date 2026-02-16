@@ -40,7 +40,7 @@ from tracks.cli_sqlite.demo_display import (
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cortex CLI Learning Demo")
     ap.add_argument("--task-id", required=True)
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic"])
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=6)
     ap.add_argument("--start-session", type=int, default=10001)

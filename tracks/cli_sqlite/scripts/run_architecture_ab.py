@@ -157,7 +157,7 @@ def _run_agent_for_arm(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="A/B benchmark: architecture full vs simplified")
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic"])
     ap.add_argument("--task-id", required=True)
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=5)

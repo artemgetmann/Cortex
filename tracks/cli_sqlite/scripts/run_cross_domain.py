@@ -140,8 +140,8 @@ def _transfer_metrics(test_rows: list[dict]) -> dict[str, float | int]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cross-domain transfer experiment")
-    ap.add_argument("--train-domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool"])
-    ap.add_argument("--test-domain", default="fluxtool", choices=["sqlite", "gridtool", "fluxtool"])
+    ap.add_argument("--train-domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic"])
+    ap.add_argument("--test-domain", default="fluxtool", choices=["sqlite", "gridtool", "fluxtool", "artic"])
     ap.add_argument("--train-task-id", default="aggregate_report")
     ap.add_argument("--test-task-id", default="aggregate_report_holdout")
     ap.add_argument("--train-sessions", type=int, default=3)

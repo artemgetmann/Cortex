@@ -7,6 +7,11 @@ from typing import Sequence
 
 from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, load_lesson_records
 
+LANE_STRICT = "strict"
+LANE_TRANSFER = "transfer"
+DEFAULT_TRANSFER_MAX_RESULTS = 1
+DEFAULT_TRANSFER_SCORE_COEFFICIENT = 0.35
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
@@ -71,6 +76,7 @@ class RetrievalScore:
 class RetrievalMatch:
     lesson: LessonRecord
     score: RetrievalScore
+    lane: str = LANE_STRICT
 
 
 @dataclass(frozen=True)
@@ -177,17 +183,90 @@ def _select_with_guards(
     return selected, conflict_losers
 
 
-def retrieve_lessons(
+def _guard_counters(selected: Sequence[RetrievalMatch]) -> tuple[dict[int, int], dict[str, int]]:
+    """Build guard counters from an existing selection for lane-aware merge."""
+    per_session: dict[int, int] = {}
+    per_tag_bucket: dict[str, int] = {}
+    for match in selected:
+        lesson = match.lesson
+        source_session = lesson.source_session_ids[-1] if lesson.source_session_ids else 0
+        if source_session > 0:
+            per_session[source_session] = per_session.get(source_session, 0) + 1
+        bucket = lesson.tags[0] if lesson.tags else "generic"
+        per_tag_bucket[bucket] = per_tag_bucket.get(bucket, 0) + 1
+    return per_session, per_tag_bucket
+
+
+def _append_with_guards(
+    *,
+    selected: Sequence[RetrievalMatch],
+    ranked: Sequence[RetrievalMatch],
+    config: RetrievalConfig,
+    max_additional: int,
+) -> tuple[list[RetrievalMatch], list[str]]:
+    """
+    Append ranked candidates while honoring existing guard state.
+
+    Transfer lane uses this path so strict winners remain pinned: conflict
+    checks only reject challengers; they never replace already-selected rows.
+    """
+    if max_additional <= 0:
+        return list(selected), []
+
+    merged = list(selected)
+    conflict_losers: list[str] = []
+    seen_lesson_ids = {row.lesson.lesson_id for row in merged}
+    per_session, per_tag_bucket = _guard_counters(merged)
+    added = 0
+
+    for match in ranked:
+        if len(merged) >= config.max_results or added >= max_additional:
+            break
+        lesson = match.lesson
+        if lesson.lesson_id in seen_lesson_ids:
+            continue
+
+        source_session = lesson.source_session_ids[-1] if lesson.source_session_ids else 0
+        if source_session > 0 and per_session.get(source_session, 0) >= config.max_per_source_session:
+            continue
+
+        bucket = lesson.tags[0] if lesson.tags else "generic"
+        if per_tag_bucket.get(bucket, 0) >= config.max_per_tag_bucket:
+            continue
+
+        if any(
+            lesson.lesson_id in chosen.lesson.conflict_lesson_ids
+            or chosen.lesson.lesson_id in lesson.conflict_lesson_ids
+            for chosen in merged
+        ):
+            conflict_losers.append(lesson.lesson_id)
+            continue
+
+        merged.append(match)
+        seen_lesson_ids.add(lesson.lesson_id)
+        if source_session > 0:
+            per_session[source_session] = per_session.get(source_session, 0) + 1
+        per_tag_bucket[bucket] = per_tag_bucket.get(bucket, 0) + 1
+        added += 1
+
+    return merged, conflict_losers
+
+
+def _rank_lessons(
     *,
     records: Sequence[LessonRecord],
     query_text: str,
     query_fingerprint: str = "",
     query_tags: Sequence[str] = (),
-    config: RetrievalConfig | None = None,
-) -> tuple[list[RetrievalMatch], list[str]]:
+    lane: str = LANE_STRICT,
+    score_multiplier: float = 1.0,
+) -> list[RetrievalMatch]:
+    """Compute ranked retrieval rows before selection guards are applied."""
     active = [record for record in records if _is_active(record)]
     query_tag_set = {str(tag).strip() for tag in query_tags if str(tag).strip()}
+    weight = max(0.0, float(score_multiplier))
     ranked: list[RetrievalMatch] = []
+
     for lesson in active:
         score = _build_score(
             lesson=lesson,
@@ -195,9 +274,21 @@ def retrieve_lessons(
             query_tags=query_tag_set,
             query_text=query_text,
         )
-        if score.score <= 0:
+        weighted_total = score.score * weight
+        if weighted_total <= 0:
             continue
-        ranked.append(RetrievalMatch(lesson=lesson, score=score))
+        if weight != 1.0:
+            score = RetrievalScore(
+                lesson_id=score.lesson_id,
+                score=weighted_total,
+                fingerprint_match=score.fingerprint_match,
+                tag_overlap=score.tag_overlap,
+                text_similarity=score.text_similarity,
+                reliability=score.reliability,
+                recency=score.recency,
+            )
+        ranked.append(RetrievalMatch(lesson=lesson, score=score, lane=lane))
+
     ranked.sort(
         key=lambda row: (
             row.score.score,
@@ -205,6 +296,27 @@ def retrieve_lessons(
             row.lesson.updated_at,
         ),
         reverse=True,
+    )
+    return ranked
+
+
+def retrieve_lessons(
+    *,
+    records: Sequence[LessonRecord],
+    query_text: str,
+    query_fingerprint: str = "",
+    query_tags: Sequence[str] = (),
+    config: RetrievalConfig | None = None,
+    lane: str = LANE_STRICT,
+    score_multiplier: float = 1.0,
+) -> tuple[list[RetrievalMatch], list[str]]:
+    ranked = _rank_lessons(
+        records=records,
+        query_text=query_text,
+        query_fingerprint=query_fingerprint,
+        query_tags=query_tags,
+        lane=lane,
+        score_multiplier=score_multiplier,
     )
     effective_config = config or RetrievalConfig()
     return _select_with_guards(ranked=ranked, config=effective_config)
@@ -243,6 +355,9 @@ def retrieve_on_error(
     query_tags: Sequence[str] = (),
     max_results: int = 3,
     include_domainless: bool = False,
+    enable_transfer: bool = False,
+    transfer_max_results: int = DEFAULT_TRANSFER_MAX_RESULTS,
+    transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """
     On-error retrieval prioritizing exact fingerprint matches.
@@ -254,29 +369,71 @@ def retrieve_on_error(
     records = load_lesson_records(path)
     normalized_domain = str(domain).strip().lower()
     normalized_task = str(task_id).strip()
-    scoped: list[LessonRecord] = []
+    strict_scoped: list[LessonRecord] = []
+    transfer_scoped: list[LessonRecord] = []
+
+    # Two-lane retrieval:
+    # - strict lane: current domain/task safety constraints (always primary)
+    # - transfer lane: cross-domain pool used only for small backfill quota
+    #                 after strict selection and with a score down-weight.
     for row in records:
         row_domain = str(row.domain).strip().lower()
         domain_ok = row_domain == normalized_domain
         if include_domainless and not row_domain:
             domain_ok = True
-        if not domain_ok:
+
+        if domain_ok:
+            # Optional task narrowing keeps broad domain memory available while
+            # preferring exact task matches when task id is known.
+            if normalized_task and row.task_id and row.task_id != normalized_task:
+                continue
+            strict_scoped.append(row)
             continue
-        # Optional task narrowing keeps broad domain memory available while
-        # preferring exact task matches when task id is known.
-        if normalized_task and row.task_id and row.task_id != normalized_task:
+
+        if not enable_transfer:
             continue
-        scoped.append(row)
-    return retrieve_lessons(
-        records=scoped,
+        # Transfer lane only considers explicit cross-domain lessons.
+        if not row_domain or row_domain == normalized_domain:
+            continue
+        transfer_scoped.append(row)
+
+    strict_config = RetrievalConfig(max_results=max_results)
+    strict_ranked = _rank_lessons(
+        records=strict_scoped,
         query_text=error_text,
         query_fingerprint=fingerprint,
         query_tags=query_tags,
-        config=RetrievalConfig(max_results=max_results),
+        lane=LANE_STRICT,
     )
+    strict_matches, strict_losers = _select_with_guards(ranked=strict_ranked, config=strict_config)
+
+    remaining_slots = max(0, int(max_results) - len(strict_matches))
+    transfer_quota = min(max(0, int(transfer_max_results)), remaining_slots)
+    if not enable_transfer or transfer_quota <= 0 or not transfer_scoped:
+        return strict_matches, strict_losers
+
+    transfer_ranked = _rank_lessons(
+        records=transfer_scoped,
+        query_text=error_text,
+        query_fingerprint=fingerprint,
+        query_tags=query_tags,
+        lane=LANE_TRANSFER,
+        score_multiplier=transfer_score_weight,
+    )
+    merged_matches, transfer_losers = _append_with_guards(
+        selected=strict_matches,
+        ranked=transfer_ranked,
+        config=strict_config,
+        max_additional=transfer_quota,
+    )
+    return merged_matches, strict_losers + transfer_losers
 
 
 __all__ = [
+    "DEFAULT_TRANSFER_MAX_RESULTS",
+    "DEFAULT_TRANSFER_SCORE_COEFFICIENT",
+    "LANE_STRICT",
+    "LANE_TRANSFER",
     "RetrievalConfig",
     "RetrievalMatch",
     "RetrievalScore",

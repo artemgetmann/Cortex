@@ -17,7 +17,12 @@ from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_ju
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
-from tracks.cli_sqlite.lesson_retrieval_v2 import retrieve_on_error, retrieve_pre_run
+from tracks.cli_sqlite.lesson_retrieval_v2 import (
+    DEFAULT_TRANSFER_MAX_RESULTS,
+    DEFAULT_TRANSFER_SCORE_COEFFICIENT,
+    retrieve_on_error,
+    retrieve_pre_run,
+)
 from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, migrate_legacy_lessons, upsert_lesson_records
 from tracks.cli_sqlite.learning_cli import (
     find_lessons_for_error,
@@ -70,6 +75,8 @@ LEARNING_MODES = ("strict", "legacy")
 DEFAULT_LEARNING_MODE = "legacy"
 ARCHITECTURE_MODES = ("full", "simplified")
 DEFAULT_ARCHITECTURE_MODE = "full"
+DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
+DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 
 
 @dataclass
@@ -361,7 +368,10 @@ def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_
             semi_helpful_errors=semi_helpful_errors,
             mixed_errors=False,
         )
-    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool")
+    if domain == "artic":
+        from tracks.cli_sqlite.domains.artic_adapter import ArticAdapter
+        return ArticAdapter()
+    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool, artic")
 
 
 def _resolve_adapter_with_mode(
@@ -586,6 +596,9 @@ def run_cli_agent(
     cryptic_errors: bool = False,
     semi_helpful_errors: bool = False,
     mixed_errors: bool = False,
+    enable_transfer_retrieval: bool = False,
+    transfer_retrieval_max_results: int = DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
+    transfer_retrieval_score_weight: float = DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     learning_mode = _normalize_learning_mode(learning_mode)
@@ -593,6 +606,8 @@ def run_cli_agent(
     # Local retrieval provider is intentionally lightweight and deterministic.
     # Strict mode uses it for critic context; legacy ignores it.
     knowledge_provider = LocalDocsKnowledgeProvider()
+    transfer_retrieval_max_results = max(0, int(transfer_retrieval_max_results))
+    transfer_retrieval_score_weight = max(0.0, float(transfer_retrieval_score_weight))
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     adapter = _resolve_adapter_with_mode(
         domain,
@@ -740,6 +755,10 @@ def run_cli_agent(
         "v2_lesson_activations": 0,
         "v2_error_events": 0,
         "v2_retrieval_help_ratio": 0.0,
+        "v2_transfer_retrieval_enabled": bool(enable_transfer_retrieval),
+        "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
+        "v2_transfer_retrieval_score_weight": transfer_retrieval_score_weight,
+        "v2_transfer_lane_activations": 0,
         "v2_promoted": 0,
         "v2_suppressed": 0,
         "v2_fingerprint_recurrence_before": 0,
@@ -816,6 +835,7 @@ def run_cli_agent(
             tool_input = block.get("input", {})
             tool_input = tool_input if isinstance(tool_input, dict) else {}
             metrics["tool_actions"] += 1
+            memory_v2_payload: dict[str, Any] = {}
 
             if canonical_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
@@ -953,19 +973,62 @@ def run_cli_agent(
                     query_tags=error_tags,
                     max_results=2,
                     include_domainless=False,
+                    enable_transfer=enable_transfer_retrieval,
+                    transfer_max_results=transfer_retrieval_max_results,
+                    transfer_score_weight=transfer_retrieval_score_weight,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
                 if v2_matches:
+                    injected_lessons: list[dict[str, Any]] = []
+                    retrieval_scores: list[dict[str, Any]] = []
+                    lesson_lanes: dict[str, str] = {}
+                    hint_lanes: dict[str, str] = {}
                     for match in v2_matches:
-                        v2_hints.append(match.lesson.rule_text)
+                        rule_text = str(match.lesson.rule_text)
+                        lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
+                        lesson_id = str(match.lesson.lesson_id)
+                        v2_hints.append(rule_text)
+                        injected_lessons.append(
+                            {
+                                "lesson_id": lesson_id,
+                                "rule_text": rule_text,
+                                "lane": lane,
+                            }
+                        )
+                        retrieval_scores.append(
+                            {
+                                "lesson_id": lesson_id,
+                                "lane": lane,
+                                "lesson": {"lesson_id": lesson_id},
+                                "score": {
+                                    "score": float(match.score.score),
+                                    "fingerprint_match": float(match.score.fingerprint_match),
+                                    "tag_overlap": float(match.score.tag_overlap),
+                                    "text_similarity": float(match.score.text_similarity),
+                                    "reliability": float(match.score.reliability),
+                                    "recency": float(match.score.recency),
+                                },
+                            }
+                        )
+                        lesson_lanes[lesson_id] = lane
+                        hint_lanes[rule_text] = lane
+                        if lane == "transfer":
+                            metrics["v2_transfer_lane_activations"] += 1
                     lesson_activation_records.append(
                         {
                             "step": step,
                             "fingerprint": error_fingerprint,
                             "lesson_ids": [match.lesson.lesson_id for match in v2_matches],
+                            "lesson_lanes": lesson_lanes,
                         }
                     )
+                    memory_v2_payload = {
+                        "on_error_injected_lessons": injected_lessons,
+                        "injected_lesson_lanes": lesson_lanes,
+                        "injected_hint_lanes": hint_lanes,
+                        "retrieval_scores": retrieval_scores,
+                    }
                     metrics["lesson_activations"] += len(v2_hints)
                     metrics["v2_lesson_activations"] += len(v2_hints)
 
@@ -995,17 +1058,17 @@ def run_cli_agent(
             if result.is_error():
                 metrics["tool_errors"] += 1
 
-            write_event(
-                paths.events_path,
-                {
-                    "step": step,
-                    "tool": canonical_name,
-                    "tool_input": tool_input,
-                    "ok": not result.is_error(),
-                    "error": result.error,
-                    "output": result.output,
-                },
-            )
+            event_payload = {
+                "step": step,
+                "tool": canonical_name,
+                "tool_input": tool_input,
+                "ok": not result.is_error(),
+                "error": result.error,
+                "output": result.output,
+            }
+            if memory_v2_payload:
+                event_payload["memory_v2"] = memory_v2_payload
+            write_event(paths.events_path, event_payload)
 
             if verbose:
                 print(

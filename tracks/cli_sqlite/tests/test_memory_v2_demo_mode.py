@@ -201,6 +201,38 @@ def test_run_cli_agent_script_forwards_demo_mode_flag(monkeypatch: pytest.Monkey
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_forwards_transfer_retrieval_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--enable-transfer-retrieval",
+            "--transfer-retrieval-max-results",
+            "1",
+            "--transfer-retrieval-score-weight",
+            "0.45",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["enable_transfer_retrieval"] is True
+    assert captured["transfer_retrieval_max_results"] == 1
+    assert captured["transfer_retrieval_score_weight"] == 0.45
+    capsys.readouterr()
+
+
 def test_run_memory_stability_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, Any]] = []
 
@@ -269,10 +301,13 @@ def test_memory_timeline_labels_preloaded_vs_injected_and_scores(tmp_path: Path)
                         ),
                         "output": "",
                         "memory_v2": {
-                            "injected_lessons": [{"lesson_id": "lsn_inj_1", "rule_text": "Use arrow syntax"}],
+                            "injected_lessons": [{"lesson_id": "lsn_inj_1", "rule_text": "Use arrow syntax", "lane": "strict"}],
+                            "injected_lesson_lanes": {"lsn_inj_1": "strict"},
+                            "injected_hint_lanes": {"Use arrow syntax": "strict"},
                             "retrieval_scores": [
                                 {
                                     "lesson": {"lesson_id": "lsn_inj_1"},
+                                    "lane": "strict",
                                     "score": {
                                         "score": 0.91,
                                         "fingerprint_match": 1.0,
@@ -309,10 +344,11 @@ def test_memory_timeline_labels_preloaded_vs_injected_and_scores(tmp_path: Path)
     assert "count=2" in rendered
     assert "lesson_ids=lsn_pre_1,lsn_pre_2" in rendered
     assert "memory_v2_on_error_injected_lessons:" in rendered
-    assert "step 01: hints=1 lesson_ids=1" in rendered
-    assert "ids=lsn_inj_1" in rendered
+    assert "step 01: hints=1 lesson_ids=1 lanes=strict" in rendered
+    assert "ids=lsn_inj_1(strict)" in rendered
+    assert "hint=[strict] Use arrow syntax" in rendered
     assert "memory_v2_retrieval_score_breakdown:" in rendered
-    assert "lesson=lsn_inj_1 total=0.910" in rendered
+    assert "lesson=lsn_inj_1 total=0.910 lane=strict" in rendered
 
 
 def test_memory_timeline_handles_missing_v2_fields(tmp_path: Path) -> None:

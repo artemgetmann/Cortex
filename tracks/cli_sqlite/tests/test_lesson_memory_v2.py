@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes, compute_utility
-from tracks.cli_sqlite.lesson_retrieval_v2 import retrieve_on_error, retrieve_pre_run
+from tracks.cli_sqlite.lesson_retrieval_v2 import (
+    LANE_STRICT,
+    LANE_TRANSFER,
+    retrieve_on_error,
+    retrieve_pre_run,
+)
 from tracks.cli_sqlite.lesson_store_v2 import (
     LessonRecord,
     archive_lessons,
@@ -208,6 +213,151 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertIn(fluxtool.lesson_id, ids)
             self.assertNotIn(gridtool.lesson_id, ids)
             self.assertNotIn(domainless.lesson_id, ids)
+            self.assertTrue(all(match.lane == LANE_STRICT for match in matches))
+
+    def test_transfer_lane_adds_limited_cross_domain_hint_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            strict_local = _record(
+                session_id=1901,
+                rule_text='SORT direction is "down" not "desc".',
+                fingerprints=("fp_sort",),
+                tags=("syntax_structure",),
+                reliability=0.4,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            transfer_a = _record(
+                session_id=1902,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_sort",),
+                tags=("path_quote",),
+                reliability=0.9,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            transfer_b = _record(
+                session_id=1903,
+                rule_text="Always include ORDER BY for stable output.",
+                fingerprints=("fp_sort",),
+                tags=("ordering",),
+                reliability=0.85,
+                domain="sqlite",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [strict_local, transfer_a, transfer_b])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR at line 3: SORT direction must be up/down",
+                fingerprint="fp_sort",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("syntax_structure",),
+                max_results=3,
+                enable_transfer=True,
+                transfer_max_results=1,
+                transfer_score_weight=0.35,
+            )
+            lanes = [match.lane for match in matches]
+            self.assertIn(LANE_STRICT, lanes)
+            self.assertEqual(lanes.count(LANE_TRANSFER), 1)
+            self.assertLessEqual(len(matches), 2)
+
+    def test_transfer_lane_weighting_scales_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            transfer = _record(
+                session_id=1911,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=0.9,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [transfer])
+
+            weighted_full, _ = retrieve_on_error(
+                path=path,
+                error_text="IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=1,
+                enable_transfer=True,
+                transfer_max_results=1,
+                transfer_score_weight=1.0,
+            )
+            weighted_down, _ = retrieve_on_error(
+                path=path,
+                error_text="IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=1,
+                enable_transfer=True,
+                transfer_max_results=1,
+                transfer_score_weight=0.2,
+            )
+            self.assertTrue(weighted_full)
+            self.assertTrue(weighted_down)
+            self.assertEqual(weighted_full[0].lane, LANE_TRANSFER)
+            self.assertEqual(weighted_down[0].lane, LANE_TRANSFER)
+            self.assertAlmostEqual(
+                weighted_down[0].score.score,
+                weighted_full[0].score.score * 0.2,
+                places=6,
+            )
+
+    def test_transfer_lane_excludes_suppressed_and_archived(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            active = _record(
+                session_id=1921,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=0.6,
+                domain="gridtool",
+            )
+            suppressed = _record(
+                session_id=1922,
+                rule_text="Do not quote import paths.",
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=1.0,
+                domain="gridtool",
+                status="suppressed",
+            )
+            archived = _record(
+                session_id=1923,
+                rule_text="Skip all path validation.",
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=1.0,
+                domain="sqlite",
+                status="archived",
+            )
+            upsert_lesson_records(path, [active, suppressed, archived])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=2,
+                enable_transfer=True,
+                transfer_max_results=2,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertIn(active.lesson_id, ids)
+            self.assertNotIn(suppressed.lesson_id, ids)
+            self.assertNotIn(archived.lesson_id, ids)
 
 
 class PromotionV2Tests(unittest.TestCase):
