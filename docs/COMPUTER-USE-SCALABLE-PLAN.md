@@ -22,7 +22,8 @@ Recent run evidence showed a false positive:
 Conclusion:
 
 - LLM vision extraction is useful for planning,
-- but cannot be pass/fail authority until calibrated against deterministic checks.
+- but cannot be pass/fail authority by itself.
+- FL loop needs a separate judge path (like `tracks/cli_sqlite`) for end-of-run authority.
 
 ## Non-Negotiables
 
@@ -65,7 +66,7 @@ Guardrails:
 Hybrid verdict:
 
 - deterministic contract checks where objective signals exist,
-- LLM judge fallback for fuzzy checks,
+- separate LLM visual judge for fuzzy visual checks,
 - disagreement policy: mark uncertain/fail for promotion purposes.
 
 ### 4) Memory Layer
@@ -93,15 +94,25 @@ Contract-driven check for this task:
 
 This is a contract implementation, not a one-off action script.
 
-### C) Referee disagreement handling
+### C) Restore separate visual judge in FL loop
 
-If deterministic verifier and LLM visual extractor disagree:
+Add a dedicated end-of-run visual judge (independent of executor policy and independent of `extract_fl_state`).
+
+Judge input must include:
+
+- final run screenshot,
+- user-provided reference screenshot(s),
+- explicit rubric for success/failure.
+
+### D) Referee disagreement handling
+
+If deterministic verifier and visual judge disagree:
 
 - set verdict to uncertain/fail for promotion,
 - emit disagreement reason,
 - generate corrective lesson candidate.
 
-### D) Retrieval hygiene
+### E) Retrieval hygiene
 
 - prioritize lessons with positive utility,
 - downrank/suppress stale permission-noise lessons,
@@ -131,9 +142,9 @@ Show this sequence visibly:
 
 1. No false-positive pass when screenshot state is wrong.
 2. 10-step FL run shows reduced inspect-loop waste (governor evidence in trace).
-3. At least one run reaches correct pattern with referee agreement.
+3. At least one run reaches correct pattern with deterministic + visual judge agreement.
 4. Memory retrieval avoids old permission-noise contamination.
-5. Timeline view clearly shows: action -> state -> hint -> referee verdict.
+5. Timeline view clearly shows: action -> state -> hint -> deterministic verdict -> visual judge verdict -> final verdict.
 
 ## Open Risks
 
@@ -145,9 +156,10 @@ Show this sequence visibly:
 ## Next Implementation Order
 
 1. Referee disagreement mode + deterministic kick verifier.
-2. Promote `extract_fl_state` to planning-only confidence tool.
-3. Expand timeline output with state/referee disagreement markers.
-4. Run 5x ten-step consistency benchmark with reproducible report.
+2. Add separate visual judge path with reference-screenshot comparison.
+3. Keep `extract_fl_state` planning-only (not scoring authority).
+4. Expand timeline output with deterministic/visual/final verdict markers.
+5. Run 5x ten-step consistency benchmark with reproducible report.
 
 ## Implementation Checklist (Logic-First)
 
@@ -156,7 +168,7 @@ Show this sequence visibly:
 What:
 
 - Add a final verdict state: `pass | fail | uncertain`.
-- If deterministic verifier and LLM visual extractor disagree, return `uncertain` (treated as fail for promotion).
+- If deterministic verifier and visual judge disagree, return `uncertain` (treated as fail for promotion).
 
 Why this helps:
 
@@ -166,7 +178,7 @@ Why this helps:
 How (runtime logic):
 
 1. Compute deterministic result from contract.
-2. Compute LLM extractor result from screenshot state.
+2. Compute visual judge result from final screenshot + reference screenshot + rubric.
 3. If both `pass`, final = `pass`.
 4. If both `fail`, final = `fail`.
 5. If mismatch, final = `uncertain`, reason = `judge_disagreement`.
@@ -206,7 +218,7 @@ How (runtime logic):
 
 1. Executor requests `extract_fl_state` when uncertain.
 2. Action planning can use this output.
-3. Final scoring ignores it unless it agrees with deterministic verifier.
+3. Final scoring comes from deterministic + visual judge, not extractor self-claims.
 
 ### 4) Memory gating by trusted outcome
 
@@ -234,6 +246,7 @@ What:
   - action,
   - extracted state summary,
   - deterministic referee snapshot,
+  - visual judge snapshot,
   - disagreement marker,
   - final verdict.
 
@@ -287,8 +300,18 @@ Defer:
 ### Success definition for this 4-hour window
 
 - Zero false-positive pass on wrong FL screenshot.
-- At least one valid 10-step pass with referee agreement.
+- At least one valid 10-step pass with deterministic + visual judge agreement.
 - Clear demo timeline proving why a run passed or failed.
+
+## Judge Model Decision (Current)
+
+- `extract_fl_state` currently uses `model_decider` (`claude-haiku-4-5`) in `agent.py`.
+- `model_heavy` is `claude-opus-4-6`.
+- Side-by-side A/B on the same FL screenshot showed mixed behavior:
+  - Haiku matched `1/5/9/13` in one case,
+  - Opus over-detected active steps in the same case.
+- Decision: do not rely on a single extractor model for pass/fail.
+- Plan: keep extractor advisory and restore dedicated visual judge path with reference-image comparison.
 
 ## External Patterns (Web Research)
 
