@@ -121,6 +121,11 @@ def llm_judge(
         "- Do NOT give generic reasons like 'good job' or 'needs improvement'.\n"
         "- Judge based on the TASK REQUIREMENTS, not on style or approach.\n"
         "- If the final state shows correct results, the task passes regardless of how many errors occurred along the way.\n"
+        "\n"
+        "Visual evidence guidance:\n"
+        "- UI-heavy demos (FL Studio/computer-use) include explicit zoom and screenshot expectations. Track every zoom action and screenshot entry in the event log and cite those that align with the expected success image before you score.\n"
+        "- When the task or final state references a `success_image`, `failure_image`, or named zoom region, validate that the recorded image metadata matches the claimed outcome, and explain how it satisfies or violates the success criteria. Treat missing or mismatched images as concrete failures.\n"
+        "- Deduct score or mark failure if the agent skips the required zoom/screenshot checkpoint yet still claims success. Mention repeated zooms without decisive clicks as evidence of indecision, or missing screenshots as missing evidence.\n"
     )
 
     user = (

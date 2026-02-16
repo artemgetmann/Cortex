@@ -14,6 +14,8 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_ARCHITECTURE_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LEARNING_MODE,
+    DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
+    DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
     LEARNING_MODES,
     run_cli_agent,
 )
@@ -25,7 +27,7 @@ def main() -> int:
     ap.add_argument("--task", default="")
     ap.add_argument("--session", required=True, type=int)
     ap.add_argument("--max-steps", type=int, default=12)
-    ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool"],
+    ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"],
                      help="Domain adapter to use (default: sqlite)")
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--architecture-mode", default=DEFAULT_ARCHITECTURE_MODE, choices=ARCHITECTURE_MODES)
@@ -39,6 +41,11 @@ def main() -> int:
     ap.add_argument("--require-skill-read", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
     ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument(
+        "--memory-v2-demo-mode",
+        action="store_true",
+        help="Suppress legacy posttask_hook/promotion_gate skill patching while keeping Memory V2 active",
+    )
     ap.add_argument("--opaque-tools", action="store_true", help="Use opaque tool names to test skill-reading behavior")
     ap.add_argument("--bootstrap", action="store_true",
                      help="Bootstrap mode: no skill docs, agent learns from scratch via lessons only")
@@ -48,6 +55,24 @@ def main() -> int:
                      help="Semi-helpful error mode: hint at fixes without full syntax")
     ap.add_argument("--mixed-errors", action="store_true",
                      help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
+    ap.add_argument(
+        "--enable-transfer-retrieval",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable cross-domain transfer lane for on-error Memory V2 retrieval",
+    )
+    ap.add_argument(
+        "--transfer-retrieval-max-results",
+        type=int,
+        default=DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
+        help="Maximum transfer-lane hints per failed step",
+    )
+    ap.add_argument(
+        "--transfer-retrieval-score-weight",
+        type=float,
+        default=DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
+        help="Score multiplier applied to transfer-lane candidates",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -66,6 +91,7 @@ def main() -> int:
         model_judge=args.model_judge.strip() if args.model_judge else None,
         posttask_mode=args.posttask_mode,
         posttask_learn=not args.no_posttask_learn,
+        memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
         verbose=args.verbose,
         auto_escalate_critic=bool(args.auto_escalate_critic),
         escalation_score_threshold=args.escalation_score_threshold,
@@ -76,6 +102,9 @@ def main() -> int:
         cryptic_errors=bool(args.cryptic_errors),
         semi_helpful_errors=bool(args.semi_helpful_errors),
         mixed_errors=bool(args.mixed_errors),
+        enable_transfer_retrieval=bool(args.enable_transfer_retrieval),
+        transfer_retrieval_max_results=max(0, int(args.transfer_retrieval_max_results)),
+        transfer_retrieval_score_weight=max(0.0, float(args.transfer_retrieval_score_weight)),
     )
     print(json_dump(result.metrics))
     return 0

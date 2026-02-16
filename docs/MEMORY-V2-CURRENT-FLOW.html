@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory V2 Current Flow</title>
+<style>
+  :root {
+    --bg: #0b0f16;
+    --panel: #121826;
+    --panel-2: #1b2334;
+    --text: #e8ecf5;
+    --muted: #9ea9bf;
+    --border: #2a364f;
+    --accent: #6ee7b7;
+    --accent-2: #60a5fa;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --sans: Inter, "DM Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at 20% 0%, #13203a 0%, var(--bg) 45%);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 28px 20px 44px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 34px;
+    font-family: var(--mono);
+  }
+  .sub {
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: #111827;
+    color: var(--muted);
+    padding: 6px 10px;
+    border-radius: 999px;
+  }
+  section {
+    margin-top: 20px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  h2 {
+    margin: 0 0 10px;
+    font-size: 18px;
+    font-family: var(--mono);
+  }
+  p {
+    margin: 0 0 10px;
+    color: var(--muted);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 12px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-family: var(--mono);
+    color: var(--accent);
+  }
+  .card ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dot.det { background: var(--accent); }
+  .dot.llm { background: #c084fc; }
+  .dot.store { background: var(--accent-2); }
+  .dot.fail { background: var(--danger); }
+  .dot.guard { background: var(--warn); }
+  .svg-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #0d1320;
+  }
+  .notes {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  code { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Memory V2 Current Flow</h1>
+  <div class="sub">
+    Runtime map for <code>tracks/cli_sqlite/agent_cli.py</code> as currently implemented on branch <code>exp/memory-v2-agnostic</code>.
+  </div>
+
+  <div class="tag-row">
+    <span class="tag">executor + referee</span>
+    <span class="tag">universal failure capture</span>
+    <span class="tag">strict retrieval lane default</span>
+    <span class="tag">optional transfer lane</span>
+    <span class="tag">candidate->promoted/suppressed lifecycle</span>
+  </div>
+
+  <section>
+    <h2>Runtime Blocks</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Prompt Build + Pre-Run Memory</h3>
+        <ul>
+          <li>load task text + adapter</li>
+          <li>migrate legacy lessons -> V2 store</li>
+          <li><code>retrieve_pre_run(...)</code> for initial lesson context</li>
+          <li>build system prompt and tool schema list</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Step Loop</h3>
+        <ul>
+          <li>LLM emits <code>tool_use</code></li>
+          <li>schema-based <code>validate_tool_input(...)</code></li>
+          <li>execute adapter tool when valid</li>
+          <li>write per-step events to JSONL</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Failure Path</h3>
+        <ul>
+          <li>build fingerprint + generic tags</li>
+          <li>emit channels: hard/constraint/progress/efficiency</li>
+          <li><code>retrieve_on_error(...)</code> strict first, transfer optional</li>
+          <li>inject top hints into next model context</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Reflection Trigger</h3>
+        <ul>
+          <li>triggered on repeated fingerprint</li>
+          <li>or after hard-failure threshold</li>
+          <li>queues forced diagnosis prompt before next step</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Referee</h3>
+        <ul>
+          <li>deterministic evaluator first if contract exists</li>
+          <li>LLM judge fallback when needed</li>
+          <li>judge-primary when no contract exists</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Learning + Lifecycle</h3>
+        <ul>
+          <li>executor self-reflection generates V2 candidates</li>
+          <li>upsert/dedup/conflict-link in <code>lessons_v2.jsonl</code></li>
+          <li>apply outcomes -> promote/suppress decisions</li>
+          <li>write metrics + counters for observability</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>End-to-End Sequence</h2>
+    <div class="legend">
+      <span><span class="dot det"></span>Deterministic</span>
+      <span><span class="dot llm"></span>Model-driven</span>
+      <span><span class="dot store"></span>Memory store</span>
+      <span><span class="dot fail"></span>Failure branch</span>
+      <span><span class="dot guard"></span>Guard/Policy</span>
+    </div>
+    <div class="svg-wrap">
+      <svg viewBox="0 0 1520 980" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, monospace">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#93a5c6"/>
+          </marker>
+          <marker id="arrowFail" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#f87171"/>
+          </marker>
+        </defs>
+
+        <rect x="0" y="0" width="1520" height="980" fill="#0d1320"/>
+
+        <rect x="60" y="40" width="230" height="70" rx="8" fill="#13243b" stroke="#6ee7b7"/>
+        <text x="175" y="72" text-anchor="middle" fill="#6ee7b7" font-size="14" font-weight="600">Start Run</text>
+        <text x="175" y="92" text-anchor="middle" fill="#9ea9bf" font-size="11">task_id + domain + config</text>
+
+        <rect x="360" y="40" width="280" height="70" rx="8" fill="#142033" stroke="#6ee7b7"/>
+        <text x="500" y="70" text-anchor="middle" fill="#6ee7b7" font-size="13">Prepare Prompt + Tools</text>
+        <text x="500" y="90" text-anchor="middle" fill="#9ea9bf" font-size="11">adapter, system prompt, schemas</text>
+
+        <rect x="720" y="40" width="320" height="70" rx="8" fill="#172743" stroke="#60a5fa"/>
+        <text x="880" y="70" text-anchor="middle" fill="#60a5fa" font-size="13">Pre-Run Retrieval</text>
+        <text x="880" y="90" text-anchor="middle" fill="#9ea9bf" font-size="11">retrieve_pre_run + lesson preload IDs</text>
+
+        <line x1="290" y1="75" x2="360" y2="75" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+        <line x1="640" y1="75" x2="720" y2="75" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+
+        <rect x="1160" y="30" width="300" height="100" rx="8" fill="#13243b" stroke="#fbbf24"/>
+        <text x="1310" y="58" text-anchor="middle" fill="#fbbf24" font-size="13">Tool Input Guard</text>
+        <text x="1310" y="80" text-anchor="middle" fill="#9ea9bf" font-size="11">validate_tool_input(tool schema)</text>
+        <text x="1310" y="100" text-anchor="middle" fill="#9ea9bf" font-size="11">increments tool_validation_errors</text>
+
+        <rect x="140" y="200" width="270" height="90" rx="8" fill="#1a1f34" stroke="#c084fc"/>
+        <text x="275" y="232" text-anchor="middle" fill="#c084fc" font-size="13">Executor Model Turn</text>
+        <text x="275" y="252" text-anchor="middle" fill="#9ea9bf" font-size="11">messages + tools -> tool_use blocks</text>
+        <text x="275" y="272" text-anchor="middle" fill="#9ea9bf" font-size="11">optional queued reflection prompt</text>
+
+        <rect x="500" y="200" width="270" height="90" rx="8" fill="#162338" stroke="#6ee7b7"/>
+        <text x="635" y="232" text-anchor="middle" fill="#6ee7b7" font-size="13">Execute Tool</text>
+        <text x="635" y="252" text-anchor="middle" fill="#9ea9bf" font-size="11">read_skill / show_fixture / run_* adapter</text>
+        <text x="635" y="272" text-anchor="middle" fill="#9ea9bf" font-size="11">append tool_result and event row</text>
+
+        <rect x="860" y="200" width="360" height="110" rx="8" fill="#31161c" stroke="#f87171"/>
+        <text x="1040" y="232" text-anchor="middle" fill="#f87171" font-size="13">If Executor Tool Failed</text>
+        <text x="1040" y="252" text-anchor="middle" fill="#9ea9bf" font-size="11">build fingerprint + tags (error_capture.py)</text>
+        <text x="1040" y="272" text-anchor="middle" fill="#9ea9bf" font-size="11">emit ErrorEvent channels + memory_events.jsonl</text>
+        <text x="1040" y="292" text-anchor="middle" fill="#9ea9bf" font-size="11">retrieve_on_error strict lane first, transfer optional</text>
+
+        <line x1="410" y1="245" x2="500" y2="245" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+        <line x1="770" y1="245" x2="860" y2="245" stroke="#f87171" stroke-width="2" marker-end="url(#arrowFail)"/>
+        <line x1="1040" y1="310" x2="1040" y2="350" stroke="#f87171" stroke-width="2" marker-end="url(#arrowFail)"/>
+
+        <rect x="860" y="350" width="360" height="110" rx="8" fill="#1b2c49" stroke="#60a5fa"/>
+        <text x="1040" y="382" text-anchor="middle" fill="#60a5fa" font-size="13">Hint Injection + Metrics</text>
+        <text x="1040" y="402" text-anchor="middle" fill="#9ea9bf" font-size="11">append top hints to error text</text>
+        <text x="1040" y="422" text-anchor="middle" fill="#9ea9bf" font-size="11">record lanes, scores, activations, help ratio</text>
+        <text x="1040" y="442" text-anchor="middle" fill="#9ea9bf" font-size="11">queue reflection on repeat fingerprint / threshold</text>
+
+        <line x1="860" y1="420" x2="300" y2="420" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+        <line x1="300" y1="420" x2="300" y2="290" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+        <text x="318" y="340" fill="#9ea9bf" font-size="11">next step</text>
+
+        <line x1="1040" y1="460" x2="1040" y2="530" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+
+        <rect x="820" y="530" width="440" height="120" rx="8" fill="#162338" stroke="#6ee7b7"/>
+        <text x="1040" y="562" text-anchor="middle" fill="#6ee7b7" font-size="13">Referee / Evaluation</text>
+        <text x="1040" y="582" text-anchor="middle" fill="#9ea9bf" font-size="11">contract exists -> evaluate_cli_session first</text>
+        <text x="1040" y="602" text-anchor="middle" fill="#9ea9bf" font-size="11">if no contract or fail -> llm_judge fallback</text>
+        <text x="1040" y="622" text-anchor="middle" fill="#9ea9bf" font-size="11">metrics.eval_* set from deterministic or judge</text>
+
+        <rect x="300" y="700" width="520" height="140" rx="8" fill="#162338" stroke="#60a5fa"/>
+        <text x="560" y="730" text-anchor="middle" fill="#60a5fa" font-size="13">Learning Write Path</text>
+        <text x="560" y="752" text-anchor="middle" fill="#9ea9bf" font-size="11">executor self-reflection -> generate candidate lessons</text>
+        <text x="560" y="772" text-anchor="middle" fill="#9ea9bf" font-size="11">upsert_lesson_records (dedup + conflict links + status)</text>
+        <text x="560" y="792" text-anchor="middle" fill="#9ea9bf" font-size="11">apply_outcomes -> promote/suppress by utility</text>
+        <text x="560" y="812" text-anchor="middle" fill="#9ea9bf" font-size="11">write metrics.json and events.jsonl</text>
+
+        <line x1="820" y1="590" x2="730" y2="590" stroke="#93a5c6" stroke-width="2"/>
+        <line x1="730" y1="590" x2="730" y2="700" stroke="#93a5c6" stroke-width="2" marker-end="url(#arrow)"/>
+
+        <rect x="920" y="700" width="540" height="210" rx="8" fill="#1a1f34" stroke="#fbbf24"/>
+        <text x="1190" y="730" text-anchor="middle" fill="#fbbf24" font-size="13">Policy / Formula Notes</text>
+        <text x="940" y="758" fill="#9ea9bf" font-size="11">retrieve score = 0.40*fingerprint + 0.25*tags + 0.20*text + 0.10*reliability + 0.05*recency</text>
+        <text x="940" y="782" fill="#9ea9bf" font-size="11">utility (no referee) = 0.65*error_reduction + 0.35*efficiency_gain</text>
+        <text x="940" y="806" fill="#9ea9bf" font-size="11">utility (with referee) = 0.50*error_reduction + 0.30*efficiency_gain + 0.20*referee_gain</text>
+        <text x="940" y="830" fill="#9ea9bf" font-size="11">promote: utility >= 0.20 across >=3 runs and no major regressions</text>
+        <text x="940" y="854" fill="#9ea9bf" font-size="11">suppress: retrieved >=3 times with non-positive utility or contradiction losses</text>
+        <text x="940" y="878" fill="#9ea9bf" font-size="11">statuses: candidate | promoted | suppressed | archived</text>
+      </svg>
+    </div>
+    <div class="notes">
+      Key runtime files: <code>tracks/cli_sqlite/agent_cli.py</code>, <code>tracks/cli_sqlite/error_capture.py</code>,
+      <code>tracks/cli_sqlite/lesson_retrieval_v2.py</code>, <code>tracks/cli_sqlite/lesson_store_v2.py</code>,
+      <code>tracks/cli_sqlite/lesson_promotion_v2.py</code>, <code>tracks/cli_sqlite/tool_validation.py</code>.
+    </div>
+  </section>
+</div>
+</body>
+</html>

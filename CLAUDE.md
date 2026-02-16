@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Cortex?
 
-Cortex is an AI agent that teaches itself FL Studio (music production) through computer use + persistent memory. It controls FL Studio Desktop on macOS via screenshots and keyboard/mouse actions, learning across sessions by generating and refining skill documents.
+Cortex is an AI agent project focused on persistent memory across sessions. The active track in this branch is the CLI Memory V2 lab (`tracks/cli_sqlite/`), where the agent learns from failures and recovers faster over repeated runs.
+
+The original FL Studio computer-use track is preserved as historical context under `docs/archive/fl-studio-legacy/`.
 
 **Hackathon project:** Anthropic "Built with Opus 4.6" (Feb 10-16, 2026).
 
@@ -51,9 +53,12 @@ sessions/         ← Per-session output (gitignored)
   session-NNN/    ← events.jsonl + metrics.json + step-NNN.png screenshots
 
 docs/
-  IMPLEMENTATION.md  ← Primary technical spec (architecture, API setup, dev plan)
-  HANDOFF.md         ← Quick-start execution guide
-  FL-STUDIO-REFERENCE.md ← FL Studio UI/shortcuts reference
+  README.md                         ← Canonical docs index (active vs archive)
+  MEMORY-V2-EXECUTION-PLAN.md      ← Living execution plan
+  MEMORY-V2-AGNOSTIC-PLAN.md       ← Memory V2 requirements + status
+  MEMORY-V2-BENCHMARKS.md          ← Benchmark runbook
+  MEMORY-V2-CURRENT-FLOW.html      ← Current runtime diagram
+  archive/                          ← Historical docs only (not source of truth)
 ```
 
 ### Data flow
@@ -92,7 +97,7 @@ docs/
 
 ## CLI Learning Lab (`tracks/cli_sqlite/`)
 
-The CLI learning lab tests whether an LLM agent can teach itself a fictional CLI tool (gridtool) through cross-session lesson accumulation — no skill docs, just error messages and lessons.
+The CLI lab is the active Memory V2 harness. It tests whether an LLM agent can learn across domains/tasks (`gridtool`, `fluxtool`, `sqlite`, `shell`, `artic`) through error capture + lesson retrieval/promotion.
 
 ### Running experiments
 
@@ -116,6 +121,11 @@ Key flags:
 - `--cryptic-errors`: Strip helpful hints from error messages (harder mode)
 - `--max-steps N`: Step budget (6 = tight, 12 = generous)
 - `--posttask-mode direct`: Apply skill patches immediately (vs `candidate` for queuing)
+
+Core test command:
+```bash
+python3 -m pytest tracks/cli_sqlite/tests -q
+```
 
 Before re-running experiments, clear lessons for a clean baseline:
 ```bash
