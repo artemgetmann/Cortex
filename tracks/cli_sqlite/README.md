@@ -1,6 +1,23 @@
 # CLI SQLite Track
 
-This track is an isolated, fast-iteration learning loop that uses `sqlite3` instead of FL Studio GUI actions.
+This track is an isolated, fast-iteration lab for Memory V2.
+
+## Why This Exists
+
+Current AI agents mostly reset between chats.
+- They can recover inside one run.
+- They usually repeat the same mistakes in a new run unless a user manually curates memory/skills.
+
+Memory V2 addresses that gap.
+- Capture failures at runtime (`hard_failure`, `constraint_failure`, `progress_signal`, `efficiency_signal`).
+- Convert failures into reusable lessons.
+- Retrieve relevant lessons automatically before run and on error.
+- Track lesson utility over repeated runs so low-value memory gets suppressed.
+
+Why this matters:
+- Fewer repeated errors across sessions.
+- Faster recovery after interference from other domains/tasks.
+- Better step/time/token efficiency without requiring users to manually manage memory.
 
 ## Goals
 
@@ -59,3 +76,34 @@ python3 tracks/cli_sqlite/scripts/score_cli_session.py \
 - Holdout domain: `fluxtool` (remapped command/operator language).
 - Cross-domain runner: `tracks/cli_sqlite/scripts/run_cross_domain.py`.
 - Validation command matrix and expected signatures: `docs/STRICT-TRANSFER-VALIDATION.md`.
+
+## Hackathon Demo (One Command)
+
+Run this from repo root:
+
+```bash
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
+```
+
+What this command does:
+- Runs 3 waves of mixed protocol:
+  - `gridtool -> fluxtool -> shell(excel) -> sqlite -> grid retention`
+- Wave 1 starts cold (`--clear-lessons`).
+- Waves 2 and 3 reuse memory from prior waves.
+- Auto-generates timeline dumps for one representative session per wave.
+- Auto-generates token report from session metrics (includes prompt/cache token usage with lessons in context).
+
+Default artifacts:
+- `/tmp/memory_mixed_wave1_<start_session>.json`
+- `/tmp/memory_mixed_wave2_<start_session+5>.json`
+- `/tmp/memory_mixed_wave3_<start_session+10>.json`
+- `/tmp/memory_timeline_wave1_<start_session>.txt`
+- `/tmp/memory_timeline_wave2_<start_session+5>.txt`
+- `/tmp/memory_timeline_wave3_<start_session+10>.txt`
+- `/tmp/memory_mixed_tokens_<start_session>.json`
+
+Useful knobs:
+- `START_SESSION=57001` to avoid overwriting old runs.
+- `MAX_STEPS=5` (default) for pressure; raise for easier solves.
+- `AUTO_TIMELINE=0` to skip timeline generation.
+- `AUTO_TOKEN_REPORT=0` to skip token summary.

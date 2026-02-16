@@ -20,6 +20,18 @@ The protocol validates:
 - whether lesson utility remains positive.
 
 ## Commands
+Run the hackathon one-command demo (3 waves + auto timeline + auto token report):
+
+```bash
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
+bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
+```
+
+Outputs:
+- `/tmp/memory_mixed_wave*.json`
+- `/tmp/memory_timeline_wave*.txt`
+- `/tmp/memory_mixed_tokens_*.json`
+
 Run stability protocol (strict lane default):
 
 ```bash
