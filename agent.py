@@ -11,6 +11,11 @@ import anthropic
 
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
+from fl_state import (
+    EXTRACT_FL_STATE_TOOL_NAME,
+    extract_fl_state_from_image,
+    fl_state_tool_param,
+)
 from learning import generate_lessons, load_relevant_lessons, store_lessons
 from memory import ensure_session, write_event, write_metrics
 from run_eval import evaluate_drum_run
@@ -38,6 +43,7 @@ Rules:
 - Keep verification lightweight. Confirm ambiguous targets once, then act.
 - Do not loop on inspection actions. If two inspections fail to increase confidence, switch to a decisive action.
 - After every action, verify the UI changed as expected. If not, try one alternative and move on.
+- Use extract_fl_state to convert screenshots into structured UI facts before repeating zooms.
 - Use app-specific skills for UI conventions and domain workflows.
 - Keep the run safe: do not interact with anything outside FL Studio.
 - Never use OS-level shortcuts: do not press Command+Q, Command+Tab, Command+W, Command+M, or anything intended to quit/switch apps.
@@ -65,6 +71,7 @@ PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 READ_SKILL_TOOL_NAME = "read_skill"
 NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
 RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
+MAX_SAME_STEP_RETRIES = 2
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
@@ -349,11 +356,15 @@ def run_agent(
             "- If a listed skill may help, call read_skill with that exact skill_ref to fetch full steps.\n"
             "- Do not assume full skill contents without calling read_skill.\n"
             "- Keep read_skill calls targeted; avoid reading every skill."
+            "\n"
+            "State policy:\n"
+            "- Use extract_fl_state after screenshot when UI is ambiguous.\n"
+            "- Prefer extracting structured state (rows/active steps) over repeated zoom loops.\n"
         ),
     }
     system_blocks = [base_system_block, skills_system_block, lessons_system_block, skill_usage_block]
 
-    tools: list[dict[str, Any]] = [computer.to_tool_param()]
+    tools: list[dict[str, Any]] = [computer.to_tool_param(), fl_state_tool_param()]
     if load_skills:
         tools.append(_read_skill_tool_param())
 
@@ -398,7 +409,9 @@ def run_agent(
     loop_guard_enabled = computer_api_type == "computer_20251124"
     read_skill_refs: set[str] = set()
 
-    for step in range(1, max_steps + 1):
+    step = 1
+    same_step_retries = 0
+    while step <= max_steps:
         metrics["steps"] = step
         if cfg.enable_prompt_caching:
             _inject_prompt_caching(messages, breakpoints=user_cache_breakpoints)
@@ -440,6 +453,8 @@ def run_agent(
         messages.append({"role": "assistant", "content": assistant_blocks})
 
         tool_results: list[dict[str, Any]] = []
+        retry_same_step = False
+        decisive_action_succeeded = False
 
         for block in assistant_blocks:
             if not (isinstance(block, dict) and block.get("type") == "tool_use"):
@@ -461,6 +476,7 @@ def run_agent(
                             )
                         )
                         metrics["loop_guard_blocks"] += 1
+                        retry_same_step = True
                     elif allowed_actions is not None:
                         if not isinstance(action, str) or action not in allowed_actions:
                             result = ToolResult(error=f"Action not allowed in this run: {action!r}")
@@ -473,11 +489,36 @@ def run_agent(
                         non_productive_streak += 1
                     elif action in RESET_NON_PRODUCTIVE_ACTIONS and not result.is_error():
                         non_productive_streak = 0
+                        decisive_action_succeeded = True
 
                 except Exception as e:
                     # Don't crash the loop on unexpected local tool errors; surface it to the model.
                     result = ToolResult(error=f"Local tool exception: {type(e).__name__}: {e}")
                 if result.is_error():
+                    metrics["tool_errors"] += 1
+            elif tool_name == EXTRACT_FL_STATE_TOOL_NAME:
+                tool_in = tool_input if isinstance(tool_input, dict) else {}
+                goal = str(tool_in.get("goal", "")).strip()
+                task_hint = str(tool_in.get("task_hint", "")).strip() or task
+                try:
+                    shot = computer.run({"action": "screenshot"})
+                    if shot.is_error() or not shot.base64_image_png:
+                        result = ToolResult(error=shot.error or "extract_fl_state could not capture screenshot")
+                        metrics["tool_errors"] += 1
+                    else:
+                        state = extract_fl_state_from_image(
+                            client=client,
+                            model=cfg.model_decider,
+                            screenshot_b64=shot.base64_image_png,
+                            goal=goal,
+                            task_hint=task_hint,
+                        )
+                        result = ToolResult(
+                            output=json.dumps(state, ensure_ascii=True),
+                            base64_image_png=shot.base64_image_png,
+                        )
+                except Exception as e:
+                    result = ToolResult(error=f"extract_fl_state exception: {type(e).__name__}: {e}")
                     metrics["tool_errors"] += 1
             elif tool_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
@@ -532,6 +573,16 @@ def run_agent(
             break
 
         messages.append({"role": "user", "content": tool_results})
+        if retry_same_step and not decisive_action_succeeded and same_step_retries < MAX_SAME_STEP_RETRIES:
+            same_step_retries += 1
+            if verbose:
+                print(
+                    f"[step {step:03d}] governor retry without step burn ({same_step_retries}/{MAX_SAME_STEP_RETRIES})",
+                    flush=True,
+                )
+            continue
+        same_step_retries = 0
+        step += 1
 
     if load_skills and posttask_learn and skill_manifest_entries:
         metrics["posttask_patch_attempted"] = True

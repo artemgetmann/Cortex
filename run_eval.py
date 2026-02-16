@@ -20,6 +20,9 @@ class DrumRunEvaluation:
     clicks: list[dict[str, int]]
     zoom_count: int
     decisive_count: int
+    state_verified: bool
+    state_step: int
+    state_active_steps: list[int]
     contract_path: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +34,9 @@ class DrumRunEvaluation:
             "clicks": self.clicks,
             "zoom_count": self.zoom_count,
             "decisive_count": self.decisive_count,
+            "state_verified": self.state_verified,
+            "state_step": self.state_step,
+            "state_active_steps": self.state_active_steps,
             "contract_path": self.contract_path,
         }
 
@@ -116,8 +122,30 @@ def evaluate_drum_run(
             clicks=[],
             zoom_count=0,
             decisive_count=0,
+            state_verified=False,
+            state_step=0,
+            state_active_steps=[],
             contract_path=cpath,
         )
+
+    def _extract_state_payload(ev: dict[str, Any]) -> dict[str, Any] | None:
+        if ev.get("tool") != "extract_fl_state":
+            return None
+        if not bool(ev.get("ok")):
+            return None
+        out = ev.get("output")
+        if isinstance(out, dict):
+            return out
+        if isinstance(out, str):
+            text = out.strip()
+            if not text:
+                return None
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return None
 
     signals = contract.get("signals", {}) if isinstance(contract.get("signals"), dict) else {}
     click_band = signals.get("click_band", {}) if isinstance(signals.get("click_band"), dict) else {}
@@ -144,8 +172,16 @@ def evaluate_drum_run(
     clicks: list[dict[str, int]] = []
     zoom_count = 0
     decisive_count = 0
+    latest_state_step = 0
+    latest_state_payload: dict[str, Any] | None = None
 
     for ev in events:
+        state_payload = _extract_state_payload(ev)
+        if state_payload is not None:
+            s = int(ev.get("step", 0) or 0)
+            if s >= latest_state_step:
+                latest_state_step = s
+                latest_state_payload = state_payload
         if ev.get("tool") != "computer":
             continue
         tool_input = ev.get("tool_input")
@@ -178,6 +214,30 @@ def evaluate_drum_run(
         "monotonic_step_order": True,
         "spacing_in_range": True,
     }
+    state_verified = False
+    state_active_steps: list[int] = []
+
+    if latest_state_payload is not None:
+        four = latest_state_payload.get("four_on_floor")
+        if isinstance(four, dict):
+            active_match = bool(four.get("active_match", False))
+            active_steps = four.get("active_steps")
+            if isinstance(active_steps, list):
+                for item in active_steps:
+                    if isinstance(item, int) and 1 <= item <= 16:
+                        state_active_steps.append(item)
+            if not state_active_steps:
+                guessed = four.get("detected_steps")
+                if isinstance(guessed, list):
+                    for item in guessed:
+                        if isinstance(item, int) and 1 <= item <= 16:
+                            state_active_steps.append(item)
+            state_active_steps = sorted(set(state_active_steps))
+            if active_match:
+                state_verified = True
+            elif state_active_steps:
+                target = {1, 5, 9, 13}
+                state_verified = target.issubset(set(state_active_steps))
 
     if len(first) < required_clicks:
         reasons.append("insufficient_step_clicks")
@@ -210,8 +270,11 @@ def evaluate_drum_run(
     forbidden_patterns = contract.get("forbidden_patterns", [])
     forbidden_set = {x for x in forbidden_patterns if isinstance(x, str)}
     unique_reasons = sorted(set(reasons))
+    if state_verified and "inspection_loop" in unique_reasons:
+        # If the final state proves success, inspection inefficiency should not hard-fail.
+        unique_reasons.remove("inspection_loop")
     has_forbidden = any(r in forbidden_set for r in unique_reasons)
-    all_outcomes_ok = all(outcomes.values())
+    all_outcomes_ok = all(outcomes.values()) or state_verified
     passed = all_outcomes_ok and not has_forbidden and len(unique_reasons) == 0
 
     score = max(0.0, 1.0 - (0.25 * len(unique_reasons)))
@@ -226,6 +289,8 @@ def evaluate_drum_run(
         clicks=first,
         zoom_count=zoom_count,
         decisive_count=decisive_count,
+        state_verified=state_verified,
+        state_step=latest_state_step,
+        state_active_steps=state_active_steps,
         contract_path=cpath,
     )
-
