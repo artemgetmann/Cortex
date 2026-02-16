@@ -20,6 +20,9 @@ from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
     DEFAULT_TRANSFER_MAX_RESULTS,
     DEFAULT_TRANSFER_SCORE_COEFFICIENT,
+    TRANSFER_POLICY_ALWAYS,
+    TRANSFER_POLICY_AUTO,
+    TRANSFER_POLICY_OFF,
     retrieve_on_error,
     retrieve_pre_run,
 )
@@ -79,6 +82,7 @@ DEFAULT_ARCHITECTURE_MODE = "full"
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 REFLECTION_ERROR_THRESHOLD = 2
+MAX_VALIDATION_RETRIES_PER_STEP = 2
 
 
 @dataclass
@@ -484,6 +488,27 @@ def _normalize_architecture_mode(architecture_mode: str) -> str:
     return mode
 
 
+def _resolve_transfer_retrieval_policy(
+    *,
+    enable_transfer_retrieval: bool,
+    transfer_retrieval_max_results: int,
+    transfer_retrieval_score_weight: float,
+) -> str:
+    """
+    Resolve transfer retrieval policy for on-error Memory V2 injection.
+
+    Default behavior is auto strict-first retrieval with limited transfer
+    backfill. Existing dev controls remain available:
+    - enable_transfer_retrieval=True forces transfer lane on
+    - transfer_retrieval_max_results=0 or score_weight<=0 forces transfer off
+    """
+    if bool(enable_transfer_retrieval):
+        return TRANSFER_POLICY_ALWAYS
+    if int(transfer_retrieval_max_results) <= 0 or float(transfer_retrieval_score_weight) <= 0.0:
+        return TRANSFER_POLICY_OFF
+    return TRANSFER_POLICY_AUTO
+
+
 def prepare_cli_prompt_preview(
     *,
     task_id: str,
@@ -631,6 +656,11 @@ def run_cli_agent(
     knowledge_provider = LocalDocsKnowledgeProvider()
     transfer_retrieval_max_results = max(0, int(transfer_retrieval_max_results))
     transfer_retrieval_score_weight = max(0.0, float(transfer_retrieval_score_weight))
+    transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
+        enable_transfer_retrieval=enable_transfer_retrieval,
+        transfer_retrieval_max_results=transfer_retrieval_max_results,
+        transfer_retrieval_score_weight=transfer_retrieval_score_weight,
+    )
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
     adapter = _resolve_adapter_with_mode(
         domain,
@@ -771,6 +801,8 @@ def run_cli_agent(
         "tool_actions": 0,
         "tool_errors": 0,
         "tool_validation_errors": 0,
+        "tool_validation_retry_attempts": 0,
+        "tool_validation_retry_capped_events": 0,
         "skill_gate_blocks": 0,
         "skill_reads": 0,
         "required_skill_refs": sorted(required_skill_refs),
@@ -782,7 +814,8 @@ def run_cli_agent(
         "v2_lesson_activations": 0,
         "v2_error_events": 0,
         "v2_retrieval_help_ratio": 0.0,
-        "v2_transfer_retrieval_enabled": bool(enable_transfer_retrieval),
+        "v2_transfer_retrieval_enabled": transfer_retrieval_policy != TRANSFER_POLICY_OFF,
+        "v2_transfer_retrieval_policy": transfer_retrieval_policy,
         "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
         "v2_transfer_retrieval_score_weight": transfer_retrieval_score_weight,
         "v2_transfer_lane_activations": 0,
@@ -838,7 +871,10 @@ def run_cli_agent(
     lesson_activation_records: list[dict[str, Any]] = []
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
 
-    for step in range(1, max_steps + 1):
+    step = 1
+    validation_retries_this_step = 0
+    validation_retry_capped_this_step = False
+    while step <= max_steps:
         metrics["steps"] = step
         if reflection_pending:
             # Force a brief self-diagnosis before the next tool call. This is
@@ -863,6 +899,8 @@ def run_cli_agent(
         assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
         messages.append({"role": "assistant", "content": assistant_blocks})
         tool_results: list[dict[str, Any]] = []
+        retry_same_step = False
+        saw_non_validation_tool_call = False
 
         for block in assistant_blocks:
             if not (isinstance(block, dict) and block.get("type") == "tool_use"):
@@ -883,9 +921,36 @@ def run_cli_agent(
                 tool_input=tool_input_raw,
                 schema=schema,
             )
+            is_validation_failure = bool(validation_error)
             if validation_error:
                 metrics["tool_validation_errors"] += 1
                 result = ToolResult(error=validation_error)
+                if validation_retries_this_step < MAX_VALIDATION_RETRIES_PER_STEP:
+                    # Retry malformed tool calls on the same step so schema
+                    # misses do not consume the run's execution budget.
+                    validation_retries_this_step += 1
+                    metrics["tool_validation_retry_attempts"] += 1
+                    retry_same_step = True
+                else:
+                    retry_same_step = False
+                    if not validation_retry_capped_this_step:
+                        metrics["tool_validation_retry_capped_events"] += 1
+                        validation_retry_capped_this_step = True
+                    if not reflection_pending:
+                        validation_fingerprint = f"validation:{canonical_name}:{validation_retries_this_step}"
+                        reflection_pending = _build_reflection_prompt(
+                            error_text=validation_error,
+                            fingerprint=validation_fingerprint,
+                            reason="validation_retry_cap",
+                        )
+                        metrics["v2_reflection_prompts"] += 1
+                        metrics["v2_reflection_reasons"].append(
+                            {
+                                "step": step,
+                                "fingerprint": validation_fingerprint,
+                                "reason": "validation_retry_cap",
+                            }
+                        )
             elif canonical_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 skill_ref = tool_input.get("skill_ref")
@@ -936,12 +1001,14 @@ def run_cli_agent(
                         result = ToolResult(output=_clip_text(result.output or "(ok)"))
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
+            if not is_validation_failure:
+                saw_non_validation_tool_call = True
 
             # Memory V2 capture + retrieval path:
             # - capture failure events via universal channels
             # - fetch fingerprint-aligned hints in the same run
             # - fallback to legacy lesson matcher if V2 has no signal yet
-            if result.is_error() and canonical_name == executor_tool_name:
+            if result.is_error() and canonical_name == executor_tool_name and not is_validation_failure:
                 error_text = result.error or ""
                 action_state = {
                     "tool": canonical_name,
@@ -1051,6 +1118,7 @@ def run_cli_agent(
                     max_results=2,
                     include_domainless=False,
                     enable_transfer=enable_transfer_retrieval,
+                    transfer_policy=transfer_retrieval_policy,
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
                 )
@@ -1163,6 +1231,19 @@ def run_cli_agent(
                 print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
             break
         messages.append({"role": "user", "content": tool_results})
+        if retry_same_step and not saw_non_validation_tool_call:
+            if verbose:
+                print(
+                    (
+                        f"[step {step:03d}] validation retry "
+                        f"{validation_retries_this_step}/{MAX_VALIDATION_RETRIES_PER_STEP}; repeating step."
+                    ),
+                    flush=True,
+                )
+            continue
+        step += 1
+        validation_retries_this_step = 0
+        validation_retry_capped_this_step = False
 
     # --- Evaluation ---
     events = read_events(paths.events_path)

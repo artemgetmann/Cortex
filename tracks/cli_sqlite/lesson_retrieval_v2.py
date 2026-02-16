@@ -9,8 +9,15 @@ from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, load_lesson_records
 
 LANE_STRICT = "strict"
 LANE_TRANSFER = "transfer"
+TRANSFER_POLICY_OFF = "off"
+TRANSFER_POLICY_AUTO = "auto"
+TRANSFER_POLICY_ALWAYS = "always"
 DEFAULT_TRANSFER_MAX_RESULTS = 1
 DEFAULT_TRANSFER_SCORE_COEFFICIENT = 0.35
+DEFAULT_STRICT_WEAK_SCORE_THRESHOLD = 0.45
+DEFAULT_STRICT_WEAK_ANCHOR_THRESHOLD = 0.30
+DEFAULT_TRANSFER_MIN_SCORE = 0.20
+DEFAULT_TRANSFER_ANCHOR_THRESHOLD = 0.25
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -84,6 +91,77 @@ class RetrievalConfig:
     max_results: int = 8
     max_per_source_session: int = 2
     max_per_tag_bucket: int = 3
+
+
+def _strict_matches_are_weak(
+    matches: Sequence[RetrievalMatch],
+    *,
+    weak_score_threshold: float = DEFAULT_STRICT_WEAK_SCORE_THRESHOLD,
+    weak_anchor_threshold: float = DEFAULT_STRICT_WEAK_ANCHOR_THRESHOLD,
+) -> bool:
+    """
+    Determine whether strict-lane retrieval has enough signal.
+
+    Weak strict signal means either:
+    - no strict matches were found, or
+    - top strict score is low, or
+    - strict matches lack anchor evidence (fingerprint/tag/text overlap).
+    """
+    if not matches:
+        return True
+    best_score = float(matches[0].score.score)
+    if best_score < float(weak_score_threshold):
+        return True
+    for match in matches:
+        score = match.score
+        if (
+            float(score.fingerprint_match) >= 0.7
+            or float(score.tag_overlap) >= float(weak_anchor_threshold)
+            or float(score.text_similarity) >= float(weak_anchor_threshold)
+        ):
+            return False
+    return True
+
+
+def _normalize_transfer_policy(
+    *,
+    transfer_policy: str | None,
+    enable_transfer: bool,
+    transfer_max_results: int,
+    transfer_score_weight: float,
+) -> str:
+    normalized = str(transfer_policy or "").strip().lower()
+    if normalized in {TRANSFER_POLICY_OFF, TRANSFER_POLICY_AUTO, TRANSFER_POLICY_ALWAYS}:
+        return normalized
+    if enable_transfer:
+        return TRANSFER_POLICY_ALWAYS
+    # Backward-compatible explicit off switch using existing knobs.
+    if int(transfer_max_results) <= 0 or float(transfer_score_weight) <= 0.0:
+        return TRANSFER_POLICY_OFF
+    return TRANSFER_POLICY_AUTO
+
+
+def _is_transfer_candidate_strong_enough(
+    match: RetrievalMatch,
+    *,
+    min_score: float = DEFAULT_TRANSFER_MIN_SCORE,
+    anchor_threshold: float = DEFAULT_TRANSFER_ANCHOR_THRESHOLD,
+) -> bool:
+    """
+    Require non-trivial evidence before allowing cross-domain hint injection.
+
+    Transfer hints are riskier than strict-lane hints, so we gate them by:
+    - minimum weighted score, and
+    - at least one anchor (fingerprint/tag/text overlap).
+    """
+    score = match.score
+    if float(score.score) < float(min_score):
+        return False
+    return (
+        float(score.fingerprint_match) >= 0.7
+        or float(score.tag_overlap) >= float(anchor_threshold)
+        or float(score.text_similarity) >= float(anchor_threshold)
+    )
 
 
 def _is_active(record: LessonRecord) -> bool:
@@ -356,6 +434,7 @@ def retrieve_on_error(
     max_results: int = 3,
     include_domainless: bool = False,
     enable_transfer: bool = False,
+    transfer_policy: str | None = None,
     transfer_max_results: int = DEFAULT_TRANSFER_MAX_RESULTS,
     transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
@@ -369,6 +448,12 @@ def retrieve_on_error(
     records = load_lesson_records(path)
     normalized_domain = str(domain).strip().lower()
     normalized_task = str(task_id).strip()
+    effective_transfer_policy = _normalize_transfer_policy(
+        transfer_policy=transfer_policy,
+        enable_transfer=bool(enable_transfer),
+        transfer_max_results=int(transfer_max_results),
+        transfer_score_weight=float(transfer_score_weight),
+    )
     strict_scoped: list[LessonRecord] = []
     transfer_scoped: list[LessonRecord] = []
 
@@ -390,7 +475,7 @@ def retrieve_on_error(
             strict_scoped.append(row)
             continue
 
-        if not enable_transfer:
+        if effective_transfer_policy == TRANSFER_POLICY_OFF:
             continue
         # Transfer lane only considers explicit cross-domain lessons.
         if not row_domain or row_domain == normalized_domain:
@@ -407,9 +492,12 @@ def retrieve_on_error(
     )
     strict_matches, strict_losers = _select_with_guards(ranked=strict_ranked, config=strict_config)
 
-    remaining_slots = max(0, int(max_results) - len(strict_matches))
-    transfer_quota = min(max(0, int(transfer_max_results)), remaining_slots)
-    if not enable_transfer or transfer_quota <= 0 or not transfer_scoped:
+    transfer_cap = min(max(0, int(transfer_max_results)), max(0, int(max_results)))
+    if (
+        effective_transfer_policy == TRANSFER_POLICY_OFF
+        or transfer_cap <= 0
+        or not transfer_scoped
+    ):
         return strict_matches, strict_losers
 
     transfer_ranked = _rank_lessons(
@@ -420,6 +508,29 @@ def retrieve_on_error(
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
     )
+    if effective_transfer_policy == TRANSFER_POLICY_AUTO:
+        transfer_ranked = [
+            match for match in transfer_ranked
+            if _is_transfer_candidate_strong_enough(match)
+        ]
+    if not transfer_ranked:
+        return strict_matches, strict_losers
+
+    if effective_transfer_policy == TRANSFER_POLICY_AUTO:
+        if not _strict_matches_are_weak(strict_matches):
+            return strict_matches, strict_losers
+        keep_limit = int(max_results)
+        if strict_matches and int(max_results) > 1:
+            keep_limit = max(1, int(max_results) - transfer_cap)
+        elif not strict_matches:
+            keep_limit = max(0, int(max_results) - transfer_cap)
+        strict_matches = strict_matches[:keep_limit]
+
+    remaining_slots = max(0, int(max_results) - len(strict_matches))
+    transfer_quota = min(transfer_cap, remaining_slots)
+    if transfer_quota <= 0:
+        return strict_matches, strict_losers
+
     merged_matches, transfer_losers = _append_with_guards(
         selected=strict_matches,
         ranked=transfer_ranked,
@@ -430,6 +541,9 @@ def retrieve_on_error(
 
 
 __all__ = [
+    "TRANSFER_POLICY_AUTO",
+    "TRANSFER_POLICY_ALWAYS",
+    "TRANSFER_POLICY_OFF",
     "DEFAULT_TRANSFER_MAX_RESULTS",
     "DEFAULT_TRANSFER_SCORE_COEFFICIENT",
     "LANE_STRICT",

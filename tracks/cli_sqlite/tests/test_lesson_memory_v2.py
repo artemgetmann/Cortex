@@ -264,6 +264,113 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertEqual(lanes.count(LANE_TRANSFER), 1)
             self.assertLessEqual(len(matches), 2)
 
+    def test_transfer_lane_auto_backfills_when_strict_signal_is_weak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            weak_strict_a = _record(
+                session_id=1931,
+                rule_text="Prefer concise aliases for output columns.",
+                fingerprints=("fp_other_a",),
+                tags=("alias_style",),
+                reliability=0.1,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            weak_strict_b = _record(
+                session_id=1932,
+                rule_text="Use readable naming for intermediate fields.",
+                fingerprints=("fp_other_b",),
+                tags=("naming",),
+                reliability=0.1,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            transfer = _record(
+                session_id=1933,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=0.9,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [weak_strict_a, weak_strict_b, transfer])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR: IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=2,
+            )
+            lanes = [match.lane for match in matches]
+            self.assertIn(LANE_TRANSFER, lanes)
+            self.assertIn(LANE_STRICT, lanes)
+            self.assertEqual(len(matches), 2)
+
+    def test_transfer_lane_auto_keeps_strict_only_when_signal_is_strong(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            strict = _record(
+                session_id=1941,
+                rule_text='SORT direction is "down" not "desc".',
+                fingerprints=("fp_sort",),
+                tags=("syntax_structure",),
+                reliability=0.8,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            transfer = _record(
+                session_id=1942,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_sort",),
+                tags=("syntax_structure",),
+                reliability=0.9,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [strict, transfer])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR at line 3: SORT direction must be up/down",
+                fingerprint="fp_sort",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("syntax_structure",),
+                max_results=3,
+            )
+            self.assertTrue(matches)
+            self.assertTrue(all(match.lane == LANE_STRICT for match in matches))
+            self.assertEqual(matches[0].lesson.lesson_id, strict.lesson_id)
+
+    def test_transfer_lane_auto_drops_low_evidence_transfer_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            transfer = _record(
+                session_id=1951,
+                rule_text="Use TALLY for grouped aggregations.",
+                fingerprints=("fp_grid_only",),
+                tags=("aggregate",),
+                reliability=0.5,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [transfer])
+
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR at line 1: IMPORT path must be in double quotes",
+                fingerprint="fp_fluxtool_import",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("uncategorized",),
+                max_results=2,
+            )
+            self.assertEqual(matches, [])
+
     def test_transfer_lane_weighting_scales_score(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "lessons_v2.jsonl"

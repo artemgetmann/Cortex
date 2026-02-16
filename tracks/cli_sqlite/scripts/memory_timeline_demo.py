@@ -546,6 +546,26 @@ def _render_session(
             acts=int(metrics.get("lesson_activations", 0) or 0),
         )
     )
+    transfer_policy = str(metrics.get("v2_transfer_retrieval_policy", "") or "").strip()
+    if transfer_policy:
+        lines.append(
+            "  memory_policy: transfer={policy} max_transfer={max_results} weight={weight:.2f}".format(
+                policy=transfer_policy,
+                max_results=int(metrics.get("v2_transfer_retrieval_max_results", 0) or 0),
+                weight=float(metrics.get("v2_transfer_retrieval_score_weight", 0.0) or 0.0),
+            )
+        )
+    validation_errors = int(metrics.get("tool_validation_errors", 0) or 0)
+    validation_retries = int(metrics.get("tool_validation_retry_attempts", 0) or 0)
+    validation_caps = int(metrics.get("tool_validation_retry_capped_events", 0) or 0)
+    if validation_errors or validation_retries or validation_caps:
+        lines.append(
+            "  validation: errors={errors} retries={retries} cap_events={caps}".format(
+                errors=validation_errors,
+                retries=validation_retries,
+                caps=validation_caps,
+            )
+        )
     lines.extend(
         _render_lesson_snapshot(
             lessons_path=lessons_path,
@@ -631,6 +651,12 @@ def _render_session(
             ratio=v2_ratio,
             promoted=int(metrics.get("v2_promoted", 0) or 0),
             suppressed=int(metrics.get("v2_suppressed", 0) or 0),
+        )
+    )
+    lines.append(
+        "  transfer: lane_activations={acts} enabled={enabled}".format(
+            acts=int(metrics.get("v2_transfer_lane_activations", 0) or 0),
+            enabled=bool(metrics.get("v2_transfer_retrieval_enabled", False)),
         )
     )
     return "\n".join(lines)
