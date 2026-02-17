@@ -1,0 +1,45 @@
+{
+  "id": "cli-shell-excel-multi-summary-v1",
+  "task_match": {
+    "all": [
+      "shell"
+    ],
+    "any": [
+      "excel",
+      "summary",
+      "report"
+    ]
+  },
+  "setup": {
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_event_patterns": [
+      "(?is)sales_report\\.xlsx",
+      "(?is)report_manifest\\.json",
+      "(?is)RegionSummary",
+      "(?is)ProductSummary",
+      "(?is)REPORT_OK\\s+path=.*raw_rows=10\\s+region_rows=3\\s+product_rows=3\\s+grand_total=10150\\s+top_region=North\\s+top_product=Alpha",
+      "(?is)REGION_ORDER\\s+North,South,East",
+      "(?is)PRODUCT_ORDER\\s+Alpha,Beta,Gamma"
+    ],
+    "forbidden_event_patterns": [
+      "(?is)\\b/tmp\\b"
+    ],
+    "required_files": [
+      "sales_report.xlsx",
+      "report_manifest.json"
+    ],
+    "required_queries": [],
+    "max_error_count": 0
+  },
+  "pass_rule": "all_required_events && no_forbidden_events && required_files_present && errors_within_budget",
+  "reason_codes": [
+    "missing_required_event_pattern",
+    "matched_forbidden_event_pattern",
+    "missing_required_file",
+    "too_many_errors"
+  ]
+}

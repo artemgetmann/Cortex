@@ -102,6 +102,26 @@ def _collect_sql_events(events: list[dict[str, Any]]) -> tuple[list[str], int]:
     return sql_runs, error_count
 
 
+def _build_event_text(events: list[dict[str, Any]]) -> str:
+    """Flatten tool events into deterministic text for pattern checks."""
+    lines: list[str] = []
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        tool = str(row.get("tool", ""))
+        tool_input = row.get("tool_input")
+        output = row.get("output")
+        error = row.get("error")
+        try:
+            input_text = json.dumps(tool_input, sort_keys=True, ensure_ascii=True)
+        except Exception:
+            input_text = str(tool_input)
+        lines.append(
+            f"tool={tool} input={input_text} output={str(output)} error={str(error)}"
+        )
+    return "\n".join(lines)
+
+
 def _query_rows(db_path: Path, sql: str) -> tuple[list[list[str]] | None, str | None]:
     try:
         with sqlite3.connect(str(db_path)) as conn:
@@ -137,6 +157,9 @@ def evaluate_cli_session(
     signals = contract.get("signals", {}) if isinstance(contract.get("signals"), dict) else {}
     required_patterns = [str(p) for p in signals.get("required_sql_patterns", []) if str(p).strip()]
     forbidden_patterns = [str(p) for p in signals.get("forbidden_sql_patterns", []) if str(p).strip()]
+    required_event_patterns = [str(p) for p in signals.get("required_event_patterns", []) if str(p).strip()]
+    forbidden_event_patterns = [str(p) for p in signals.get("forbidden_event_patterns", []) if str(p).strip()]
+    required_files = [str(p) for p in signals.get("required_files", []) if str(p).strip()]
     required_queries = signals.get("required_queries", [])
     if not isinstance(required_queries, list):
         required_queries = []
@@ -144,6 +167,8 @@ def evaluate_cli_session(
 
     sql_runs, error_count = _collect_sql_events(events)
     merged_sql = "\n\n".join(sql_runs)
+    merged_events = _build_event_text(events)
+    work_dir = db_path.parent
 
     matched_required: list[str] = []
     missing_required: list[str] = []
@@ -157,6 +182,24 @@ def evaluate_cli_session(
     for pattern in forbidden_patterns:
         if re.search(pattern, merged_sql, flags=0):
             matched_forbidden.append(pattern)
+
+    matched_required_event_patterns: list[str] = []
+    missing_required_event_patterns: list[str] = []
+    for pattern in required_event_patterns:
+        if re.search(pattern, merged_events, flags=0):
+            matched_required_event_patterns.append(pattern)
+        else:
+            missing_required_event_patterns.append(pattern)
+
+    matched_forbidden_event_patterns: list[str] = []
+    for pattern in forbidden_event_patterns:
+        if re.search(pattern, merged_events, flags=0):
+            matched_forbidden_event_patterns.append(pattern)
+
+    missing_required_files: list[str] = []
+    for rel_path in required_files:
+        if not (work_dir / rel_path).exists():
+            missing_required_files.append(rel_path)
 
     query_results: list[dict[str, Any]] = []
     query_failures = 0
@@ -189,10 +232,21 @@ def evaluate_cli_session(
             }
         )
 
-    checks_total = len(required_patterns) + len(forbidden_patterns) + len(query_results) + 1
+    checks_total = (
+        len(required_patterns)
+        + len(forbidden_patterns)
+        + len(required_event_patterns)
+        + len(forbidden_event_patterns)
+        + len(required_files)
+        + len(query_results)
+        + 1
+    )
     checks_passed = (
         len(matched_required)
         + (len(forbidden_patterns) - len(matched_forbidden))
+        + len(matched_required_event_patterns)
+        + (len(forbidden_event_patterns) - len(matched_forbidden_event_patterns))
+        + (len(required_files) - len(missing_required_files))
         + (len(query_results) - query_failures)
         + (1 if error_count <= max_error_count else 0)
     )
@@ -205,6 +259,12 @@ def evaluate_cli_session(
         reasons.append("matched_forbidden_pattern")
     if query_failures > 0:
         reasons.append("required_query_mismatch")
+    if missing_required_event_patterns:
+        reasons.append("missing_required_event_pattern")
+    if matched_forbidden_event_patterns:
+        reasons.append("matched_forbidden_event_pattern")
+    if missing_required_files:
+        reasons.append("missing_required_file")
     if error_count > max_error_count:
         reasons.append("too_many_errors")
     reasons = sorted(set(reasons))
@@ -216,6 +276,12 @@ def evaluate_cli_session(
         "max_error_count": max_error_count,
         "required_patterns": {"matched": matched_required, "missing": missing_required},
         "forbidden_patterns": {"matched": matched_forbidden},
+        "required_event_patterns": {
+            "matched": matched_required_event_patterns,
+            "missing": missing_required_event_patterns,
+        },
+        "forbidden_event_patterns": {"matched": matched_forbidden_event_patterns},
+        "required_files": {"missing": missing_required_files, "work_dir": str(work_dir)},
         "required_queries": query_results,
     }
     return CliEvaluation(
