@@ -9,9 +9,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
 
 START_SESSION="${START_SESSION:-56001}"
-MAX_STEPS="${MAX_STEPS:-5}"
+MAX_STEPS="${MAX_STEPS:-4}"
 LEARNING_MODE="${LEARNING_MODE:-strict}"
 POSTTASK_MODE="${POSTTASK_MODE:-candidate}"
+GRID_TASK_ID="${GRID_TASK_ID:-multi_step_pipeline}"
+SHELL_TASK_ID="${SHELL_TASK_ID:-shell_excel_multi_summary}"
 SQLITE_TASK_ID="${SQLITE_TASK_ID:-incremental_reconcile}"
 OUTPUT_DIR="${OUTPUT_DIR:-/tmp}"
 AUTO_TIMELINE="${AUTO_TIMELINE:-1}"
@@ -95,9 +97,9 @@ run_wave() {
 
   local cmd=(
     python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py
-    --grid-task-id aggregate_report
+    --grid-task-id "${GRID_TASK_ID}"
     --fluxtool-task-id aggregate_report_holdout
-    --shell-task-id shell_excel_build_report
+    --shell-task-id "${SHELL_TASK_ID}"
     --sqlite-task-id "${SQLITE_TASK_ID}"
     --grid-runs 1
     --fluxtool-runs 1
@@ -122,6 +124,8 @@ run_wave() {
 echo "== Memory V2 Hackathon Demo (Legacy Runner) =="
 echo "root=${ROOT_DIR}"
 echo "start_session=${START_SESSION} max_steps=${MAX_STEPS} learning_mode=${LEARNING_MODE}"
+echo "grid_task_id=${GRID_TASK_ID}"
+echo "shell_task_id=${SHELL_TASK_ID}"
 echo "sqlite_task_id=${SQLITE_TASK_ID}"
 echo "enforce_wave1_sqlite_fail=${ENFORCE_WAVE1_SQLITE_FAIL} retries=${WAVE1_RETRY_MAX} stride=${WAVE1_RETRY_SESSION_STRIDE}"
 echo
