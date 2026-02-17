@@ -34,7 +34,7 @@ DEFAULT_CONTRACT = {
     "setup": {"bootstrap_sql_path": "bootstrap.sql", "fixture_paths": ["fixture.csv"]},
     "signals": {
         "required_sql_patterns": [
-            "(?is)create\\s+table\\s+sales",
+            "(?is)create\\s+table(?:\\s+if\\s+not\\s+exists)?\\s+sales",
             "(?is)insert\\s+into\\s+sales",
             "(?is)group\\s+by\\s+category",
             "(?is)order\\s+by\\s+category",

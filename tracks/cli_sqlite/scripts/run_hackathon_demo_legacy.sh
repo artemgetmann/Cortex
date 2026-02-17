@@ -1,20 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hackathon demo runner (prepared script, not auto-executed by Codex).
-# Purpose:
-# - Run 3 sequential waves of the mixed benchmark using the same memory store
-# - Capture JSON artifacts for each wave
-# - Keep flags stable for reproducibility in recorded demos
-#
-# Usage:
-#   bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
-#   START_SESSION=56001 MAX_STEPS=5 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh
-#
-# Notes:
-# - Wave 1 clears lessons to start from cold memory.
-# - Waves 2 and 3 reuse memory from prior waves.
-# - This script does not run automatically; it is for manual demo execution.
+# Legacy-style hackathon demo runner with a cold-start stability guard.
+# Goal: keep the same narrative structure while avoiding "lucky" wave-1 runs
+# where sqlite cold-start unexpectedly passes and weakens the demo signal.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
@@ -23,24 +12,20 @@ START_SESSION="${START_SESSION:-56001}"
 MAX_STEPS="${MAX_STEPS:-5}"
 LEARNING_MODE="${LEARNING_MODE:-strict}"
 POSTTASK_MODE="${POSTTASK_MODE:-candidate}"
+SQLITE_TASK_ID="${SQLITE_TASK_ID:-import_aggregate}"
 OUTPUT_DIR="${OUTPUT_DIR:-/tmp}"
 AUTO_TIMELINE="${AUTO_TIMELINE:-1}"
 AUTO_TOKEN_REPORT="${AUTO_TOKEN_REPORT:-1}"
 TIMELINE_SHOW_LESSONS="${TIMELINE_SHOW_LESSONS:-6}"
 TOKEN_REPORT_JSON="${OUTPUT_DIR}/memory_mixed_tokens_${START_SESSION}.json"
 
+# Cold-start guard knobs.
+ENFORCE_WAVE1_SQLITE_FAIL="${ENFORCE_WAVE1_SQLITE_FAIL:-1}"
+WAVE1_RETRY_MAX="${WAVE1_RETRY_MAX:-3}"
+WAVE1_RETRY_SESSION_STRIDE="${WAVE1_RETRY_SESSION_STRIDE:-100}"
+
 # Each mixed benchmark wave uses 5 sessions with defaults below.
 WAVE_SIZE=5
-WAVE1_START="${START_SESSION}"
-WAVE2_START="$((START_SESSION + WAVE_SIZE))"
-WAVE3_START="$((START_SESSION + (2 * WAVE_SIZE)))"
-
-WAVE1_JSON="${OUTPUT_DIR}/memory_mixed_wave1_${WAVE1_START}.json"
-WAVE2_JSON="${OUTPUT_DIR}/memory_mixed_wave2_${WAVE2_START}.json"
-WAVE3_JSON="${OUTPUT_DIR}/memory_mixed_wave3_${WAVE3_START}.json"
-WAVE1_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave1_${WAVE1_START}.txt"
-WAVE2_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave2_${WAVE2_START}.txt"
-WAVE3_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave3_${WAVE3_START}.txt"
 
 pick_timeline_session() {
   local wave_json="$1"
@@ -65,6 +50,20 @@ print(int(best.get("session_id", 0)))
 PY
 }
 
+phase_pass_count() {
+  local wave_json="$1"
+  local phase_name="$2"
+  python3 - "$wave_json" "$phase_name" <<'PY'
+import json, sys
+from pathlib import Path
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+phase = sys.argv[2]
+summary = payload.get("phase_summary", {})
+row = summary.get(phase, {}) if isinstance(summary, dict) else {}
+print(int(row.get("pass_count", 0) or 0))
+PY
+}
+
 run_timeline() {
   local wave_json="$1"
   local output_txt="$2"
@@ -85,77 +84,101 @@ run_timeline() {
   echo "Wrote timeline: ${output_txt}"
 }
 
-echo "== Memory V2 Hackathon Demo =="
+run_wave() {
+  local wave_title="$1"
+  local start_session="$2"
+  local output_json="$3"
+  local clear_lessons="$4"
+
+  echo
+  echo "== ${wave_title} =="
+
+  local cmd=(
+    python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py
+    --grid-task-id aggregate_report
+    --fluxtool-task-id aggregate_report_holdout
+    --shell-task-id shell_excel_build_report
+    --sqlite-task-id "${SQLITE_TASK_ID}"
+    --grid-runs 1
+    --fluxtool-runs 1
+    --shell-runs 1
+    --sqlite-runs 1
+    --retention-runs 1
+    --start-session "${start_session}"
+    --max-steps "${MAX_STEPS}"
+    --learning-mode "${LEARNING_MODE}"
+    --posttask-mode "${POSTTASK_MODE}"
+    --bootstrap
+    --mixed-errors
+    --cryptic-errors
+    --output-json "${output_json}"
+  )
+  if [[ "${clear_lessons}" == "1" ]]; then
+    cmd+=(--clear-lessons)
+  fi
+  "${cmd[@]}"
+}
+
+echo "== Memory V2 Hackathon Demo (Legacy Runner) =="
 echo "root=${ROOT_DIR}"
 echo "start_session=${START_SESSION} max_steps=${MAX_STEPS} learning_mode=${LEARNING_MODE}"
-echo "outputs:"
+echo "sqlite_task_id=${SQLITE_TASK_ID}"
+echo "enforce_wave1_sqlite_fail=${ENFORCE_WAVE1_SQLITE_FAIL} retries=${WAVE1_RETRY_MAX} stride=${WAVE1_RETRY_SESSION_STRIDE}"
+echo
+
+wave1_attempt=1
+wave1_start_candidate="${START_SESSION}"
+WAVE1_JSON=""
+WAVE1_START_ACTUAL=""
+
+while :; do
+  wave1_json_candidate="${OUTPUT_DIR}/memory_mixed_wave1_${wave1_start_candidate}.json"
+  run_wave "Wave 1 (cold start, clear lessons) attempt ${wave1_attempt}/${WAVE1_RETRY_MAX}" "${wave1_start_candidate}" "${wave1_json_candidate}" "1"
+
+  if [[ "${ENFORCE_WAVE1_SQLITE_FAIL}" != "1" ]]; then
+    WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    break
+  fi
+
+  sqlite_pass_count="$(phase_pass_count "${wave1_json_candidate}" "sqlite_interference")"
+  if [[ "${sqlite_pass_count}" -eq 0 ]]; then
+    WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    break
+  fi
+
+  if [[ "${wave1_attempt}" -ge "${WAVE1_RETRY_MAX}" ]]; then
+    echo
+    echo "WARNING: sqlite_interference still passed on wave 1 after ${WAVE1_RETRY_MAX} attempts; continuing anyway."
+    WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    break
+  fi
+
+  echo
+  echo "Wave 1 sqlite_interference passed unexpectedly (cold run). Retrying wave 1 with a fresh session block..."
+  wave1_attempt=$((wave1_attempt + 1))
+  wave1_start_candidate=$((wave1_start_candidate + WAVE1_RETRY_SESSION_STRIDE))
+done
+
+WAVE2_START=$((WAVE1_START_ACTUAL + WAVE_SIZE))
+WAVE3_START=$((WAVE1_START_ACTUAL + (2 * WAVE_SIZE)))
+
+WAVE2_JSON="${OUTPUT_DIR}/memory_mixed_wave2_${WAVE2_START}.json"
+WAVE3_JSON="${OUTPUT_DIR}/memory_mixed_wave3_${WAVE3_START}.json"
+WAVE1_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave1_${WAVE1_START_ACTUAL}.txt"
+WAVE2_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave2_${WAVE2_START}.txt"
+WAVE3_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave3_${WAVE3_START}.txt"
+
+echo
+echo "Final output artifacts:"
 echo "  ${WAVE1_JSON}"
 echo "  ${WAVE2_JSON}"
 echo "  ${WAVE3_JSON}"
-echo
 
-echo "== Wave 1 (cold start, clear lessons) =="
-python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py \
-  --grid-task-id aggregate_report \
-  --fluxtool-task-id aggregate_report_holdout \
-  --shell-task-id shell_excel_build_report \
-  --sqlite-task-id import_aggregate \
-  --grid-runs 1 \
-  --fluxtool-runs 1 \
-  --shell-runs 1 \
-  --sqlite-runs 1 \
-  --retention-runs 1 \
-  --start-session "${WAVE1_START}" \
-  --max-steps "${MAX_STEPS}" \
-  --learning-mode "${LEARNING_MODE}" \
-  --posttask-mode "${POSTTASK_MODE}" \
-  --bootstrap \
-  --mixed-errors \
-  --cryptic-errors \
-  --clear-lessons \
-  --output-json "${WAVE1_JSON}"
-
-echo
-echo "== Wave 2 (memory reused) =="
-python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py \
-  --grid-task-id aggregate_report \
-  --fluxtool-task-id aggregate_report_holdout \
-  --shell-task-id shell_excel_build_report \
-  --sqlite-task-id import_aggregate \
-  --grid-runs 1 \
-  --fluxtool-runs 1 \
-  --shell-runs 1 \
-  --sqlite-runs 1 \
-  --retention-runs 1 \
-  --start-session "${WAVE2_START}" \
-  --max-steps "${MAX_STEPS}" \
-  --learning-mode "${LEARNING_MODE}" \
-  --posttask-mode "${POSTTASK_MODE}" \
-  --bootstrap \
-  --mixed-errors \
-  --cryptic-errors \
-  --output-json "${WAVE2_JSON}"
-
-echo
-echo "== Wave 3 (memory reused) =="
-python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py \
-  --grid-task-id aggregate_report \
-  --fluxtool-task-id aggregate_report_holdout \
-  --shell-task-id shell_excel_build_report \
-  --sqlite-task-id import_aggregate \
-  --grid-runs 1 \
-  --fluxtool-runs 1 \
-  --shell-runs 1 \
-  --sqlite-runs 1 \
-  --retention-runs 1 \
-  --start-session "${WAVE3_START}" \
-  --max-steps "${MAX_STEPS}" \
-  --learning-mode "${LEARNING_MODE}" \
-  --posttask-mode "${POSTTASK_MODE}" \
-  --bootstrap \
-  --mixed-errors \
-  --cryptic-errors \
-  --output-json "${WAVE3_JSON}"
+run_wave "Wave 2 (memory reused)" "${WAVE2_START}" "${WAVE2_JSON}" "0"
+run_wave "Wave 3 (memory reused)" "${WAVE3_START}" "${WAVE3_JSON}" "0"
 
 echo
 if [[ "${AUTO_TIMELINE}" == "1" ]]; then
@@ -169,7 +192,7 @@ if [[ "${AUTO_TIMELINE}" == "1" ]]; then
   echo "  ${WAVE3_TIMELINE}"
 else
   echo "== Suggested timeline commands for demo narration =="
-  echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE1_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
+  echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE1_START_ACTUAL + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
   echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE2_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
   echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE3_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
 fi
