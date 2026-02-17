@@ -23,6 +23,7 @@ The protocol validates:
 Run the 3-wave hackathon demo with compact console output:
 
 ```bash
+START_SESSION=120001 \
 AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 ```
@@ -30,6 +31,26 @@ bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 Notes:
 - `--pretty` keeps benchmark tables and writes JSON artifacts, but skips the giant inline JSON block.
 - Outputs are still written to `/tmp/memory_mixed_wave*.json`, `/tmp/memory_timeline_wave*.txt`, `/tmp/memory_mixed_tokens_*.json`.
+- Legacy entrypoint is a compatibility alias to the same script logic:
+  - `bash tracks/cli_sqlite/scripts/run_hackathon_demo_legacy.sh --pretty`
+
+Run targeted 3-wave memory checks (fast iteration before full pipeline):
+
+```bash
+# gridtool expected: fail -> pass -> pass
+bash tracks/cli_sqlite/scripts/run_tool_three_waves.sh \
+  --domain gridtool \
+  --task-id multi_step_pipeline \
+  --start-session 100651 \
+  --max-steps 4
+
+# shell expected: fail -> pass -> pass
+bash tracks/cli_sqlite/scripts/run_tool_three_waves.sh \
+  --domain shell \
+  --task-id shell_excel_multi_summary \
+  --start-session 100451 \
+  --max-steps 4
+```
 
 Run stability protocol (strict lane default):
 
@@ -51,13 +72,13 @@ Run the mixed 5-phase protocol in one command (`grid -> fluxtool -> shell(excel)
 
 ```bash
 python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py \
-  --grid-task-id aggregate_report \
+  --grid-task-id multi_step_pipeline \
   --fluxtool-task-id aggregate_report_holdout \
-  --shell-task-id shell_excel_build_report \
-  --sqlite-task-id import_aggregate \
+  --shell-task-id shell_excel_multi_summary \
+  --sqlite-task-id incremental_reconcile \
   --retention-runs 1 \
   --start-session 52001 \
-  --max-steps 8 \
+  --max-steps 4 \
   --learning-mode strict \
   --posttask-mode candidate \
   --output-json tracks/cli_sqlite/sessions/memory_mixed_52001.json

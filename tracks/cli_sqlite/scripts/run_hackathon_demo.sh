@@ -18,7 +18,7 @@ Options:
 
 Env knobs:
   START_SESSION=56001
-  MAX_STEPS=5
+  MAX_STEPS=4
   LEARNING_MODE=strict
   POSTTASK_MODE=candidate
   GRID_TASK_ID=multi_step_pipeline

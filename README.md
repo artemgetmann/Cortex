@@ -63,6 +63,7 @@ You should see:
 ## Run The Demo (One Command)
 
 ```bash
+START_SESSION=120001 \
 AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 ```
@@ -72,6 +73,36 @@ Outputs:
 - wave summaries: `/tmp/memory_mixed_wave*.json`
 - timelines: `/tmp/memory_timeline_wave*.txt`
 - token report: `/tmp/memory_mixed_tokens_*.json`
+
+Legacy command compatibility (same behavior, alias wrapper):
+
+```bash
+START_SESSION=120001 \
+AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
+bash tracks/cli_sqlite/scripts/run_hackathon_demo_legacy.sh --pretty
+```
+
+## Targeted 3-Wave Checks (Fast)
+
+Grid memory curve (expected pattern: fail -> pass -> pass):
+
+```bash
+bash tracks/cli_sqlite/scripts/run_tool_three_waves.sh \
+  --domain gridtool \
+  --task-id multi_step_pipeline \
+  --start-session 100651 \
+  --max-steps 4
+```
+
+Shell memory curve (expected pattern: fail -> pass -> pass):
+
+```bash
+bash tracks/cli_sqlite/scripts/run_tool_three_waves.sh \
+  --domain shell \
+  --task-id shell_excel_multi_summary \
+  --start-session 100451 \
+  --max-steps 4
+```
 
 ## Why This Matters
 
