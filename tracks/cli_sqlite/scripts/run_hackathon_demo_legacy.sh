@@ -1,56 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hackathon demo runner.
-# Purpose:
-# - Run 3 sequential mixed-benchmark waves with shared memory.
-# - Optionally produce cleaner demo output via --pretty.
-# - Optionally auto-generate timeline traces and token summaries.
-
-usage() {
-  cat <<'EOF'
-Usage:
-  bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh [--pretty]
-
-Options:
-  --pretty      suppress giant JSON dumps and print compact wave summaries
-  -h, --help    show this help
-
-Env knobs:
-  START_SESSION=56001
-  MAX_STEPS=5
-  LEARNING_MODE=strict
-  POSTTASK_MODE=candidate
-  SQLITE_TASK_ID=import_aggregate
-  OUTPUT_DIR=/tmp
-  AUTO_TIMELINE=0|1
-  AUTO_TOKEN_REPORT=0|1
-  TIMELINE_SHOW_LESSONS=6
-  ENFORCE_WAVE1_SQLITE_FAIL=1
-  WAVE1_RETRY_MAX=3
-  WAVE1_RETRY_SESSION_STRIDE=100
-  PRETTY_MODE=0|1  # same effect as --pretty
-EOF
-}
-
-PRETTY_MODE="${PRETTY_MODE:-0}"
-while (($#)); do
-  case "$1" in
-    --pretty)
-      PRETTY_MODE=1
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "Unknown arg: $1" >&2
-      usage
-      exit 1
-      ;;
-  esac
-  shift
-done
+# Legacy-style hackathon demo runner with a cold-start stability guard.
+# Goal: keep the same narrative structure while avoiding "lucky" wave-1 runs
+# where sqlite cold-start unexpectedly passes and weakens the demo signal.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
@@ -64,97 +17,26 @@ OUTPUT_DIR="${OUTPUT_DIR:-/tmp}"
 AUTO_TIMELINE="${AUTO_TIMELINE:-1}"
 AUTO_TOKEN_REPORT="${AUTO_TOKEN_REPORT:-1}"
 TIMELINE_SHOW_LESSONS="${TIMELINE_SHOW_LESSONS:-6}"
+TOKEN_REPORT_JSON="${OUTPUT_DIR}/memory_mixed_tokens_${START_SESSION}.json"
+
+# Cold-start guard knobs.
 ENFORCE_WAVE1_SQLITE_FAIL="${ENFORCE_WAVE1_SQLITE_FAIL:-1}"
 WAVE1_RETRY_MAX="${WAVE1_RETRY_MAX:-3}"
 WAVE1_RETRY_SESSION_STRIDE="${WAVE1_RETRY_SESSION_STRIDE:-100}"
 
 # Each mixed benchmark wave uses 5 sessions with defaults below.
 WAVE_SIZE=5
-TOKEN_REPORT_JSON="${OUTPUT_DIR}/memory_mixed_tokens_${START_SESSION}.json"
-
-WAVE1_START_ACTUAL=""
-WAVE2_START=""
-WAVE3_START=""
-WAVE1_JSON=""
-WAVE2_JSON=""
-WAVE3_JSON=""
-WAVE1_TIMELINE=""
-WAVE2_TIMELINE=""
-WAVE3_TIMELINE=""
-
-MIXED_BENCH_EXTRA_ARGS=()
-if [[ "${PRETTY_MODE}" == "1" ]]; then
-  MIXED_BENCH_EXTRA_ARGS+=(--no-print-json-summary)
-fi
-
-print_pretty_wave() {
-  local wave_label="$1"
-  local json_path="$2"
-  python3 - "${wave_label}" "${json_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-label = sys.argv[1]
-path = Path(sys.argv[2])
-payload = json.loads(path.read_text(encoding="utf-8"))
-overall = payload.get("overall_summary", {})
-phase = payload.get("phase_summary", {})
-
-def _f(v, nd=2):
-    try:
-        return f"{float(v):.{nd}f}"
-    except Exception:
-        return "n/a"
-
-def _pct(v):
-    try:
-        return f"{100.0 * float(v):.1f}%"
-    except Exception:
-        return "n/a"
-
-print(f"\n== {label} Pretty Summary ==")
-print(
-    "overall: "
-    f"pass_rate={_pct(overall.get('pass_rate'))} "
-    f"score={_f(overall.get('mean_score'))} "
-    f"steps={_f(overall.get('mean_steps'))} "
-    f"errs={_f(overall.get('mean_tool_errors'))} "
-    f"acts={int(overall.get('lesson_activations_total') or 0)} "
-    f"time_s={_f(overall.get('elapsed_s_total'))}"
-)
-print("phase snapshots:")
-for name in (
-    "grid_warmup",
-    "fluxtool_interference",
-    "shell_excel_interference",
-    "sqlite_interference",
-    "grid_retention",
-):
-    s = phase.get(name, {})
-    print(
-        f"- {name}: pass={_pct(s.get('pass_rate'))} "
-        f"score={_f(s.get('mean_score'))} "
-        f"steps={_f(s.get('mean_steps'))} "
-        f"errs={_f(s.get('mean_tool_errors'))} "
-        f"acts={int(s.get('lesson_activations_total') or 0)}"
-    )
-PY
-}
 
 pick_timeline_session() {
   local wave_json="$1"
   python3 - "$wave_json" <<'PY'
-import json
-import sys
+import json, sys
 from pathlib import Path
-
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 runs = payload.get("runs", [])
 if not isinstance(runs, list) or not runs:
     print("")
     raise SystemExit(0)
-
 best = sorted(
     [r for r in runs if isinstance(r, dict)],
     key=lambda r: (
@@ -172,10 +54,8 @@ phase_pass_count() {
   local wave_json="$1"
   local phase_name="$2"
   python3 - "$wave_json" "$phase_name" <<'PY'
-import json
-import sys
+import json, sys
 from pathlib import Path
-
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 phase = sys.argv[2]
 summary = payload.get("phase_summary", {})
@@ -206,13 +86,13 @@ run_timeline() {
 
 run_wave() {
   local wave_title="$1"
-  local wave_start="$2"
-  local wave_json="$3"
-  local clear_flag="$4"
-  local clear_label="$5"
+  local start_session="$2"
+  local output_json="$3"
+  local clear_lessons="$4"
 
   echo
-  echo "== ${wave_title} (${clear_label}) =="
+  echo "== ${wave_title} =="
+
   local cmd=(
     python3 tracks/cli_sqlite/scripts/run_mixed_benchmark.py
     --grid-task-id aggregate_report
@@ -224,60 +104,55 @@ run_wave() {
     --shell-runs 1
     --sqlite-runs 1
     --retention-runs 1
-    --start-session "${wave_start}"
+    --start-session "${start_session}"
     --max-steps "${MAX_STEPS}"
     --learning-mode "${LEARNING_MODE}"
     --posttask-mode "${POSTTASK_MODE}"
     --bootstrap
     --mixed-errors
     --cryptic-errors
-    --output-json "${wave_json}"
+    --output-json "${output_json}"
   )
-  if [[ "${clear_flag}" == "1" ]]; then
+  if [[ "${clear_lessons}" == "1" ]]; then
     cmd+=(--clear-lessons)
   fi
-  if [[ "${#MIXED_BENCH_EXTRA_ARGS[@]}" -gt 0 ]]; then
-    cmd+=("${MIXED_BENCH_EXTRA_ARGS[@]}")
-  fi
   "${cmd[@]}"
-
-  if [[ "${PRETTY_MODE}" == "1" ]]; then
-    print_pretty_wave "${wave_title}" "${wave_json}"
-  fi
 }
 
-echo "== Memory V2 Hackathon Demo =="
+echo "== Memory V2 Hackathon Demo (Legacy Runner) =="
 echo "root=${ROOT_DIR}"
 echo "start_session=${START_SESSION} max_steps=${MAX_STEPS} learning_mode=${LEARNING_MODE}"
 echo "sqlite_task_id=${SQLITE_TASK_ID}"
 echo "enforce_wave1_sqlite_fail=${ENFORCE_WAVE1_SQLITE_FAIL} retries=${WAVE1_RETRY_MAX} stride=${WAVE1_RETRY_SESSION_STRIDE}"
-echo "pretty_mode=${PRETTY_MODE} auto_timeline=${AUTO_TIMELINE} auto_token_report=${AUTO_TOKEN_REPORT}"
 echo
 
 wave1_attempt=1
 wave1_start_candidate="${START_SESSION}"
+WAVE1_JSON=""
+WAVE1_START_ACTUAL=""
+
 while :; do
   wave1_json_candidate="${OUTPUT_DIR}/memory_mixed_wave1_${wave1_start_candidate}.json"
-  run_wave "Wave 1" "${wave1_start_candidate}" "${wave1_json_candidate}" "1" "cold start, clear lessons (attempt ${wave1_attempt}/${WAVE1_RETRY_MAX})"
+  run_wave "Wave 1 (cold start, clear lessons) attempt ${wave1_attempt}/${WAVE1_RETRY_MAX}" "${wave1_start_candidate}" "${wave1_json_candidate}" "1"
 
   if [[ "${ENFORCE_WAVE1_SQLITE_FAIL}" != "1" ]]; then
-    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     break
   fi
 
   sqlite_pass_count="$(phase_pass_count "${wave1_json_candidate}" "sqlite_interference")"
   if [[ "${sqlite_pass_count}" -eq 0 ]]; then
-    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     break
   fi
 
   if [[ "${wave1_attempt}" -ge "${WAVE1_RETRY_MAX}" ]]; then
     echo
     echo "WARNING: sqlite_interference still passed on wave 1 after ${WAVE1_RETRY_MAX} attempts; continuing anyway."
-    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     WAVE1_JSON="${wave1_json_candidate}"
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
     break
   fi
 
@@ -289,6 +164,7 @@ done
 
 WAVE2_START=$((WAVE1_START_ACTUAL + WAVE_SIZE))
 WAVE3_START=$((WAVE1_START_ACTUAL + (2 * WAVE_SIZE)))
+
 WAVE2_JSON="${OUTPUT_DIR}/memory_mixed_wave2_${WAVE2_START}.json"
 WAVE3_JSON="${OUTPUT_DIR}/memory_mixed_wave3_${WAVE3_START}.json"
 WAVE1_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave1_${WAVE1_START_ACTUAL}.txt"
@@ -300,10 +176,9 @@ echo "Final output artifacts:"
 echo "  ${WAVE1_JSON}"
 echo "  ${WAVE2_JSON}"
 echo "  ${WAVE3_JSON}"
-echo
 
-run_wave "Wave 2" "${WAVE2_START}" "${WAVE2_JSON}" "0" "memory reused"
-run_wave "Wave 3" "${WAVE3_START}" "${WAVE3_JSON}" "0" "memory reused"
+run_wave "Wave 2 (memory reused)" "${WAVE2_START}" "${WAVE2_JSON}" "0"
+run_wave "Wave 3 (memory reused)" "${WAVE3_START}" "${WAVE3_JSON}" "0"
 
 echo
 if [[ "${AUTO_TIMELINE}" == "1" ]]; then
@@ -330,27 +205,7 @@ if [[ "${AUTO_TOKEN_REPORT}" == "1" ]]; then
     --input-json "${WAVE2_JSON}" \
     --input-json "${WAVE3_JSON}" \
     --output-json "${TOKEN_REPORT_JSON}"
-  if [[ "${PRETTY_MODE}" == "1" ]]; then
-    python3 - "${TOKEN_REPORT_JSON}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-grand = payload.get("grand_total", {})
-print("\n== Token Grand Total (Pretty) ==")
-print(
-    f"runs={int(grand.get('runs') or 0)} "
-    f"in={int(grand.get('input_tokens') or 0)} "
-    f"out={int(grand.get('output_tokens') or 0)} "
-    f"cache_read={int(grand.get('cache_read_input_tokens') or 0)} "
-    f"cache_create={int(grand.get('cache_creation_input_tokens') or 0)} "
-    f"all={int(grand.get('total_with_cache_tokens') or 0)}"
-)
-PY
-  fi
   echo "Token report artifact: ${TOKEN_REPORT_JSON}"
 fi
-
 echo
 echo "Done."
