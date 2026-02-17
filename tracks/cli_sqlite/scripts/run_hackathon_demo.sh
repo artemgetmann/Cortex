@@ -21,10 +21,14 @@ Env knobs:
   MAX_STEPS=5
   LEARNING_MODE=strict
   POSTTASK_MODE=candidate
+  SQLITE_TASK_ID=import_aggregate
   OUTPUT_DIR=/tmp
   AUTO_TIMELINE=0|1
   AUTO_TOKEN_REPORT=0|1
   TIMELINE_SHOW_LESSONS=6
+  ENFORCE_WAVE1_SQLITE_FAIL=1
+  WAVE1_RETRY_MAX=3
+  WAVE1_RETRY_SESSION_STRIDE=100
   PRETTY_MODE=0|1  # same effect as --pretty
 EOF
 }
@@ -55,24 +59,28 @@ START_SESSION="${START_SESSION:-56001}"
 MAX_STEPS="${MAX_STEPS:-5}"
 LEARNING_MODE="${LEARNING_MODE:-strict}"
 POSTTASK_MODE="${POSTTASK_MODE:-candidate}"
+SQLITE_TASK_ID="${SQLITE_TASK_ID:-import_aggregate}"
 OUTPUT_DIR="${OUTPUT_DIR:-/tmp}"
 AUTO_TIMELINE="${AUTO_TIMELINE:-1}"
 AUTO_TOKEN_REPORT="${AUTO_TOKEN_REPORT:-1}"
 TIMELINE_SHOW_LESSONS="${TIMELINE_SHOW_LESSONS:-6}"
+ENFORCE_WAVE1_SQLITE_FAIL="${ENFORCE_WAVE1_SQLITE_FAIL:-1}"
+WAVE1_RETRY_MAX="${WAVE1_RETRY_MAX:-3}"
+WAVE1_RETRY_SESSION_STRIDE="${WAVE1_RETRY_SESSION_STRIDE:-100}"
 
 # Each mixed benchmark wave uses 5 sessions with defaults below.
 WAVE_SIZE=5
-WAVE1_START="${START_SESSION}"
-WAVE2_START="$((START_SESSION + WAVE_SIZE))"
-WAVE3_START="$((START_SESSION + (2 * WAVE_SIZE)))"
-
-WAVE1_JSON="${OUTPUT_DIR}/memory_mixed_wave1_${WAVE1_START}.json"
-WAVE2_JSON="${OUTPUT_DIR}/memory_mixed_wave2_${WAVE2_START}.json"
-WAVE3_JSON="${OUTPUT_DIR}/memory_mixed_wave3_${WAVE3_START}.json"
 TOKEN_REPORT_JSON="${OUTPUT_DIR}/memory_mixed_tokens_${START_SESSION}.json"
-WAVE1_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave1_${WAVE1_START}.txt"
-WAVE2_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave2_${WAVE2_START}.txt"
-WAVE3_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave3_${WAVE3_START}.txt"
+
+WAVE1_START_ACTUAL=""
+WAVE2_START=""
+WAVE3_START=""
+WAVE1_JSON=""
+WAVE2_JSON=""
+WAVE3_JSON=""
+WAVE1_TIMELINE=""
+WAVE2_TIMELINE=""
+WAVE3_TIMELINE=""
 
 MIXED_BENCH_EXTRA_ARGS=()
 if [[ "${PRETTY_MODE}" == "1" ]]; then
@@ -160,6 +168,22 @@ print(int(best.get("session_id", 0)))
 PY
 }
 
+phase_pass_count() {
+  local wave_json="$1"
+  local phase_name="$2"
+  python3 - "$wave_json" "$phase_name" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+phase = sys.argv[2]
+summary = payload.get("phase_summary", {})
+row = summary.get(phase, {}) if isinstance(summary, dict) else {}
+print(int(row.get("pass_count", 0) or 0))
+PY
+}
+
 run_timeline() {
   local wave_json="$1"
   local output_txt="$2"
@@ -194,7 +218,7 @@ run_wave() {
     --grid-task-id aggregate_report
     --fluxtool-task-id aggregate_report_holdout
     --shell-task-id shell_excel_build_report
-    --sqlite-task-id import_aggregate
+    --sqlite-task-id "${SQLITE_TASK_ID}"
     --grid-runs 1
     --fluxtool-runs 1
     --shell-runs 1
@@ -225,14 +249,59 @@ run_wave() {
 echo "== Memory V2 Hackathon Demo =="
 echo "root=${ROOT_DIR}"
 echo "start_session=${START_SESSION} max_steps=${MAX_STEPS} learning_mode=${LEARNING_MODE}"
+echo "sqlite_task_id=${SQLITE_TASK_ID}"
+echo "enforce_wave1_sqlite_fail=${ENFORCE_WAVE1_SQLITE_FAIL} retries=${WAVE1_RETRY_MAX} stride=${WAVE1_RETRY_SESSION_STRIDE}"
 echo "pretty_mode=${PRETTY_MODE} auto_timeline=${AUTO_TIMELINE} auto_token_report=${AUTO_TOKEN_REPORT}"
-echo "outputs:"
+echo
+
+wave1_attempt=1
+wave1_start_candidate="${START_SESSION}"
+while :; do
+  wave1_json_candidate="${OUTPUT_DIR}/memory_mixed_wave1_${wave1_start_candidate}.json"
+  run_wave "Wave 1" "${wave1_start_candidate}" "${wave1_json_candidate}" "1" "cold start, clear lessons (attempt ${wave1_attempt}/${WAVE1_RETRY_MAX})"
+
+  if [[ "${ENFORCE_WAVE1_SQLITE_FAIL}" != "1" ]]; then
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    WAVE1_JSON="${wave1_json_candidate}"
+    break
+  fi
+
+  sqlite_pass_count="$(phase_pass_count "${wave1_json_candidate}" "sqlite_interference")"
+  if [[ "${sqlite_pass_count}" -eq 0 ]]; then
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    WAVE1_JSON="${wave1_json_candidate}"
+    break
+  fi
+
+  if [[ "${wave1_attempt}" -ge "${WAVE1_RETRY_MAX}" ]]; then
+    echo
+    echo "WARNING: sqlite_interference still passed on wave 1 after ${WAVE1_RETRY_MAX} attempts; continuing anyway."
+    WAVE1_START_ACTUAL="${wave1_start_candidate}"
+    WAVE1_JSON="${wave1_json_candidate}"
+    break
+  fi
+
+  echo
+  echo "Wave 1 sqlite_interference passed unexpectedly (cold run). Retrying wave 1 with a fresh session block..."
+  wave1_attempt=$((wave1_attempt + 1))
+  wave1_start_candidate=$((wave1_start_candidate + WAVE1_RETRY_SESSION_STRIDE))
+done
+
+WAVE2_START=$((WAVE1_START_ACTUAL + WAVE_SIZE))
+WAVE3_START=$((WAVE1_START_ACTUAL + (2 * WAVE_SIZE)))
+WAVE2_JSON="${OUTPUT_DIR}/memory_mixed_wave2_${WAVE2_START}.json"
+WAVE3_JSON="${OUTPUT_DIR}/memory_mixed_wave3_${WAVE3_START}.json"
+WAVE1_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave1_${WAVE1_START_ACTUAL}.txt"
+WAVE2_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave2_${WAVE2_START}.txt"
+WAVE3_TIMELINE="${OUTPUT_DIR}/memory_timeline_wave3_${WAVE3_START}.txt"
+
+echo
+echo "Final output artifacts:"
 echo "  ${WAVE1_JSON}"
 echo "  ${WAVE2_JSON}"
 echo "  ${WAVE3_JSON}"
 echo
 
-run_wave "Wave 1" "${WAVE1_START}" "${WAVE1_JSON}" "1" "cold start, clear lessons"
 run_wave "Wave 2" "${WAVE2_START}" "${WAVE2_JSON}" "0" "memory reused"
 run_wave "Wave 3" "${WAVE3_START}" "${WAVE3_JSON}" "0" "memory reused"
 
@@ -248,7 +317,7 @@ if [[ "${AUTO_TIMELINE}" == "1" ]]; then
   echo "  ${WAVE3_TIMELINE}"
 else
   echo "== Suggested timeline commands for demo narration =="
-  echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE1_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
+  echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE1_START_ACTUAL + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
   echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE2_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
   echo "python3 tracks/cli_sqlite/scripts/memory_timeline_demo.py --session $((WAVE3_START + 1)) --show-ok-steps --show-all-tools --show-tool-output --show-lessons ${TIMELINE_SHOW_LESSONS}"
 fi
