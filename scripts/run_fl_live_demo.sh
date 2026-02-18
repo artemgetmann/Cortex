@@ -47,10 +47,18 @@ if [[ -f "${METRICS}" ]]; then
 import json, sys
 path = sys.argv[1]
 m = json.load(open(path, "r", encoding="utf-8"))
-print(f"eval_final_verdict={m.get('eval_final_verdict')}")
-print(f"eval_passed={m.get('eval_passed')} score={m.get('eval_score')}")
-print(f"eval_det_passed={m.get('eval_det_passed')} judge_passed={m.get('judge_passed')}")
+print(
+    "verdict_line: "
+    f"det={m.get('eval_det_passed')} "
+    f"judge={m.get('judge_passed')} "
+    f"final={m.get('eval_final_verdict')} "
+    f"disagree={m.get('eval_disagreement')} "
+    f"score={m.get('eval_score')}"
+)
 print(f"steps={m.get('steps')} tool_errors={m.get('tool_errors')} loop_guard_blocks={m.get('loop_guard_blocks')}")
 PY
   echo "metrics_path=${METRICS}"
+  echo ""
+  echo "Timeline:"
+  "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/render_fl_timeline.py" --session "${SESSION_ID}"
 fi

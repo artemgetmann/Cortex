@@ -118,6 +118,30 @@ That is the path from “token predictor” behavior to persistent, compounding 
 This repo proves the architecture in a controlled CLI lab.  
 Real GUI/computer-use reliability (for harder domains like FL Studio) is still a separate reliability problem, mainly visual grounding and action precision.
 
+## FL Studio Bench Commands
+
+Run one live FL session:
+
+```bash
+./scripts/run_fl_live_demo.sh 210001 12
+```
+
+Run repeated FL sessions and produce a benchmark JSON:
+
+```bash
+python3 scripts/run_fl_benchmark.py \
+  --start-session 210001 \
+  --runs 10 \
+  --max-steps 12 \
+  --output-json /tmp/fl_benchmark_210001.json
+```
+
+Render a compact per-session FL timeline with deterministic/judge/final verdict line:
+
+```bash
+python3 scripts/render_fl_timeline.py --session 210001 --show-output
+```
+
 ## Docs
 
 - `docs/README.md` - docs index

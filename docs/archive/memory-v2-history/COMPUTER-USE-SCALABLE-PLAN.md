@@ -16,7 +16,7 @@ Completed in code:
 
 Pending in code:
 
-- Timeline renderer updates to show deterministic verdict + visual judge verdict + final verdict on one line.
+- Full timeline renderer support added via `scripts/render_fl_timeline.py` (prints deterministic/judge/final verdict line).
 - Full FL 10-step benchmark rerun on machine with Quartz permissions and final demo artifact export.
 
 ## Goal

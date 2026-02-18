@@ -14,7 +14,7 @@ python3 -m pytest tracks/cli_sqlite/tests -q
 ```
 
 Expected signature:
-- All tests pass (current baseline: `49 passed`).
+- All tests pass (current baseline evolves; re-check local output).
 
 ## Strict In-Domain Run (gridtool)
 
