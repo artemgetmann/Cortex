@@ -7,6 +7,7 @@ This folder is split into active Memory V2 docs and archived historical tracks.
 - `docs/MEMORY-V2-BENCHMARKS.md` - benchmark protocol, commands, and interpretation.
 - `docs/MEMORY-V2-CURRENT-FLOW.html` - current CLI Memory V2 runtime flow diagram.
 - `docs/MEMORY-V2-ARCHITECTURE-COMPARE.md` - legacy vs current architecture comparison.
+- `docs/VM-RUNNER.md` - isolated VM runner setup and control scripts.
 
 ## Archived (Historical, Not Active)
 - `docs/archive/memory-v2-history/` - older transfer plans, A/B findings, baseline snapshots, pilot handoffs.

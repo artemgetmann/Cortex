@@ -142,6 +142,25 @@ Render a compact per-session FL timeline with deterministic/judge/final verdict 
 python3 scripts/render_fl_timeline.py --session 210001 --show-output
 ```
 
+## Isolated VM Runner
+
+If you want background iteration without blocking your host desktop:
+
+```bash
+./scripts/vm/provision_cortex_vm.sh
+./scripts/vm/start_cortex_vm.sh
+./scripts/vm/status_cortex_vm.sh
+open "vnc://127.0.0.1:5905"
+```
+
+Stop it:
+
+```bash
+./scripts/vm/stop_cortex_vm.sh
+```
+
+Details and limitations: `docs/VM-RUNNER.md`
+
 ## Docs
 
 - `docs/README.md` - docs index
