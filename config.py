@@ -25,7 +25,8 @@ class CortexConfig:
     enable_prompt_caching: bool
 
     # Computer Use tool + beta flags vary by model family.
-    # Haiku/Sonnet often support computer_20250124; Opus supports computer_20251124 (zoom).
+    # Current mapping in agent.py: Opus 4.6/4.5 -> computer_20251124 (zoom),
+    # Sonnet/Haiku lines -> computer_20250124 (no zoom).
     computer_tool_type_decider: str
     computer_tool_type_heavy: str
     computer_use_beta_decider: str

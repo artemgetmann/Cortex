@@ -52,6 +52,17 @@ Rules:
 """
 
 
+def _supports_computer_20251124(model: str) -> bool:
+    """
+    Map model id -> computer tool generation.
+
+    Anthropic currently documents `computer_20251124` (zoom-enabled) for Opus
+    4.6/4.5, while Sonnet 4.6/4.5 stay on `computer_20250124`.
+    """
+    model_id = model.strip().lower()
+    return ("opus-4-6" in model_id) or ("opus-4-5" in model_id)
+
+
 def build_system_prompt(*, tool_api_type: str) -> str:
     # zoom exists only on computer_20251124
     zoom_line = ""
@@ -343,8 +354,10 @@ def run_agent(
 ) -> RunResult:
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
 
-    # Tool version + beta flag must match the model's supported computer tool.
-    if model == cfg.model_heavy:
+    # Tool version + beta flag must match the chosen model's computer-use support.
+    # Do not rely on "heavy vs decider" naming because users may run Sonnet as the
+    # primary model for speed/cost.
+    if _supports_computer_20251124(model):
         computer_api_type = cfg.computer_tool_type_heavy
         computer_beta = cfg.computer_use_beta_heavy
     else:
