@@ -3,6 +3,10 @@
 .worktree/
 .vm/
 
+# Parallels VM bundles (large, local-only)
+*.pvm
+*.macvm
+
 # Local assistant config (machine/user-specific).
 .claude/
 
