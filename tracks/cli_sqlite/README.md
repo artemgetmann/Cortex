@@ -41,6 +41,17 @@ python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
   --verbose
 ```
 
+Run executor turns through Claude subscription (`claude -p`) instead of API:
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id import_aggregate \
+  --session 1002 \
+  --llm-backend claude_print \
+  --no-posttask-learn \
+  --verbose
+```
+
 Run tests:
 
 ```bash

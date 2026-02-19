@@ -233,6 +233,66 @@ def test_run_cli_agent_script_forwards_transfer_retrieval_flags(
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_forwards_llm_backend_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--llm-backend",
+            "claude_print",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["llm_backend"] == "claude_print"
+    capsys.readouterr()
+
+
+def test_run_cli_agent_with_claude_print_backend_skips_posttask_llm_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="")
+
+    monkeypatch.setattr(
+        agent_cli,
+        "_create_executor_response_via_claude_print",
+        lambda **kwargs: ([{"type": "text", "text": "done"}], {"backend": "claude_print"}),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task=None,
+        session_id=103,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        llm_backend="claude_print",
+    )
+    assert result.metrics["llm_backend"] == "claude_print"
+    assert result.metrics["posttask_skill_patching_skip_reason"] == "llm_backend"
+    assert "judge_skipped_llm_backend" in result.metrics["eval_reasons"]
+
+
 def test_run_memory_stability_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, Any]] = []
 

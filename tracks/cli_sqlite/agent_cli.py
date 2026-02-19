@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
+import subprocess
 import time
+import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +90,8 @@ DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
+LLM_BACKENDS = ("anthropic", "claude_print")
+DEFAULT_LLM_BACKEND = "anthropic"
 
 DEPENDENCY_SETUP_TAGS: frozenset[str] = frozenset(
     {
@@ -194,6 +199,201 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _normalize_llm_backend(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in LLM_BACKENDS:
+        raise ValueError(f"Unsupported llm_backend: {value!r}. Expected one of {LLM_BACKENDS}.")
+    return normalized
+
+
+def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
+    """Flatten API-style block history into compact text for claude -p turns."""
+    lines: list[str] = []
+    for msg in messages[-20:]:
+        role = str(msg.get("role", "user")).strip() or "user"
+        lines.append(f"ROLE: {role}")
+        blocks = msg.get("content")
+        if not isinstance(blocks, list):
+            lines.append(str(blocks))
+            lines.append("")
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                lines.append(str(block))
+                continue
+            btype = str(block.get("type", "")).strip().lower()
+            if btype == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    lines.append(f"TEXT: {text}")
+            elif btype == "tool_use":
+                tool_name = str(block.get("name", "")).strip()
+                tool_input = block.get("input", {})
+                payload = json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
+                lines.append(f"TOOL_USE {tool_name}: {payload}")
+            elif btype == "tool_result":
+                tool_use_id = str(block.get("tool_use_id", "")).strip()
+                is_error = bool(block.get("is_error", False))
+                content = block.get("content")
+                if isinstance(content, list):
+                    fragments = []
+                    for part in content:
+                        if isinstance(part, dict) and str(part.get("type", "")).strip() == "text":
+                            fragments.append(str(part.get("text", "")))
+                    content_text = " ".join(fragment for fragment in fragments if fragment).strip()
+                else:
+                    content_text = str(content or "").strip()
+                lines.append(f"TOOL_RESULT {tool_use_id} error={is_error}: {content_text}")
+            else:
+                lines.append(json.dumps(block, ensure_ascii=True, sort_keys=True))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _extract_first_json_object(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        raise RuntimeError("claude -p returned empty output.")
+    # Handle fenced output first, then raw JSON body.
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    raise RuntimeError(f"claude -p output is not valid JSON object: {_clip_text(text, max_chars=500)}")
+
+
+def _assistant_blocks_from_claude_print_payload(
+    *,
+    payload: dict[str, Any],
+    allowed_tool_names: set[str],
+) -> list[dict[str, Any]]:
+    assistant_text = str(payload.get("assistant_text", "")).strip()
+    blocks: list[dict[str, Any]] = []
+    if assistant_text:
+        blocks.append({"type": "text", "text": assistant_text})
+    tool_calls = payload.get("tool_calls", [])
+    if not isinstance(tool_calls, list):
+        raise RuntimeError(f"claude -p payload 'tool_calls' must be a list, got: {type(tool_calls).__name__}")
+    for idx, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
+            raise RuntimeError(f"claude -p tool call at index {idx} must be object, got: {type(call).__name__}")
+        tool_name = str(call.get("name", "")).strip()
+        tool_input = call.get("input", {})
+        if not tool_name:
+            raise RuntimeError(f"claude -p tool call at index {idx} is missing 'name'.")
+        if tool_name not in allowed_tool_names:
+            raise RuntimeError(f"claude -p requested unknown tool '{tool_name}'. Allowed: {sorted(allowed_tool_names)}")
+        if not isinstance(tool_input, dict):
+            raise RuntimeError(
+                f"claude -p tool call '{tool_name}' has non-object input: {type(tool_input).__name__}"
+            )
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": f"toolu_cli_{uuid.uuid4().hex[:12]}_{idx}",
+                "name": tool_name,
+                "input": tool_input,
+            }
+        )
+    return blocks
+
+
+def _create_executor_response_via_claude_print(
+    *,
+    model: str,
+    system_prompt: str,
+    tools: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run one executor turn via `claude -p` and return synthetic assistant blocks."""
+    tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
+    allowed_tool_names = {name for name in tool_names if name}
+    tools_for_prompt = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        tools_for_prompt.append(
+            {
+                "name": name,
+                "description": str(tool.get("description", "")).strip(),
+                "input_schema": tool.get("input_schema", {}),
+            }
+        )
+    history_text = _render_message_history_for_claude_print(messages)
+    prompt = (
+        "You are the planner for a tool-using loop.\n"
+        "Return exactly one JSON object with this shape:\n"
+        "{\n"
+        '  "assistant_text": "short reasoning",\n'
+        '  "tool_calls": [{"name":"tool_name","input":{...}}]\n'
+        "}\n"
+        "Rules:\n"
+        "- Use ONLY tools listed below.\n"
+        "- tool_calls may contain multiple calls, or be empty if task is done.\n"
+        "- input must match each tool input_schema.\n"
+        "- Do not wrap JSON in markdown.\n\n"
+        f"SYSTEM_PROMPT:\n{system_prompt}\n\n"
+        f"TOOLS:\n{json.dumps(tools_for_prompt, ensure_ascii=True, indent=2, sort_keys=True)}\n\n"
+        f"MESSAGE_HISTORY:\n{history_text}\n"
+    )
+    timeout_s = max(10, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "90")))
+    cmd = [
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "text",
+        "--tools",
+        "",
+    ]
+    if model.strip():
+        cmd.extend(["--model", model.strip()])
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    stdout = str(proc.stdout or "")
+    stderr = str(proc.stderr or "")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "claude -p executor turn failed "
+            f"(code={proc.returncode}): {_clip_text(stderr or stdout, max_chars=800)}"
+        )
+    payload = _extract_first_json_object(stdout)
+    blocks = _assistant_blocks_from_claude_print_payload(
+        payload=payload,
+        allowed_tool_names=allowed_tool_names,
+    )
+    usage = {
+        "backend": "claude_print",
+        "model": model,
+        "stdout_chars": len(stdout),
+        "stderr_chars": len(stderr),
+    }
+    return blocks, usage
 
 
 def _hash_base64_png(image_b64: str | None) -> str | None:
@@ -761,6 +961,7 @@ def run_cli_agent(
     enable_transfer_retrieval: bool = False,
     transfer_retrieval_max_results: int = DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     transfer_retrieval_score_weight: float = DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
+    llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     learning_mode = _normalize_learning_mode(learning_mode)
@@ -770,12 +971,18 @@ def run_cli_agent(
     knowledge_provider = LocalDocsKnowledgeProvider()
     transfer_retrieval_max_results = max(0, int(transfer_retrieval_max_results))
     transfer_retrieval_score_weight = max(0.0, float(transfer_retrieval_score_weight))
+    llm_backend = _normalize_llm_backend(llm_backend)
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
         transfer_retrieval_max_results=transfer_retrieval_max_results,
         transfer_retrieval_score_weight=transfer_retrieval_score_weight,
     )
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
+    api_key = str(getattr(cfg, "anthropic_api_key", "") or "").strip()
+    client: Any | None = None
+    if llm_backend == "anthropic":
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
+        client = anthropic.Anthropic(api_key=api_key, max_retries=3)
     adapter = _resolve_adapter_with_mode(
         domain,
         cryptic_errors=cryptic_errors,
@@ -932,6 +1139,7 @@ def run_cli_agent(
         "v2_transfer_retrieval_policy": transfer_retrieval_policy,
         "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
         "v2_transfer_retrieval_score_weight": transfer_retrieval_score_weight,
+        "llm_backend": llm_backend,
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
         "v2_reflection_reasons": [],
@@ -998,22 +1206,30 @@ def run_cli_agent(
             # domain-agnostic and helps break repeated failure loops.
             messages.append({"role": "user", "content": [{"type": "text", "text": reflection_pending}]})
             reflection_pending = None
-        response = client.messages.create(
-            model=model_executor,
-            max_tokens=1800,
-            system=system_prompt,
-            tools=tools,
-            messages=messages,
-        )
-
-        try:
-            usage = response.usage.model_dump()  # type: ignore[attr-defined]
-        except Exception:
-            usage_obj = getattr(response, "usage", None)
-            usage = usage_obj.model_dump() if usage_obj is not None and hasattr(usage_obj, "model_dump") else {}
+        if llm_backend == "anthropic":
+            if client is None:
+                raise RuntimeError("Anthropic client unavailable while llm_backend=anthropic.")
+            response = client.messages.create(
+                model=model_executor,
+                max_tokens=1800,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
+            try:
+                usage = response.usage.model_dump()  # type: ignore[attr-defined]
+            except Exception:
+                usage_obj = getattr(response, "usage", None)
+                usage = usage_obj.model_dump() if usage_obj is not None and hasattr(usage_obj, "model_dump") else {}
+            assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
+        else:
+            assistant_blocks, usage = _create_executor_response_via_claude_print(
+                model=model_executor,
+                system_prompt=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
         metrics["usage"].append(usage)
-
-        assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
         messages.append({"role": "assistant", "content": assistant_blocks})
         tool_results: list[dict[str, Any]] = []
         retry_same_step = False
@@ -1409,7 +1625,13 @@ def run_cli_agent(
 
     # LLM Judge — always run if no contract, or if contract failed
     use_llm_judge = not has_contract or not metrics.get("eval_passed", False)
+    if llm_backend != "anthropic":
+        use_llm_judge = False
+        if not has_contract:
+            metrics["eval_reasons"] = list(metrics.get("eval_reasons", [])) + ["judge_skipped_llm_backend"]
     if use_llm_judge:
+        if client is None:
+            raise RuntimeError("LLM judge requested but Anthropic client is unavailable.")
         final_state = adapter.capture_final_state(workspace)
         judge_result: JudgeResult = llm_judge(
             client=client,
@@ -1433,7 +1655,9 @@ def run_cli_agent(
 
     critic_no_updates = False
 
-    if posttask_learn and skill_manifest_entries:
+    if posttask_learn and skill_manifest_entries and llm_backend == "anthropic":
+        if client is None:
+            raise RuntimeError("Posttask learning requires Anthropic client.")
         # Demo mode keeps Memory V2 lesson generation/promotion active while
         # suppressing legacy skill patching hooks/events for cleaner demos.
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
@@ -1702,6 +1926,9 @@ def run_cli_agent(
                     "output": json.dumps(promotion_result, ensure_ascii=True),
                 },
             )
+    elif posttask_learn and llm_backend != "anthropic":
+        metrics["posttask_skill_patching_skipped_by_mode"] = True
+        metrics["posttask_skill_patching_skip_reason"] = "llm_backend"
 
     escalation_state = _escalate_if_needed(
         state=escalation_state,

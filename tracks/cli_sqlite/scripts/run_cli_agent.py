@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -13,9 +14,11 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_CRITIC_MODEL,
     DEFAULT_ARCHITECTURE_MODE,
     DEFAULT_EXECUTOR_MODEL,
+    DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
     DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
+    LLM_BACKENDS,
     LEARNING_MODES,
     run_cli_agent,
 )
@@ -73,10 +76,23 @@ def main() -> int:
         default=DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
         help="Score multiplier applied to transfer-lane candidates",
     )
+    ap.add_argument(
+        "--llm-backend",
+        default=DEFAULT_LLM_BACKEND,
+        choices=LLM_BACKENDS,
+        help="Executor transport: anthropic (API) or claude_print (`claude -p` subscription path).",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except RuntimeError:
+        # claude_print mode can run without API credentials; keep config shape minimal.
+        if args.llm_backend == "claude_print":
+            cfg = SimpleNamespace(anthropic_api_key="")
+        else:
+            raise
     result = run_cli_agent(
         cfg=cfg,
         task_id=args.task_id,
@@ -105,6 +121,7 @@ def main() -> int:
         enable_transfer_retrieval=bool(args.enable_transfer_retrieval),
         transfer_retrieval_max_results=max(0, int(args.transfer_retrieval_max_results)),
         transfer_retrieval_score_weight=max(0.0, float(args.transfer_retrieval_score_weight)),
+        llm_backend=args.llm_backend,
     )
     print(json_dump(result.metrics))
     return 0
