@@ -368,13 +368,19 @@ def _create_executor_response_via_claude_print(
     ]
     if model.strip():
         cmd.extend(["--model", model.strip()])
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"claude -p executor turn timed out after {timeout_s}s. "
+            "Try lowering prompt size, using a faster model, or increasing CORTEX_CLAUDE_PRINT_TIMEOUT_S."
+        ) from exc
     stdout = str(proc.stdout or "")
     stderr = str(proc.stderr or "")
     if proc.returncode != 0:
