@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import os
+import re
+import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import anthropic
+from PIL import Image
 
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
@@ -85,6 +91,8 @@ READ_SKILL_TOOL_NAME = "read_skill"
 NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
 RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
 MAX_SAME_STEP_RETRIES = 2
+LLM_BACKENDS = ("anthropic", "claude_print")
+DEFAULT_LLM_BACKEND = "anthropic"
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
@@ -155,6 +163,333 @@ def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
         "is_error": result.is_error(),
         "content": content or "",
     }
+
+
+def _normalize_llm_backend(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in LLM_BACKENDS:
+        raise ValueError(f"Unsupported llm_backend: {value!r}. Expected one of {LLM_BACKENDS}.")
+    return normalized
+
+
+def _clip_text(text: str, *, max_chars: int = 4000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
+    """
+    Flatten API-style block history into compact text for claude -p.
+
+    Keep the history short to avoid turning each step into a huge prompt.
+    """
+    lines: list[str] = []
+    for msg in messages[-12:]:
+        role = str(msg.get("role", "user")).strip() or "user"
+        lines.append(f"ROLE: {role}")
+        blocks = msg.get("content")
+        if not isinstance(blocks, list):
+            lines.append(str(blocks))
+            lines.append("")
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                lines.append(str(block))
+                continue
+            btype = str(block.get("type", "")).strip().lower()
+            if btype == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    lines.append(f"TEXT: {text}")
+            elif btype == "tool_use":
+                tool_name = str(block.get("name", "")).strip()
+                tool_input = json.dumps(block.get("input", {}), ensure_ascii=True, sort_keys=True)
+                lines.append(f"TOOL_USE {tool_name}: {tool_input}")
+            elif btype == "tool_result":
+                tool_use_id = str(block.get("tool_use_id", "")).strip()
+                is_error = bool(block.get("is_error", False))
+                content = block.get("content")
+                text_parts: list[str] = []
+                has_image = False
+                if isinstance(content, list):
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        ptype = str(part.get("type", "")).strip().lower()
+                        if ptype == "text":
+                            text_parts.append(str(part.get("text", "")))
+                        elif ptype == "image":
+                            has_image = True
+                elif isinstance(content, str):
+                    text_parts.append(content)
+                merged = " ".join(part for part in text_parts if part).strip()
+                if has_image:
+                    merged = f"{merged} [screenshot-attached]".strip()
+                lines.append(f"TOOL_RESULT {tool_use_id} error={is_error}: {merged}")
+            else:
+                lines.append(json.dumps(block, ensure_ascii=True, sort_keys=True))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _extract_latest_tool_result_image(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """
+    Return the latest tool_result image block as a compact JPEG image block.
+    """
+    for msg in reversed(messages):
+        if str(msg.get("role")) != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in reversed(content):
+            if not (isinstance(block, dict) and str(block.get("type")) == "tool_result"):
+                continue
+            parts = block.get("content")
+            if not isinstance(parts, list):
+                continue
+            for part in reversed(parts):
+                if not (isinstance(part, dict) and str(part.get("type")) == "image"):
+                    continue
+                src = part.get("source", {})
+                if not isinstance(src, dict):
+                    continue
+                data = src.get("data")
+                media_type = str(src.get("media_type", "image/png")).strip() or "image/png"
+                if not isinstance(data, str) or not data:
+                    continue
+                compact = _compact_image_block_for_prompt(data_b64=data, media_type=media_type)
+                if compact is not None:
+                    return compact
+    return None
+
+
+def _compact_image_block_for_prompt(*, data_b64: str, media_type: str) -> dict[str, Any] | None:
+    """
+    Downscale/compress screenshot blocks so claude -p prompt size stays tractable.
+    """
+    try:
+        raw = base64.b64decode(data_b64.encode("ascii"), validate=True)
+        with Image.open(io.BytesIO(raw)) as img:
+            working = img.convert("RGB")
+            working.thumbnail((640, 480))
+            out = io.BytesIO()
+            working.save(out, format="JPEG", quality=55, optimize=True)
+            compact_b64 = base64.b64encode(out.getvalue()).decode("ascii")
+    except Exception:
+        return None
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": compact_b64,
+        },
+    }
+
+
+def _extract_first_json_object(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        raise RuntimeError("claude -p returned empty output.")
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    raise RuntimeError(f"claude -p output is not valid JSON object: {_clip_text(text, max_chars=600)}")
+
+
+def _assistant_blocks_from_claude_print_payload(
+    *,
+    payload: dict[str, Any],
+    allowed_tool_names: set[str],
+) -> list[dict[str, Any]]:
+    assistant_text = str(payload.get("assistant_text", "")).strip()
+    blocks: list[dict[str, Any]] = []
+    if assistant_text:
+        blocks.append({"type": "text", "text": assistant_text})
+    tool_calls = payload.get("tool_calls", [])
+    if not isinstance(tool_calls, list):
+        raise RuntimeError(f"claude -p payload 'tool_calls' must be list, got: {type(tool_calls).__name__}")
+    for idx, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
+            raise RuntimeError(f"claude -p tool call at index {idx} must be object, got: {type(call).__name__}")
+        name = str(call.get("name", "")).strip()
+        tool_input = call.get("input", {})
+        if not name:
+            raise RuntimeError(f"claude -p tool call at index {idx} missing 'name'.")
+        if name not in allowed_tool_names:
+            raise RuntimeError(f"claude -p requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
+        if not isinstance(tool_input, dict):
+            raise RuntimeError(
+                f"claude -p tool call '{name}' input must be object, got: {type(tool_input).__name__}"
+            )
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": f"toolu_cli_{uuid.uuid4().hex[:12]}_{idx}",
+                "name": name,
+                "input": tool_input,
+            }
+        )
+    return blocks
+
+
+def _create_executor_response_via_claude_print(
+    *,
+    model: str,
+    system_blocks: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Run one FL executor turn via claude -p using stream-json input.
+
+    We include the latest screenshot as a compact image block so the model
+    still has visual grounding.
+    """
+    allowed_tool_names = {
+        str(tool.get("name", "")).strip()
+        for tool in tools
+        if isinstance(tool, dict) and str(tool.get("name", "")).strip()
+    }
+    tools_for_prompt: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        tools_for_prompt.append(
+            {
+                "name": name,
+                "description": str(tool.get("description", "")).strip(),
+                "input_schema": tool.get("input_schema", {}),
+            }
+        )
+
+    system_text = "\n\n".join(
+        str(block.get("text", "")).strip()
+        for block in system_blocks
+        if isinstance(block, dict) and str(block.get("type", "")).strip() == "text"
+    ).strip()
+    history_text = _render_message_history_for_claude_print(messages)
+    prompt = (
+        "You are the planner for a tool-using FL Studio loop.\n"
+        "Return exactly one JSON object with this shape:\n"
+        "{\n"
+        '  "assistant_text": "short reasoning",\n'
+        '  "tool_calls": [{"name":"tool_name","input":{...}}]\n'
+        "}\n"
+        "Rules:\n"
+        "- Use only listed tools.\n"
+        "- Prefer one decisive tool call at a time.\n"
+        "- tool_calls may be empty if task is complete.\n"
+        "- input must satisfy tool input_schema.\n"
+        "- Output strict JSON only (no markdown).\n\n"
+        f"SYSTEM_PROMPT:\n{system_text}\n\n"
+        f"TOOLS:\n{json.dumps(tools_for_prompt, ensure_ascii=True, indent=2, sort_keys=True)}\n\n"
+        f"MESSAGE_HISTORY:\n{history_text}\n"
+    )
+
+    content_blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    latest_image = _extract_latest_tool_result_image(messages)
+    if latest_image is not None:
+        content_blocks.append({"type": "text", "text": "LATEST_SCREENSHOT:"})
+        content_blocks.append(latest_image)
+    input_line = {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": content_blocks,
+        },
+    }
+
+    timeout_s = max(15, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "120")))
+    cmd = [
+        "claude",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--tools",
+        "",
+    ]
+    if model.strip():
+        cmd.extend(["--model", model.strip()])
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps(input_line, ensure_ascii=True) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"claude -p executor turn timed out after {timeout_s}s. "
+            "Try increasing CORTEX_CLAUDE_PRINT_TIMEOUT_S or reducing max steps."
+        ) from exc
+
+    stdout = str(proc.stdout or "")
+    stderr = str(proc.stderr or "")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "claude -p executor turn failed "
+            f"(code={proc.returncode}): {_clip_text(stderr or stdout, max_chars=800)}"
+        )
+
+    result_text = ""
+    usage_payload: dict[str, Any] = {}
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            evt = json.loads(stripped)
+        except Exception:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        if str(evt.get("type")) == "result":
+            result_text = str(evt.get("result", "") or "")
+            usage = evt.get("usage")
+            if isinstance(usage, dict):
+                usage_payload = usage
+    if not result_text:
+        raise RuntimeError(f"claude -p produced no result payload: {_clip_text(stdout, max_chars=800)}")
+    payload = _extract_first_json_object(result_text)
+    assistant_blocks = _assistant_blocks_from_claude_print_payload(
+        payload=payload,
+        allowed_tool_names=allowed_tool_names,
+    )
+    usage_payload = {
+        "backend": "claude_print",
+        "model": model,
+        "stdout_chars": len(stdout),
+        "stderr_chars": len(stderr),
+        **usage_payload,
+    }
+    return assistant_blocks, usage_payload
 
 
 def _save_png_b64(session_dir: Path, *, name: str, b64: str) -> Path:
@@ -350,9 +685,16 @@ def run_agent(
     load_skills: bool = True,
     posttask_learn: bool = True,
     posttask_mode: str = "direct",
+    llm_backend: str = DEFAULT_LLM_BACKEND,
     verbose: bool = False,
 ) -> RunResult:
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3)
+    llm_backend = _normalize_llm_backend(llm_backend)
+    api_key = str(getattr(cfg, "anthropic_api_key", "") or "").strip()
+    client: Any | None = None
+    if llm_backend == "anthropic":
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
+        client = anthropic.Anthropic(api_key=api_key, max_retries=3)
 
     # Tool version + beta flag must match the chosen model's computer-use support.
     # Do not rely on "heavy vs decider" naming because users may run Sonnet as the
@@ -408,13 +750,19 @@ def run_agent(
             "- Keep read_skill calls targeted; avoid reading every skill."
             "\n"
             "State policy:\n"
-            "- Use extract_fl_state after screenshot when UI is ambiguous.\n"
-            "- Prefer extracting structured state (rows/active steps) over repeated zoom loops.\n"
+            + (
+                "- Use extract_fl_state after screenshot when UI is ambiguous.\n"
+                "- Prefer extracting structured state (rows/active steps) over repeated zoom loops.\n"
+                if llm_backend == "anthropic"
+                else "- extract_fl_state is unavailable in this run; use screenshot + direct action/verification.\n"
+            )
         ),
     }
     system_blocks = [base_system_block, skills_system_block, lessons_system_block, skill_usage_block]
 
-    tools: list[dict[str, Any]] = [computer.to_tool_param(), fl_state_tool_param()]
+    tools: list[dict[str, Any]] = [computer.to_tool_param()]
+    if llm_backend == "anthropic":
+        tools.append(fl_state_tool_param())
     if load_skills:
         tools.append(_read_skill_tool_param())
 
@@ -437,6 +785,7 @@ def run_agent(
         "session_id": session_id,
         "task": task,
         "model": model,
+        "llm_backend": llm_backend,
         "time_start": time.time(),
         "steps": 0,
         "load_skills": load_skills,
@@ -448,6 +797,7 @@ def run_agent(
         "posttask_patch_attempted": False,
         "posttask_patch_applied": 0,
         "posttask_candidates_queued": 0,
+        "posttask_skip_reason": None,
         "lessons_loaded": lessons_loaded,
         "lessons_generated": 0,
         "auto_promotion_applied": 0,
@@ -479,23 +829,13 @@ def run_agent(
     same_step_retries = 0
     while step <= max_steps:
         metrics["steps"] = step
-        if cfg.enable_prompt_caching:
+        if cfg.enable_prompt_caching and llm_backend == "anthropic":
             _inject_prompt_caching(messages, breakpoints=user_cache_breakpoints)
 
-        try:
-            resp = client.beta.messages.create(
-                model=model,
-                max_tokens=2048,
-                system=system_blocks,
-                tools=tools,
-                messages=messages,
-                betas=betas,
-            )
-        except anthropic.BadRequestError as e:
-            # If the token-efficient-tools beta isn't supported, retry once without it.
-            msg = str(getattr(e, "message", "")) + " " + str(getattr(e, "body", ""))
-            if cfg.token_efficient_tools_beta in msg and cfg.token_efficient_tools_beta in betas:
-                betas = [b for b in betas if b != cfg.token_efficient_tools_beta]
+        if llm_backend == "anthropic":
+            if client is None:
+                raise RuntimeError("Anthropic client unavailable while llm_backend=anthropic.")
+            try:
                 resp = client.beta.messages.create(
                     model=model,
                     max_tokens=2048,
@@ -504,18 +844,37 @@ def run_agent(
                     messages=messages,
                     betas=betas,
                 )
-            else:
-                raise
+            except anthropic.BadRequestError as e:
+                # If the token-efficient-tools beta isn't supported, retry once without it.
+                msg = str(getattr(e, "message", "")) + " " + str(getattr(e, "body", ""))
+                if cfg.token_efficient_tools_beta in msg and cfg.token_efficient_tools_beta in betas:
+                    betas = [b for b in betas if b != cfg.token_efficient_tools_beta]
+                    resp = client.beta.messages.create(
+                        model=model,
+                        max_tokens=2048,
+                        system=system_blocks,
+                        tools=tools,
+                        messages=messages,
+                        betas=betas,
+                    )
+                else:
+                    raise
 
-        # Usage accounting (incl. prompt caching fields when enabled)
-        try:
-            usage = resp.usage.model_dump()  # type: ignore[attr-defined]
-        except Exception:
-            usage = getattr(resp, "usage", None)
-            usage = usage.model_dump() if usage is not None and hasattr(usage, "model_dump") else {}
+            # Usage accounting (incl. prompt caching fields when enabled)
+            try:
+                usage = resp.usage.model_dump()  # type: ignore[attr-defined]
+            except Exception:
+                usage = getattr(resp, "usage", None)
+                usage = usage.model_dump() if usage is not None and hasattr(usage, "model_dump") else {}
+            assistant_blocks = [b.model_dump() for b in resp.content]  # type: ignore[attr-defined]
+        else:
+            assistant_blocks, usage = _create_executor_response_via_claude_print(
+                model=model,
+                system_blocks=system_blocks,
+                tools=tools,
+                messages=messages,
+            )
         metrics["usage"].append(usage)
-
-        assistant_blocks = [b.model_dump() for b in resp.content]  # type: ignore[attr-defined]
         messages.append({"role": "assistant", "content": assistant_blocks})
 
         tool_results: list[dict[str, Any]] = []
@@ -566,26 +925,30 @@ def run_agent(
                 tool_in = tool_input if isinstance(tool_input, dict) else {}
                 goal = str(tool_in.get("goal", "")).strip()
                 task_hint = str(tool_in.get("task_hint", "")).strip() or task
-                try:
-                    shot = computer.run({"action": "screenshot"})
-                    if shot.is_error() or not shot.base64_image_png:
-                        result = ToolResult(error=shot.error or "extract_fl_state could not capture screenshot")
-                        metrics["tool_errors"] += 1
-                    else:
-                        state = extract_fl_state_from_image(
-                            client=client,
-                            model=cfg.model_decider,
-                            screenshot_b64=shot.base64_image_png,
-                            goal=goal,
-                            task_hint=task_hint,
-                        )
-                        result = ToolResult(
-                            output=json.dumps(state, ensure_ascii=True),
-                            base64_image_png=shot.base64_image_png,
-                        )
-                except Exception as e:
-                    result = ToolResult(error=f"extract_fl_state exception: {type(e).__name__}: {e}")
+                if llm_backend != "anthropic" or client is None:
+                    result = ToolResult(error="extract_fl_state is unavailable when llm_backend=claude_print")
                     metrics["tool_errors"] += 1
+                else:
+                    try:
+                        shot = computer.run({"action": "screenshot"})
+                        if shot.is_error() or not shot.base64_image_png:
+                            result = ToolResult(error=shot.error or "extract_fl_state could not capture screenshot")
+                            metrics["tool_errors"] += 1
+                        else:
+                            state = extract_fl_state_from_image(
+                                client=client,
+                                model=cfg.model_decider,
+                                screenshot_b64=shot.base64_image_png,
+                                goal=goal,
+                                task_hint=task_hint,
+                            )
+                            result = ToolResult(
+                                output=json.dumps(state, ensure_ascii=True),
+                                base64_image_png=shot.base64_image_png,
+                            )
+                    except Exception as e:
+                        result = ToolResult(error=f"extract_fl_state exception: {type(e).__name__}: {e}")
+                        metrics["tool_errors"] += 1
             elif tool_name == READ_SKILL_TOOL_NAME:
                 metrics["skill_reads"] += 1
                 tool_in = tool_input if isinstance(tool_input, dict) else {}
@@ -676,7 +1039,7 @@ def run_agent(
 
     visual_judge: VisualJudgeResult | None = None
     final_shot = _latest_screenshot_from_events(all_events)
-    if final_shot is not None:
+    if final_shot is not None and llm_backend == "anthropic" and client is not None:
         try:
             screenshot_b64 = base64.b64encode(final_shot.read_bytes()).decode("ascii")
             judge_refs = resolve_reference_images()
@@ -722,12 +1085,29 @@ def run_agent(
                     "usage": None,
                 },
             )
+    elif final_shot is not None and llm_backend != "anthropic":
+        write_event(
+            paths.jsonl_path,
+            {
+                "step": metrics["steps"],
+                "tool": "visual_judge",
+                "tool_input": {"model": cfg.model_visual_judge},
+                "ok": False,
+                "error": "visual_judge skipped: llm_backend=claude_print",
+                "output": None,
+                "screenshot": str(final_shot),
+                "usage": None,
+            },
+        )
 
     final_verdict = "pass" if det_passed else "fail"
     final_score = det_score
     final_reasons = list(det_reasons)
     eval_source = "deterministic"
     eval_disagreement = False
+    if llm_backend != "anthropic":
+        eval_source = "deterministic_no_judge"
+        final_reasons.extend(["visual_judge_skipped_llm_backend"])
     if visual_judge is not None:
         judge_unparseable = any(str(r) == "visual_judge_unparseable" for r in visual_judge.reasons)
         if judge_unparseable:
@@ -771,7 +1151,9 @@ def run_agent(
         metrics["judge_reference_images"] = visual_judge.reference_images_used
         metrics["judge_observed_steps"] = visual_judge.observed_active_steps
 
-    if load_skills and posttask_learn and skill_manifest_entries:
+    if load_skills and posttask_learn and skill_manifest_entries and llm_backend == "anthropic":
+        if client is None:
+            raise RuntimeError("posttask_learn requires Anthropic client.")
         metrics["posttask_patch_attempted"] = True
         # Keep reflection payload compact and deterministic.
         eval_passed = bool(metrics.get("eval_passed"))
@@ -971,6 +1353,22 @@ def run_agent(
                     "usage": None,
                 },
             )
+    elif load_skills and posttask_learn and llm_backend != "anthropic":
+        metrics["posttask_patch_attempted"] = False
+        metrics["posttask_skip_reason"] = "llm_backend"
+        write_event(
+            paths.jsonl_path,
+            {
+                "step": metrics["steps"],
+                "tool": "posttask_hook",
+                "tool_input": {"mode": posttask_mode},
+                "ok": False,
+                "error": "posttask_hook skipped: llm_backend=claude_print",
+                "output": None,
+                "screenshot": None,
+                "usage": None,
+            },
+        )
 
     metrics["time_end"] = time.time()
     metrics["elapsed_s"] = metrics["time_end"] - metrics["time_start"]

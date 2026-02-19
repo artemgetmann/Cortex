@@ -42,12 +42,12 @@ def _getenv_int(name: str, default: int) -> int:
     return int(raw)
 
 
-def load_config() -> CortexConfig:
+def load_config(*, require_api_key: bool = True) -> CortexConfig:
     # Local .env is gitignored; allow it to exist without leaking into git.
     load_dotenv(override=False)
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
+    if require_api_key and not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is missing (set it in .env).")
 
     display_width_px = _getenv_int("CORTEX_DISPLAY_WIDTH_PX", 1024)

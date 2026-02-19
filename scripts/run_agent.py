@@ -20,10 +20,16 @@ def main() -> int:
     ap.add_argument("--no-skills", action="store_true")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--posttask-mode", choices=["direct", "candidate"], default="candidate")
+    ap.add_argument(
+        "--llm-backend",
+        default="anthropic",
+        choices=["anthropic", "claude_print"],
+        help="Executor transport: anthropic (API) or claude_print (`claude -p`).",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(require_api_key=(args.llm_backend == "anthropic"))
     model = args.model.strip() or cfg.model_heavy
     res = run_agent(
         cfg=cfg,
@@ -34,6 +40,7 @@ def main() -> int:
         load_skills=not args.no_skills,
         posttask_learn=not args.no_posttask_learn,
         posttask_mode=args.posttask_mode,
+        llm_backend=args.llm_backend,
         verbose=args.verbose,
     )
     print("metrics:", res.metrics)

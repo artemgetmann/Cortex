@@ -29,6 +29,9 @@ python3 scripts/run_agent.py --task "..." --session 1 --no-skills
 
 # Override model
 python3 scripts/run_agent.py --task "..." --model claude-haiku-4-5
+
+# Use subscription-backed Claude CLI transport (no API key needed for executor loop)
+python3 scripts/run_agent.py --task "..." --llm-backend claude_print
 ```
 
 No test suite, no linter, no build step. Verify changes by running agent sessions and checking `sessions/session-NNN/` output (events.jsonl, metrics.json, step-NNN.png screenshots).
@@ -64,7 +67,7 @@ docs/
 ### Data flow
 
 1. `run_agent()` builds system prompt + loads skills from `skills/fl-studio/` into context
-2. Sends task to Anthropic API with `computer` tool definition
+2. Sends task to Anthropic API (`llm-backend=anthropic`) or Claude CLI (`llm-backend=claude_print`) with computer tool definition
 3. Model returns `tool_use` blocks (screenshot, key, click, etc.)
 4. `ComputerTool.run()` executes via macOS Quartz CGEvent APIs, returns screenshot
 5. Loop continues until model stops requesting tools or hits `max_steps`
@@ -137,7 +140,7 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | (required) | API key |
+| `ANTHROPIC_API_KEY` | (required for `--llm-backend anthropic`) | API key |
 | `CORTEX_MODEL_HEAVY` | `claude-opus-4-6` | Main agent model |
 | `CORTEX_MODEL_DECIDER` | `claude-haiku-4-5` | Cheaper model for gate tests |
 | `CORTEX_DISPLAY_WIDTH_PX` | `1024` | API coordinate space width |

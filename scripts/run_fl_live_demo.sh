@@ -13,6 +13,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION_ID="${1:-$(( $(date +%s) % 100000 ))}"
 MAX_STEPS="${2:-12}"
 REF_IMAGE="${ROOT_DIR}/docs/references/fl-studio/kick-four-on-floor-reference.png"
+LLM_BACKEND="${CORTEX_LLM_BACKEND:-anthropic}"
 
 if [[ ! -x "${ROOT_DIR}/.venv/bin/python" ]]; then
   echo "Missing virtualenv python at ${ROOT_DIR}/.venv/bin/python"
@@ -30,6 +31,7 @@ TASK="In FL Studio, press F6 to open Channel Rack, create a 4-on-the-floor kick 
 
 echo "Running FL live demo..."
 echo "session=${SESSION_ID} max_steps=${MAX_STEPS}"
+echo "llm_backend=${LLM_BACKEND}"
 echo "reference=${REF_IMAGE}"
 
 CORTEX_FL_REFERENCE_IMAGE="${REF_IMAGE}" \
@@ -37,6 +39,7 @@ CORTEX_FL_REFERENCE_IMAGE="${REF_IMAGE}" \
   --task "${TASK}" \
   --session "${SESSION_ID}" \
   --max-steps "${MAX_STEPS}" \
+  --llm-backend "${LLM_BACKEND}" \
   --verbose
 
 METRICS="${ROOT_DIR}/sessions/session-${SESSION_ID}/metrics.json"

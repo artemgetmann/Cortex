@@ -89,6 +89,12 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--task", default=DEFAULT_TASK)
     ap.add_argument("--model", default="", help="Override model. Default: CORTEX_MODEL_HEAVY")
+    ap.add_argument(
+        "--llm-backend",
+        default="anthropic",
+        choices=["anthropic", "claude_print"],
+        help="Executor transport: anthropic (API) or claude_print (`claude -p`).",
+    )
     ap.add_argument("--no-skills", action="store_true")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
@@ -105,7 +111,7 @@ def main() -> int:
     from agent import run_agent
     from config import load_config
 
-    cfg = load_config()
+    cfg = load_config(require_api_key=(args.llm_backend == "anthropic"))
     model = args.model.strip() or cfg.model_heavy
 
     rows: list[dict[str, Any]] = []
@@ -125,6 +131,7 @@ def main() -> int:
             load_skills=not args.no_skills,
             posttask_learn=not args.no_posttask_learn,
             posttask_mode=args.posttask_mode,
+            llm_backend=args.llm_backend,
             verbose=args.verbose,
         )
         metrics = result.metrics
@@ -167,6 +174,7 @@ def main() -> int:
             "max_steps": args.max_steps,
             "task": args.task,
             "model": model,
+            "llm_backend": args.llm_backend,
             "load_skills": not args.no_skills,
             "posttask_learn": not args.no_posttask_learn,
             "posttask_mode": args.posttask_mode,
