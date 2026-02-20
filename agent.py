@@ -422,6 +422,11 @@ def _create_executor_response_via_claude_print(
     }
 
     timeout_s = max(15, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "120")))
+    # Force high-quality planning for computer-use runs unless explicitly overridden.
+    effective_model = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "claude-opus-4-6").strip() or "claude-opus-4-6"
+    effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
+    if effort not in {"low", "medium", "high"}:
+        effort = "high"
     cmd = [
         "claude",
         "-p",
@@ -432,9 +437,10 @@ def _create_executor_response_via_claude_print(
         "--verbose",
         "--tools",
         "",
+        "--effort",
+        effort,
     ]
-    if model.strip():
-        cmd.extend(["--model", model.strip()])
+    cmd.extend(["--model", effective_model])
     try:
         proc = subprocess.run(
             cmd,
@@ -484,7 +490,9 @@ def _create_executor_response_via_claude_print(
     )
     usage_payload = {
         "backend": "claude_print",
-        "model": model,
+        "model": effective_model,
+        "requested_model": model,
+        "effort": effort,
         "stdout_chars": len(stdout),
         "stderr_chars": len(stderr),
         **usage_payload,

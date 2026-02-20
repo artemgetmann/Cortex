@@ -146,3 +146,5 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 | `CORTEX_DISPLAY_WIDTH_PX` | `1024` | API coordinate space width |
 | `CORTEX_DISPLAY_HEIGHT_PX` | `768` | API coordinate space height |
 | `CORTEX_ENABLE_PROMPT_CACHING` | `1` | Enable prompt caching |
+| `CORTEX_CLAUDE_PRINT_MODEL` | `claude-opus-4-6` | Model used when `--llm-backend claude_print` |
+| `CORTEX_CLAUDE_PRINT_EFFORT` | `high` | Effort level for `claude -p` (`low`/`medium`/`high`) |

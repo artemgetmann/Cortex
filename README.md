@@ -132,6 +132,9 @@ Run FL with subscription-backed `claude -p` executor (no API key required for ex
 CORTEX_LLM_BACKEND=claude_print ./scripts/run_fl_live_demo.sh 210011 12
 ```
 
+Note: `claude_print` runs default to `claude-opus-4-6` with `--effort high`.
+Optional overrides: `CORTEX_CLAUDE_PRINT_MODEL`, `CORTEX_CLAUDE_PRINT_EFFORT`.
+
 Run repeated FL sessions and produce a benchmark JSON:
 
 ```bash
