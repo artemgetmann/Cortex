@@ -17,3 +17,7 @@ This folder is split into active Memory V2 docs and archived historical tracks.
 - When updating behavior or implementation decisions, update active docs first.
 - Do not treat files in `docs/archive/` as current requirements.
 - If you revive an archived idea, copy it into an active doc with explicit rationale.
+
+## Developer Workflow Notes
+- Root developer shortcuts are in `Makefile` (`make test`, `make test-root`, `make test-cli`).
+- Script categorization and canonical entrypoints are documented in `scripts/README.md`.

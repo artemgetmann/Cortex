@@ -120,6 +120,18 @@ Real GUI/computer-use reliability (for harder domains like FL Studio) is still a
 
 ## FL Studio Bench Commands
 
+Quick dev workflow shortcuts:
+
+```bash
+make test
+make test-root
+make test-cli
+```
+
+Script catalog:
+
+- `scripts/README.md`
+
 Run one live FL session:
 
 ```bash
