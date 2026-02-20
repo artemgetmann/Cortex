@@ -34,23 +34,36 @@ python3 scripts/run_agent.py --task "..." --model claude-haiku-4-5
 python3 scripts/run_agent.py --task "..." --llm-backend claude_print
 ```
 
-No test suite, no linter, no build step. Verify changes by running agent sessions and checking `sessions/session-NNN/` output (events.jsonl, metrics.json, step-NNN.png screenshots).
+There is no formal lint/build pipeline yet. Verify runtime behavior with agent sessions and check `sessions/session-NNN/` artifacts (`events.jsonl`, `metrics.json`, `step-NNN.png`).
+
+Test suites:
+
+```bash
+# Root FL/runtime smoke tests
+python3 -m pytest tests -q
+
+# Active Memory V2 CLI track tests
+python3 -m pytest tracks/cli_sqlite/tests -q
+```
 
 ## Architecture
 
 ```
-agent.py          ← Agentic loop: screenshot → Opus API → parse tool_use → execute → repeat
+agent.py          ← FL Studio loop orchestrator
 computer_use.py   ← macOS Quartz CGEvent wrapper (key, click, screenshot, coordinate mapping)
 config.py         ← Env-based config loader (CortexConfig dataclass)
 memory.py         ← Session path management + JSONL/metrics I/O
 consolidate.py    ← Post-session skill generation from logs (stub, not yet implemented)
+claude_print_runtime.py ← Shared Claude Print backend helpers (JSON parsing, model/effort/env resolution)
+claude_print_client.py  ← Anthropic-compatible client shim over `claude -p`
 
 scripts/
   run_agent.py    ← CLI entry point (argparse → run_agent())
 
-skills/fl-studio/ ← Markdown skill docs loaded into agent context
-  index.md        ← Table of contents
-  drum-pattern.md ← First skill (4-on-the-floor kick pattern)
+skills/fl-studio/ ← Markdown skill docs loaded into context
+  basics/SKILL.md
+  drum-pattern/SKILL.md
+  drum-pattern/CONTRACT.json
 
 sessions/         ← Per-session output (gitignored)
   session-NNN/    ← events.jsonl + metrics.json + step-NNN.png screenshots

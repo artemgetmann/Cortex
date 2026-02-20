@@ -14,6 +14,7 @@ For canonical docs index, use `docs/README.md`.
 ## Key Files
 
 - `tracks/cli_sqlite/agent_cli.py`: main CLI loop and Memory V2 integration.
+- `tracks/cli_sqlite/adapter_registry.py`: centralized domain-adapter resolution.
 - `tracks/cli_sqlite/error_capture.py`: universal failure signal capture.
 - `tracks/cli_sqlite/lesson_store_v2.py`: lesson persistence/lifecycle store.
 - `tracks/cli_sqlite/lesson_retrieval_v2.py`: pre-run and on-error retrieval.

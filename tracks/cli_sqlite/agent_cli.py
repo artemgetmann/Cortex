@@ -7,7 +7,6 @@ import os
 import re
 import subprocess
 import time
-import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +15,20 @@ from typing import Any, Callable
 import anthropic
 
 from claude_print_client import ClaudePrintClient
+from claude_print_runtime import (
+    DEFAULT_LLM_BACKEND,
+    LLM_BACKENDS,
+    assistant_blocks_from_claude_print_payload,
+    build_claude_print_env,
+    clip_text,
+    extract_first_json_object,
+    normalize_claude_print_effort,
+    normalize_llm_backend,
+    render_message_history_for_claude_print,
+    resolve_claude_print_model,
+)
 from config import CortexConfig
+from tracks.cli_sqlite.adapter_registry import resolve_adapter, resolve_adapter_with_mode
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
@@ -91,8 +103,6 @@ DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
-LLM_BACKENDS = ("anthropic", "claude_print")
-DEFAULT_LLM_BACKEND = "claude_print"
 
 DEPENDENCY_SETUP_TAGS: frozenset[str] = frozenset(
     {
@@ -197,87 +207,19 @@ def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3] + "..."
+    return clip_text(text, max_chars=max_chars)
 
 
 def _normalize_llm_backend(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized not in LLM_BACKENDS:
-        raise ValueError(f"Unsupported llm_backend: {value!r}. Expected one of {LLM_BACKENDS}.")
-    return normalized
+    return normalize_llm_backend(value)
 
 
 def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
-    """Flatten API-style block history into compact text for claude -p turns."""
-    lines: list[str] = []
-    for msg in messages[-20:]:
-        role = str(msg.get("role", "user")).strip() or "user"
-        lines.append(f"ROLE: {role}")
-        blocks = msg.get("content")
-        if not isinstance(blocks, list):
-            lines.append(str(blocks))
-            lines.append("")
-            continue
-        for block in blocks:
-            if not isinstance(block, dict):
-                lines.append(str(block))
-                continue
-            btype = str(block.get("type", "")).strip().lower()
-            if btype == "text":
-                text = str(block.get("text", "")).strip()
-                if text:
-                    lines.append(f"TEXT: {text}")
-            elif btype == "tool_use":
-                tool_name = str(block.get("name", "")).strip()
-                tool_input = block.get("input", {})
-                payload = json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
-                lines.append(f"TOOL_USE {tool_name}: {payload}")
-            elif btype == "tool_result":
-                tool_use_id = str(block.get("tool_use_id", "")).strip()
-                is_error = bool(block.get("is_error", False))
-                content = block.get("content")
-                if isinstance(content, list):
-                    fragments = []
-                    for part in content:
-                        if isinstance(part, dict) and str(part.get("type", "")).strip() == "text":
-                            fragments.append(str(part.get("text", "")))
-                    content_text = " ".join(fragment for fragment in fragments if fragment).strip()
-                else:
-                    content_text = str(content or "").strip()
-                lines.append(f"TOOL_RESULT {tool_use_id} error={is_error}: {content_text}")
-            else:
-                lines.append(json.dumps(block, ensure_ascii=True, sort_keys=True))
-        lines.append("")
-    return "\n".join(lines).strip()
+    return render_message_history_for_claude_print(messages, max_messages=20)
 
 
 def _extract_first_json_object(raw: str) -> dict[str, Any]:
-    text = str(raw or "").strip()
-    if not text:
-        raise RuntimeError("claude -p returned empty output.")
-    # Handle fenced output first, then raw JSON body.
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1).strip()
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            obj, _ = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            return obj
-    raise RuntimeError(f"claude -p output is not valid JSON object: {_clip_text(text, max_chars=500)}")
+    return extract_first_json_object(raw, max_error_chars=500)
 
 
 def _assistant_blocks_from_claude_print_payload(
@@ -285,35 +227,10 @@ def _assistant_blocks_from_claude_print_payload(
     payload: dict[str, Any],
     allowed_tool_names: set[str],
 ) -> list[dict[str, Any]]:
-    assistant_text = str(payload.get("assistant_text", "")).strip()
-    blocks: list[dict[str, Any]] = []
-    if assistant_text:
-        blocks.append({"type": "text", "text": assistant_text})
-    tool_calls = payload.get("tool_calls", [])
-    if not isinstance(tool_calls, list):
-        raise RuntimeError(f"claude -p payload 'tool_calls' must be a list, got: {type(tool_calls).__name__}")
-    for idx, call in enumerate(tool_calls):
-        if not isinstance(call, dict):
-            raise RuntimeError(f"claude -p tool call at index {idx} must be object, got: {type(call).__name__}")
-        tool_name = str(call.get("name", "")).strip()
-        tool_input = call.get("input", {})
-        if not tool_name:
-            raise RuntimeError(f"claude -p tool call at index {idx} is missing 'name'.")
-        if tool_name not in allowed_tool_names:
-            raise RuntimeError(f"claude -p requested unknown tool '{tool_name}'. Allowed: {sorted(allowed_tool_names)}")
-        if not isinstance(tool_input, dict):
-            raise RuntimeError(
-                f"claude -p tool call '{tool_name}' has non-object input: {type(tool_input).__name__}"
-            )
-        blocks.append(
-            {
-                "type": "tool_use",
-                "id": f"toolu_cli_{uuid.uuid4().hex[:12]}_{idx}",
-                "name": tool_name,
-                "input": tool_input,
-            }
-        )
-    return blocks
+    return assistant_blocks_from_claude_print_payload(
+        payload=payload,
+        allowed_tool_names=allowed_tool_names,
+    )
 
 
 def _create_executor_response_via_claude_print(
@@ -358,13 +275,11 @@ def _create_executor_response_via_claude_print(
         f"MESSAGE_HISTORY:\n{history_text}\n"
     )
     timeout_s = max(10, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "90")))
-    # Respect requested model by default; keep optional env override for operators.
-    requested_model = str(model or "").strip() or DEFAULT_EXECUTOR_MODEL
-    env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
-    effective_model = env_model_override or requested_model
-    effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
-    if effort not in {"low", "medium", "high"}:
-        effort = "high"
+    requested_model, effective_model = resolve_claude_print_model(
+        model,
+        fallback_model=DEFAULT_EXECUTOR_MODEL,
+    )
+    effort = normalize_claude_print_effort(None, default="high")
     cmd = [
         "claude",
         "-p",
@@ -377,15 +292,7 @@ def _create_executor_response_via_claude_print(
         effort,
     ]
     cmd.extend(["--model", effective_model])
-    cmd_env = os.environ.copy()
-    allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if not allow_api_key:
-        cmd_env.pop("ANTHROPIC_API_KEY", None)
+    cmd_env = build_claude_print_env()
     try:
         proc = subprocess.run(
             cmd,
@@ -715,31 +622,11 @@ def _is_skill_gate_satisfied(
 
 
 def _resolve_adapter(domain: str, *, cryptic_errors: bool = False, semi_helpful_errors: bool = False) -> DomainAdapter:
-    """Resolve a domain name to its adapter instance."""
-    if domain == "sqlite":
-        from tracks.cli_sqlite.domains.sqlite_adapter import SqliteAdapter
-        return SqliteAdapter()
-    if domain == "gridtool":
-        from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
-        return GridtoolAdapter(
-            cryptic_errors=cryptic_errors,
-            semi_helpful_errors=semi_helpful_errors,
-            mixed_errors=False,
-        )
-    if domain == "fluxtool":
-        from tracks.cli_sqlite.domains.fluxtool_adapter import FluxtoolAdapter
-        return FluxtoolAdapter(
-            cryptic_errors=cryptic_errors,
-            semi_helpful_errors=semi_helpful_errors,
-            mixed_errors=False,
-        )
-    if domain == "artic":
-        from tracks.cli_sqlite.domains.artic_adapter import ArticAdapter
-        return ArticAdapter()
-    if domain == "shell":
-        from tracks.cli_sqlite.domains.shell_adapter import ShellAdapter
-        return ShellAdapter()
-    raise ValueError(f"Unknown domain: {domain!r}. Available: sqlite, gridtool, fluxtool, artic, shell")
+    return resolve_adapter(
+        domain,
+        cryptic_errors=cryptic_errors,
+        semi_helpful_errors=semi_helpful_errors,
+    )
 
 
 def _resolve_adapter_with_mode(
@@ -749,22 +636,12 @@ def _resolve_adapter_with_mode(
     semi_helpful_errors: bool,
     mixed_errors: bool,
 ) -> DomainAdapter:
-    """Resolve adapter with optional mixed per-command error policy."""
-    if domain == "gridtool":
-        from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
-        return GridtoolAdapter(
-            cryptic_errors=cryptic_errors,
-            semi_helpful_errors=semi_helpful_errors,
-            mixed_errors=mixed_errors,
-        )
-    if domain == "fluxtool":
-        from tracks.cli_sqlite.domains.fluxtool_adapter import FluxtoolAdapter
-        return FluxtoolAdapter(
-            cryptic_errors=cryptic_errors,
-            semi_helpful_errors=semi_helpful_errors,
-            mixed_errors=mixed_errors,
-        )
-    return _resolve_adapter(domain, cryptic_errors=cryptic_errors, semi_helpful_errors=semi_helpful_errors)
+    return resolve_adapter_with_mode(
+        domain,
+        cryptic_errors=cryptic_errors,
+        semi_helpful_errors=semi_helpful_errors,
+        mixed_errors=mixed_errors,
+    )
 
 
 def _serialize_lesson(lesson: Any) -> dict[str, Any]:

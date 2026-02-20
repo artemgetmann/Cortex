@@ -9,15 +9,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image
-
-
-_VALID_EFFORTS = {"low", "medium", "high"}
-
-
-def _clip_text(text: str, *, max_chars: int = 1200) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3] + "..."
+from claude_print_runtime import (
+    build_claude_print_env,
+    clip_text as _clip_text,
+    extract_stream_json_result,
+    normalize_claude_print_effort,
+    resolve_claude_print_model,
+)
 
 
 def _extract_system_text(system: Any) -> str:
@@ -173,15 +171,11 @@ class _MessagesAPI:
         # but claude -p does not use this setting directly.
         del max_tokens
 
-        requested_model = str(model or "").strip() or "claude-opus-4-6"
-        env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
-        effective_model = env_model_override or requested_model
-
-        requested_effort = str(self._default_effort or "").strip().lower()
-        if not requested_effort:
-            requested_effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
-        if requested_effort not in _VALID_EFFORTS:
-            requested_effort = "high"
+        requested_model, effective_model = resolve_claude_print_model(
+            model,
+            fallback_model="claude-opus-4-6",
+        )
+        requested_effort = normalize_claude_print_effort(self._default_effort, default="high")
 
         system_text = _extract_system_text(system)
         history_text, image_blocks = _render_history_and_images(messages or [])
@@ -226,15 +220,7 @@ class _MessagesAPI:
             "--model",
             effective_model,
         ]
-        cmd_env = os.environ.copy()
-        allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if not allow_api_key:
-            cmd_env.pop("ANTHROPIC_API_KEY", None)
+        cmd_env = build_claude_print_env()
 
         try:
             proc = subprocess.run(
@@ -257,23 +243,7 @@ class _MessagesAPI:
                 f"(code={proc.returncode}): {_clip_text(stderr or stdout, max_chars=800)}"
             )
 
-        result_text = ""
-        usage_payload: dict[str, Any] = {}
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                evt = json.loads(stripped)
-            except Exception:
-                continue
-            if not isinstance(evt, dict):
-                continue
-            if str(evt.get("type")) == "result":
-                result_text = str(evt.get("result", "") or "")
-                usage = evt.get("usage")
-                if isinstance(usage, dict):
-                    usage_payload = usage
+        result_text, usage_payload = extract_stream_json_result(stdout)
         if not result_text:
             raise RuntimeError("claude -p returned no result payload")
 
@@ -295,4 +265,3 @@ class _MessagesAPI:
 class ClaudePrintClient:
     def __init__(self, *, default_effort: str | None = None) -> None:
         self.messages = _MessagesAPI(default_effort=default_effort)
-

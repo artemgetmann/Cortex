@@ -7,17 +7,28 @@ import os
 import re
 import subprocess
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 from PIL import Image
 
 from claude_print_client import ClaudePrintClient
+from claude_print_runtime import (
+    DEFAULT_LLM_BACKEND,
+    LLM_BACKENDS,
+    assistant_blocks_from_claude_print_payload,
+    build_claude_print_env,
+    clip_text,
+    extract_first_json_object,
+    extract_stream_json_result,
+    normalize_claude_print_effort,
+    normalize_llm_backend,
+    render_message_history_for_claude_print,
+    resolve_claude_print_model,
+)
 from config import CortexConfig
-from computer_use import ComputerTool, ToolResult
 from fl_state import (
     EXTRACT_FL_STATE_TOOL_NAME,
     extract_fl_state_from_image,
@@ -43,6 +54,9 @@ from skill_routing import (
     resolve_skill_content,
     route_manifest_entries,
 )
+
+if TYPE_CHECKING:
+    from computer_use import ToolResult
 
 
 BASE_SYSTEM_PROMPT = """You are controlling FL Studio Desktop on macOS via screenshots and mouse/keyboard.
@@ -92,8 +106,6 @@ READ_SKILL_TOOL_NAME = "read_skill"
 NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
 RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
 MAX_SAME_STEP_RETRIES = 2
-LLM_BACKENDS = ("anthropic", "claude_print")
-DEFAULT_LLM_BACKEND = "claude_print"
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
@@ -167,71 +179,19 @@ def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
 
 
 def _normalize_llm_backend(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized not in LLM_BACKENDS:
-        raise ValueError(f"Unsupported llm_backend: {value!r}. Expected one of {LLM_BACKENDS}.")
-    return normalized
+    return normalize_llm_backend(value)
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3] + "..."
+    return clip_text(text, max_chars=max_chars)
 
 
 def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
-    """
-    Flatten API-style block history into compact text for claude -p.
-
-    Keep the history short to avoid turning each step into a huge prompt.
-    """
-    lines: list[str] = []
-    for msg in messages[-12:]:
-        role = str(msg.get("role", "user")).strip() or "user"
-        lines.append(f"ROLE: {role}")
-        blocks = msg.get("content")
-        if not isinstance(blocks, list):
-            lines.append(str(blocks))
-            lines.append("")
-            continue
-        for block in blocks:
-            if not isinstance(block, dict):
-                lines.append(str(block))
-                continue
-            btype = str(block.get("type", "")).strip().lower()
-            if btype == "text":
-                text = str(block.get("text", "")).strip()
-                if text:
-                    lines.append(f"TEXT: {text}")
-            elif btype == "tool_use":
-                tool_name = str(block.get("name", "")).strip()
-                tool_input = json.dumps(block.get("input", {}), ensure_ascii=True, sort_keys=True)
-                lines.append(f"TOOL_USE {tool_name}: {tool_input}")
-            elif btype == "tool_result":
-                tool_use_id = str(block.get("tool_use_id", "")).strip()
-                is_error = bool(block.get("is_error", False))
-                content = block.get("content")
-                text_parts: list[str] = []
-                has_image = False
-                if isinstance(content, list):
-                    for part in content:
-                        if not isinstance(part, dict):
-                            continue
-                        ptype = str(part.get("type", "")).strip().lower()
-                        if ptype == "text":
-                            text_parts.append(str(part.get("text", "")))
-                        elif ptype == "image":
-                            has_image = True
-                elif isinstance(content, str):
-                    text_parts.append(content)
-                merged = " ".join(part for part in text_parts if part).strip()
-                if has_image:
-                    merged = f"{merged} [screenshot-attached]".strip()
-                lines.append(f"TOOL_RESULT {tool_use_id} error={is_error}: {merged}")
-            else:
-                lines.append(json.dumps(block, ensure_ascii=True, sort_keys=True))
-        lines.append("")
-    return "\n".join(lines).strip()
+    return render_message_history_for_claude_print(
+        messages,
+        max_messages=12,
+        include_tool_result_image_hint=True,
+    )
 
 
 def _extract_latest_tool_result_image(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -291,29 +251,7 @@ def _compact_image_block_for_prompt(*, data_b64: str, media_type: str) -> dict[s
 
 
 def _extract_first_json_object(raw: str) -> dict[str, Any]:
-    text = str(raw or "").strip()
-    if not text:
-        raise RuntimeError("claude -p returned empty output.")
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1).strip()
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-    decoder = json.JSONDecoder()
-    for index, ch in enumerate(text):
-        if ch != "{":
-            continue
-        try:
-            obj, _ = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            return obj
-    raise RuntimeError(f"claude -p output is not valid JSON object: {_clip_text(text, max_chars=600)}")
+    return extract_first_json_object(raw, max_error_chars=600)
 
 
 def _assistant_blocks_from_claude_print_payload(
@@ -321,35 +259,10 @@ def _assistant_blocks_from_claude_print_payload(
     payload: dict[str, Any],
     allowed_tool_names: set[str],
 ) -> list[dict[str, Any]]:
-    assistant_text = str(payload.get("assistant_text", "")).strip()
-    blocks: list[dict[str, Any]] = []
-    if assistant_text:
-        blocks.append({"type": "text", "text": assistant_text})
-    tool_calls = payload.get("tool_calls", [])
-    if not isinstance(tool_calls, list):
-        raise RuntimeError(f"claude -p payload 'tool_calls' must be list, got: {type(tool_calls).__name__}")
-    for idx, call in enumerate(tool_calls):
-        if not isinstance(call, dict):
-            raise RuntimeError(f"claude -p tool call at index {idx} must be object, got: {type(call).__name__}")
-        name = str(call.get("name", "")).strip()
-        tool_input = call.get("input", {})
-        if not name:
-            raise RuntimeError(f"claude -p tool call at index {idx} missing 'name'.")
-        if name not in allowed_tool_names:
-            raise RuntimeError(f"claude -p requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
-        if not isinstance(tool_input, dict):
-            raise RuntimeError(
-                f"claude -p tool call '{name}' input must be object, got: {type(tool_input).__name__}"
-            )
-        blocks.append(
-            {
-                "type": "tool_use",
-                "id": f"toolu_cli_{uuid.uuid4().hex[:12]}_{idx}",
-                "name": name,
-                "input": tool_input,
-            }
-        )
-    return blocks
+    return assistant_blocks_from_claude_print_payload(
+        payload=payload,
+        allowed_tool_names=allowed_tool_names,
+    )
 
 
 def _create_executor_response_via_claude_print(
@@ -428,17 +341,11 @@ def _create_executor_response_via_claude_print(
     }
 
     timeout_s = max(15, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "120")))
-    # Respect the run's requested model by default.
-    # Optional env override exists for operators who want to force a specific
-    # claude -p model across all invocations.
-    requested_model = str(model or "").strip() or "claude-opus-4-6"
-    env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
-    effective_model = env_model_override or requested_model
-    requested_effort = str(effort or "").strip().lower()
-    if not requested_effort:
-        requested_effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
-    if requested_effort not in {"low", "medium", "high"}:
-        requested_effort = "high"
+    requested_model, effective_model = resolve_claude_print_model(
+        model,
+        fallback_model="claude-opus-4-6",
+    )
+    requested_effort = normalize_claude_print_effort(effort, default="high")
     cmd = [
         "claude",
         "-p",
@@ -453,17 +360,7 @@ def _create_executor_response_via_claude_print(
         requested_effort,
     ]
     cmd.extend(["--model", effective_model])
-    # claude_print should use subscription auth by default. If ANTHROPIC_API_KEY
-    # leaks in from .env, Claude CLI may switch to API mode and fail on quota.
-    cmd_env = os.environ.copy()
-    allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if not allow_api_key:
-        cmd_env.pop("ANTHROPIC_API_KEY", None)
+    cmd_env = build_claude_print_env()
 
     try:
         proc = subprocess.run(
@@ -489,23 +386,7 @@ def _create_executor_response_via_claude_print(
             f"(code={proc.returncode}): {_clip_text(stderr or stdout, max_chars=800)}"
         )
 
-    result_text = ""
-    usage_payload: dict[str, Any] = {}
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            evt = json.loads(stripped)
-        except Exception:
-            continue
-        if not isinstance(evt, dict):
-            continue
-        if str(evt.get("type")) == "result":
-            result_text = str(evt.get("result", "") or "")
-            usage = evt.get("usage")
-            if isinstance(usage, dict):
-                usage_payload = usage
+    result_text, usage_payload = extract_stream_json_result(stdout)
     if not result_text:
         raise RuntimeError(f"claude -p produced no result payload: {_clip_text(stdout, max_chars=800)}")
     payload = _extract_first_json_object(result_text)
@@ -722,6 +603,10 @@ def run_agent(
     claude_print_effort: str | None = None,
     verbose: bool = False,
 ) -> RunResult:
+    # Quartz-backed computer tool import is delayed so module-level utilities/tests
+    # can run on environments where Quartz bindings are unavailable.
+    from computer_use import ComputerTool, ToolResult
+
     llm_backend = _normalize_llm_backend(llm_backend)
     api_key = str(getattr(cfg, "anthropic_api_key", "") or "").strip()
     client: Any | None = None
