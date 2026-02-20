@@ -15,6 +15,7 @@ from typing import Any
 import anthropic
 from PIL import Image
 
+from claude_print_client import ClaudePrintClient
 from config import CortexConfig
 from computer_use import ComputerTool, ToolResult
 from fl_state import (
@@ -728,6 +729,8 @@ def run_agent(
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
         client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+    else:
+        client = ClaudePrintClient(default_effort=claude_print_effort)
     if claude_print_effort is not None:
         normalized_effort = str(claude_print_effort).strip().lower()
         if normalized_effort not in {"low", "medium", "high"}:
@@ -793,7 +796,7 @@ def run_agent(
             + (
                 "- Use extract_fl_state after screenshot when UI is ambiguous.\n"
                 "- Prefer extracting structured state (rows/active steps) over repeated zoom loops.\n"
-                if llm_backend == "anthropic"
+                if client is not None
                 else "- extract_fl_state is unavailable in this run; use screenshot + direct action/verification.\n"
             )
         ),
@@ -801,7 +804,7 @@ def run_agent(
     system_blocks = [base_system_block, skills_system_block, lessons_system_block, skill_usage_block]
 
     tools: list[dict[str, Any]] = [computer.to_tool_param()]
-    if llm_backend == "anthropic":
+    if client is not None:
         tools.append(fl_state_tool_param())
     if load_skills:
         tools.append(_read_skill_tool_param())
@@ -966,8 +969,8 @@ def run_agent(
                 tool_in = tool_input if isinstance(tool_input, dict) else {}
                 goal = str(tool_in.get("goal", "")).strip()
                 task_hint = str(tool_in.get("task_hint", "")).strip() or task
-                if llm_backend != "anthropic" or client is None:
-                    result = ToolResult(error="extract_fl_state is unavailable when llm_backend=claude_print")
+                if client is None:
+                    result = ToolResult(error="extract_fl_state is unavailable because no LLM client is configured")
                     metrics["tool_errors"] += 1
                 else:
                     try:
@@ -1080,7 +1083,7 @@ def run_agent(
 
     visual_judge: VisualJudgeResult | None = None
     final_shot = _latest_screenshot_from_events(all_events)
-    if final_shot is not None and llm_backend == "anthropic" and client is not None:
+    if final_shot is not None and client is not None:
         try:
             screenshot_b64 = base64.b64encode(final_shot.read_bytes()).decode("ascii")
             judge_refs = resolve_reference_images()
@@ -1126,29 +1129,12 @@ def run_agent(
                     "usage": None,
                 },
             )
-    elif final_shot is not None and llm_backend != "anthropic":
-        write_event(
-            paths.jsonl_path,
-            {
-                "step": metrics["steps"],
-                "tool": "visual_judge",
-                "tool_input": {"model": cfg.model_visual_judge},
-                "ok": False,
-                "error": "visual_judge skipped: llm_backend=claude_print",
-                "output": None,
-                "screenshot": str(final_shot),
-                "usage": None,
-            },
-        )
 
     final_verdict = "pass" if det_passed else "fail"
     final_score = det_score
     final_reasons = list(det_reasons)
     eval_source = "deterministic"
     eval_disagreement = False
-    if llm_backend != "anthropic":
-        eval_source = "deterministic_no_judge"
-        final_reasons.extend(["visual_judge_skipped_llm_backend"])
     if visual_judge is not None:
         judge_unparseable = any(str(r) == "visual_judge_unparseable" for r in visual_judge.reasons)
         if judge_unparseable:
@@ -1192,9 +1178,9 @@ def run_agent(
         metrics["judge_reference_images"] = visual_judge.reference_images_used
         metrics["judge_observed_steps"] = visual_judge.observed_active_steps
 
-    if load_skills and posttask_learn and skill_manifest_entries and llm_backend == "anthropic":
+    if load_skills and posttask_learn and skill_manifest_entries and client is not None:
         if client is None:
-            raise RuntimeError("posttask_learn requires Anthropic client.")
+            raise RuntimeError("posttask_learn requires an LLM client.")
         metrics["posttask_patch_attempted"] = True
         # Keep reflection payload compact and deterministic.
         eval_passed = bool(metrics.get("eval_passed"))
@@ -1394,9 +1380,9 @@ def run_agent(
                     "usage": None,
                 },
             )
-    elif load_skills and posttask_learn and llm_backend != "anthropic":
+    elif load_skills and posttask_learn and client is None:
         metrics["posttask_patch_attempted"] = False
-        metrics["posttask_skip_reason"] = "llm_backend"
+        metrics["posttask_skip_reason"] = "no_llm_client"
         write_event(
             paths.jsonl_path,
             {
@@ -1404,7 +1390,7 @@ def run_agent(
                 "tool": "posttask_hook",
                 "tool_input": {"mode": posttask_mode},
                 "ok": False,
-                "error": "posttask_hook skipped: llm_backend=claude_print",
+                "error": "posttask_hook skipped: no llm client available",
                 "output": None,
                 "screenshot": None,
                 "usage": None,

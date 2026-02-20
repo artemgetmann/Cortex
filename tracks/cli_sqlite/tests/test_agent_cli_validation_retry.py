@@ -212,6 +212,7 @@ def test_validation_retries_repeat_same_step_without_advancing_counter(
         domain="sqlite",
         posttask_learn=False,
         require_skill_read=False,
+        llm_backend="anthropic",
     )
 
     events = read_events(sessions_root / "session-601" / "events.jsonl")
@@ -245,6 +246,7 @@ def test_validation_retry_cap_records_metric_and_queues_reflection(
         domain="sqlite",
         posttask_learn=False,
         require_skill_read=False,
+        llm_backend="anthropic",
     )
 
     events = read_events(sessions_root / "session-602" / "events.jsonl")
@@ -290,6 +292,7 @@ def test_repeated_dependency_setup_failures_trigger_fallback_reflection(
         domain="shell",
         posttask_learn=False,
         require_skill_read=False,
+        llm_backend="anthropic",
     )
 
     events = read_events(sessions_root / "session-603" / "events.jsonl")

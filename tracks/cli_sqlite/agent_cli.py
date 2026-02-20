@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import anthropic
 
+from claude_print_client import ClaudePrintClient
 from config import CortexConfig
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
@@ -357,8 +358,10 @@ def _create_executor_response_via_claude_print(
         f"MESSAGE_HISTORY:\n{history_text}\n"
     )
     timeout_s = max(10, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "90")))
-    # Default to strong planning quality for claude_print runs unless explicitly overridden.
-    effective_model = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "claude-opus-4-6").strip() or "claude-opus-4-6"
+    # Respect requested model by default; keep optional env override for operators.
+    requested_model = str(model or "").strip() or DEFAULT_EXECUTOR_MODEL
+    env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
+    effective_model = env_model_override or requested_model
     effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
     if effort not in {"low", "medium", "high"}:
         effort = "high"
@@ -374,6 +377,15 @@ def _create_executor_response_via_claude_print(
         effort,
     ]
     cmd.extend(["--model", effective_model])
+    cmd_env = os.environ.copy()
+    allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not allow_api_key:
+        cmd_env.pop("ANTHROPIC_API_KEY", None)
     try:
         proc = subprocess.run(
             cmd,
@@ -381,6 +393,7 @@ def _create_executor_response_via_claude_print(
             text=True,
             timeout=timeout_s,
             check=False,
+            env=cmd_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
@@ -402,7 +415,7 @@ def _create_executor_response_via_claude_print(
     usage = {
         "backend": "claude_print",
         "model": effective_model,
-        "requested_model": model,
+        "requested_model": requested_model,
         "effort": effort,
         "stdout_chars": len(stdout),
         "stderr_chars": len(stderr),
@@ -997,6 +1010,8 @@ def run_cli_agent(
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
         client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+    else:
+        client = ClaudePrintClient()
     adapter = _resolve_adapter_with_mode(
         domain,
         cryptic_errors=cryptic_errors,
@@ -1639,13 +1654,9 @@ def run_cli_agent(
 
     # LLM Judge — always run if no contract, or if contract failed
     use_llm_judge = not has_contract or not metrics.get("eval_passed", False)
-    if llm_backend != "anthropic":
-        use_llm_judge = False
-        if not has_contract:
-            metrics["eval_reasons"] = list(metrics.get("eval_reasons", [])) + ["judge_skipped_llm_backend"]
     if use_llm_judge:
         if client is None:
-            raise RuntimeError("LLM judge requested but Anthropic client is unavailable.")
+            raise RuntimeError("LLM judge requested but no LLM client is available.")
         final_state = adapter.capture_final_state(workspace)
         judge_result: JudgeResult = llm_judge(
             client=client,
@@ -1669,9 +1680,9 @@ def run_cli_agent(
 
     critic_no_updates = False
 
-    if posttask_learn and skill_manifest_entries and llm_backend == "anthropic":
+    if posttask_learn and skill_manifest_entries and client is not None:
         if client is None:
-            raise RuntimeError("Posttask learning requires Anthropic client.")
+            raise RuntimeError("Posttask learning requires an LLM client.")
         # Demo mode keeps Memory V2 lesson generation/promotion active while
         # suppressing legacy skill patching hooks/events for cleaner demos.
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
@@ -1940,9 +1951,9 @@ def run_cli_agent(
                     "output": json.dumps(promotion_result, ensure_ascii=True),
                 },
             )
-    elif posttask_learn and llm_backend != "anthropic":
+    elif posttask_learn and client is None:
         metrics["posttask_skill_patching_skipped_by_mode"] = True
-        metrics["posttask_skill_patching_skip_reason"] = "llm_backend"
+        metrics["posttask_skill_patching_skip_reason"] = "no_llm_client"
 
     escalation_state = _escalate_if_needed(
         state=escalation_state,

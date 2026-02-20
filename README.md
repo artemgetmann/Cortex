@@ -134,6 +134,7 @@ Run FL with subscription-backed `claude -p` executor (default; no API key requir
 
 Note: `claude_print` runs default to `claude-opus-4-6` with `--effort high`.
 Optional overrides: `CORTEX_CLAUDE_PRINT_MODEL`, `CORTEX_CLAUDE_PRINT_EFFORT`.
+`claude_print` now covers the full FL loop: executor + extract state + visual judge + posttask learning.
 
 Run repeated FL sessions and produce a benchmark JSON:
 

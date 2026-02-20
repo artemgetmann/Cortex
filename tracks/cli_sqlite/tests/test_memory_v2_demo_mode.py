@@ -260,7 +260,7 @@ def test_run_cli_agent_script_forwards_llm_backend_flag(
     capsys.readouterr()
 
 
-def test_run_cli_agent_with_claude_print_backend_skips_posttask_llm_calls(
+def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -289,8 +289,9 @@ def test_run_cli_agent_with_claude_print_backend_skips_posttask_llm_calls(
         llm_backend="claude_print",
     )
     assert result.metrics["llm_backend"] == "claude_print"
-    assert result.metrics["posttask_skill_patching_skip_reason"] == "llm_backend"
-    assert "judge_skipped_llm_backend" in result.metrics["eval_reasons"]
+    assert result.metrics["posttask_patch_attempted"] is True
+    assert result.metrics["posttask_skill_patching_skip_reason"] is None
+    assert result.metrics["eval_passed"] is True
 
 
 def test_run_memory_stability_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
