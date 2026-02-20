@@ -91,7 +91,7 @@ def main() -> int:
     ap.add_argument("--model", default="", help="Override model. Default: CORTEX_MODEL_HEAVY")
     ap.add_argument(
         "--llm-backend",
-        default="anthropic",
+        default="claude_print",
         choices=["anthropic", "claude_print"],
         help="Executor transport: anthropic (API) or claude_print (`claude -p`).",
     )

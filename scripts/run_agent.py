@@ -20,9 +20,10 @@ def main() -> int:
     ap.add_argument("--no-skills", action="store_true")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--posttask-mode", choices=["direct", "candidate"], default="candidate")
+    # Default to claude_print so local subscription transport is used unless API is explicitly requested.
     ap.add_argument(
         "--llm-backend",
-        default="anthropic",
+        default="claude_print",
         choices=["anthropic", "claude_print"],
         help="Executor transport: anthropic (API) or claude_print (`claude -p`).",
     )

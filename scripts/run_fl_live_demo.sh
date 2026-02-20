@@ -13,7 +13,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION_ID="${1:-$(( $(date +%s) % 100000 ))}"
 MAX_STEPS="${2:-12}"
 REF_IMAGE="${ROOT_DIR}/docs/references/fl-studio/kick-four-on-floor-reference.png"
-LLM_BACKEND="${CORTEX_LLM_BACKEND:-anthropic}"
+LLM_BACKEND="${CORTEX_LLM_BACKEND:-claude_print}"
 
 if [[ ! -x "${ROOT_DIR}/.venv/bin/python" ]]; then
   echo "Missing virtualenv python at ${ROOT_DIR}/.venv/bin/python"

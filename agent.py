@@ -92,7 +92,7 @@ NON_PRODUCTIVE_ACTIONS = {"zoom", "mouse_move"}
 RESET_NON_PRODUCTIVE_ACTIONS = {"left_click", "key"}
 MAX_SAME_STEP_RETRIES = 2
 LLM_BACKENDS = ("anthropic", "claude_print")
-DEFAULT_LLM_BACKEND = "anthropic"
+DEFAULT_LLM_BACKEND = "claude_print"
 
 
 def _read_skill_tool_param() -> dict[str, Any]:
