@@ -126,10 +126,10 @@ Run one live FL session:
 ./scripts/run_fl_live_demo.sh 210001 12
 ```
 
-Run FL with subscription-backed `claude -p` executor (no API key required for executor loop):
+Run FL with subscription-backed `claude -p` executor (default; no API key required for executor loop):
 
 ```bash
-CORTEX_LLM_BACKEND=claude_print ./scripts/run_fl_live_demo.sh 210011 12
+./scripts/run_fl_live_demo.sh 210011 12
 ```
 
 Note: `claude_print` runs default to `claude-opus-4-6` with `--effort high`.
@@ -142,7 +142,7 @@ python3 scripts/run_fl_benchmark.py \
   --start-session 210001 \
   --runs 10 \
   --max-steps 12 \
-  --llm-backend anthropic \
+  --llm-backend claude_print \
   --output-json /tmp/fl_benchmark_210001.json
 ```
 

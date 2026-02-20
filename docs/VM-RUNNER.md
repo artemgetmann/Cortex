@@ -11,6 +11,7 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 - `scripts/vm/prl_start.sh` — Start VM in headless mode
 - `scripts/vm/prl_status.sh` — Check VM status and guest connectivity
 - `scripts/vm/prl_stop.sh` — Graceful stop with force-kill fallback
+- `scripts/vm/prl_install_fl.sh` — Programmatically install the latest FL Studio macOS build inside the VM
 
 ### Quick Start
 
@@ -21,6 +22,9 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 # Check status
 ./scripts/vm/prl_status.sh
 
+# Install FL Studio in guest (requires running VM + internet)
+./scripts/vm/prl_install_fl.sh
+
 # Stop
 ./scripts/vm/prl_stop.sh
 ```
@@ -30,6 +34,13 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 | Variable | Default | Purpose |
 |---|---|---|
 | `CORTEX_PRL_VM` | `Cortex Runner` | VM name in Parallels |
+| `CORTEX_FL_REDIRECT_URL` | `https://support.image-line.com/redirect/flstudio_mac_installer` | Override FL installer redirect endpoint |
+
+### FL Install Notes
+
+- The script resolves the current installer URL from Image-Line's redirect endpoint at runtime.
+- It supports both `.pkg` and `.app` payloads from the DMG.
+- License unlock still requires a manual sign-in inside FL Studio.
 
 ### Prerequisites
 

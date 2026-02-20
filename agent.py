@@ -441,6 +441,18 @@ def _create_executor_response_via_claude_print(
         effort,
     ]
     cmd.extend(["--model", effective_model])
+    # claude_print should use subscription auth by default. If ANTHROPIC_API_KEY
+    # leaks in from .env, Claude CLI may switch to API mode and fail on quota.
+    cmd_env = os.environ.copy()
+    allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not allow_api_key:
+        cmd_env.pop("ANTHROPIC_API_KEY", None)
+
     try:
         proc = subprocess.run(
             cmd,
@@ -449,6 +461,7 @@ def _create_executor_response_via_claude_print(
             text=True,
             timeout=timeout_s,
             check=False,
+            env=cmd_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
