@@ -90,6 +90,12 @@ def main() -> int:
     ap.add_argument("--task", default=DEFAULT_TASK)
     ap.add_argument("--model", default="", help="Override model. Default: CORTEX_MODEL_HEAVY")
     ap.add_argument(
+        "--effort",
+        choices=["low", "medium", "high"],
+        default=None,
+        help="claude_print effort level. Omit to use environment/default behavior.",
+    )
+    ap.add_argument(
         "--llm-backend",
         default="claude_print",
         choices=["anthropic", "claude_print"],
@@ -132,6 +138,7 @@ def main() -> int:
             posttask_learn=not args.no_posttask_learn,
             posttask_mode=args.posttask_mode,
             llm_backend=args.llm_backend,
+            claude_print_effort=args.effort,
             verbose=args.verbose,
         )
         metrics = result.metrics
@@ -174,6 +181,7 @@ def main() -> int:
             "max_steps": args.max_steps,
             "task": args.task,
             "model": model,
+            "effort": args.effort,
             "llm_backend": args.llm_backend,
             "load_skills": not args.no_skills,
             "posttask_learn": not args.no_posttask_learn,
