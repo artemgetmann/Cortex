@@ -12,6 +12,7 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 - `scripts/vm/prl_status.sh` — Check VM status and guest connectivity
 - `scripts/vm/prl_stop.sh` — Graceful stop with force-kill fallback
 - `scripts/vm/prl_install_fl.sh` — Programmatically install the latest FL Studio macOS build inside the VM
+- `scripts/vm/prl_terminal_run.sh` — Run a guest command through guest Terminal (TCC-safe path for FL automation)
 
 ### Quick Start
 
@@ -24,6 +25,9 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 
 # Install FL Studio in guest (requires running VM + internet)
 ./scripts/vm/prl_install_fl.sh
+
+# Run an FL smoke command through guest Terminal and wait for completion
+./scripts/vm/prl_terminal_run.sh --cmd 'cd /Users/cortex/CortexLocal && /Users/cortex/.venv-cortex/bin/python scripts/run_agent.py --task "Create a 4-on-the-floor kick drum pattern" --session 9310 --max-steps 12 --verbose' --wait
 
 # Stop
 ./scripts/vm/prl_stop.sh
@@ -41,6 +45,11 @@ Parallels provides near-native ARM performance with first-class macOS guest supp
 - The script resolves the current installer URL from Image-Line's redirect endpoint at runtime.
 - It supports both `.pkg` and `.app` payloads from the DMG.
 - License unlock still requires a manual sign-in inside FL Studio.
+
+### TCC / Permissions Caveat
+
+- Direct `prlctl exec` may fail macOS TCC checks in the guest (`Accessibility` / `Screen Recording` show false) even when Terminal is approved.
+- Use `prl_terminal_run.sh` for computer-use runs. It launches the command via guest Terminal, which uses the granted TCC identity.
 
 ### Prerequisites
 
