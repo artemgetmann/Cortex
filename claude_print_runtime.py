@@ -7,6 +7,9 @@ import uuid
 from typing import Any
 
 
+# Shared Claude Print runtime helpers used by both FL and CLI tracks.
+# Keeping this module transport-focused prevents drift between orchestrators.
+
 # Shared backend constants used by both FL and CLI runtime tracks.
 LLM_BACKENDS = ("anthropic", "claude_print")
 DEFAULT_LLM_BACKEND = "claude_print"
@@ -14,12 +17,14 @@ VALID_CLAUDE_PRINT_EFFORTS = {"low", "medium", "high"}
 
 
 def clip_text(text: str, *, max_chars: int = 4000) -> str:
+    """Bound very large strings to keep logs/errors readable."""
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
 
 
 def normalize_llm_backend(value: str) -> str:
+    """Normalize and validate backend names once in a shared place."""
     normalized = str(value or "").strip().lower()
     if normalized not in LLM_BACKENDS:
         raise ValueError(f"Unsupported llm_backend: {value!r}. Expected one of {LLM_BACKENDS}.")
@@ -27,6 +32,10 @@ def normalize_llm_backend(value: str) -> str:
 
 
 def normalize_claude_print_effort(requested_effort: str | None, *, default: str = "high") -> str:
+    """
+    Resolve effort in priority order:
+    explicit arg -> env -> default.
+    """
     effort = str(requested_effort or "").strip().lower()
     if not effort:
         effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", default).strip().lower() or default
@@ -36,6 +45,10 @@ def normalize_claude_print_effort(requested_effort: str | None, *, default: str 
 
 
 def resolve_claude_print_model(requested_model: str | None, *, fallback_model: str) -> tuple[str, str]:
+    """
+    Return (requested_model, effective_model).
+    Effective model may be forced by env for operators running global overrides.
+    """
     requested = str(requested_model or "").strip() or fallback_model
     env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
     effective = env_model_override or requested
@@ -43,6 +56,7 @@ def resolve_claude_print_model(requested_model: str | None, *, fallback_model: s
 
 
 def build_claude_print_env() -> dict[str, str]:
+    """Build subprocess env with subscription auth as the safe default."""
     cmd_env = os.environ.copy()
     allow_api_key = os.getenv("CORTEX_CLAUDE_PRINT_USE_API_KEY", "").strip().lower() in {
         "1",
@@ -62,6 +76,11 @@ def render_message_history_for_claude_print(
     max_messages: int = 12,
     include_tool_result_image_hint: bool = False,
 ) -> str:
+    """
+    Flatten Anthropic-style message blocks into deterministic text history.
+
+    This keeps `claude -p` prompts compact and stable while preserving tool context.
+    """
     lines: list[str] = []
     for msg in messages[-max_messages:]:
         role = str(msg.get("role", "user")).strip() or "user"
@@ -113,14 +132,22 @@ def render_message_history_for_claude_print(
 
 
 def extract_first_json_object(raw: str, *, max_error_chars: int = 600) -> dict[str, Any]:
+    """
+    Parse first JSON object from model text output.
+
+    Handles fenced code blocks and noisy pre/post text, then falls back to
+    scanning from each `{` boundary.
+    """
     text = str(raw or "").strip()
     if not text:
         raise RuntimeError("claude -p returned empty output.")
 
+    # Fast-path for fenced JSON responses.
     fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
     if fence_match:
         text = fence_match.group(1).strip()
 
+    # Exact parse first, then resilient scan.
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
@@ -148,6 +175,12 @@ def assistant_blocks_from_claude_print_payload(
     allowed_tool_names: set[str],
     id_prefix: str = "toolu_cli",
 ) -> list[dict[str, Any]]:
+    """
+    Convert strict JSON payload into Anthropic-like assistant blocks.
+
+    Tool validation here is intentionally strict because this is the boundary
+    between untrusted model output and local tool execution.
+    """
     assistant_text = str(payload.get("assistant_text", "")).strip()
     blocks: list[dict[str, Any]] = []
     if assistant_text:
@@ -182,6 +215,9 @@ def assistant_blocks_from_claude_print_payload(
 
 
 def extract_stream_json_result(stdout: str) -> tuple[str, dict[str, Any]]:
+    """
+    Extract final `result` event and optional usage payload from stream-json output.
+    """
     result_text = ""
     usage_payload: dict[str, Any] = {}
 
@@ -202,4 +238,3 @@ def extract_stream_json_result(stdout: str) -> tuple[str, dict[str, Any]]:
                 usage_payload = usage
 
     return result_text, usage_payload
-

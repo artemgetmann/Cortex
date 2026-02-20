@@ -3,13 +3,21 @@ from __future__ import annotations
 from tracks.cli_sqlite.domain_adapter import DomainAdapter
 
 
+# Central registry for domain->adapter mapping.
+# Rationale: adapter selection logic is reused in multiple call sites/tests,
+# so it should not live inside the giant agent loop module.
+
 def resolve_adapter(
     domain: str,
     *,
     cryptic_errors: bool = False,
     semi_helpful_errors: bool = False,
 ) -> DomainAdapter:
-    """Resolve a domain name to its adapter instance."""
+    """
+    Resolve a domain name to its base adapter instance.
+
+    Lazy imports keep startup light and avoid paying import cost for all domains.
+    """
     if domain == "sqlite":
         from tracks.cli_sqlite.domains.sqlite_adapter import SqliteAdapter
 
@@ -48,7 +56,12 @@ def resolve_adapter_with_mode(
     semi_helpful_errors: bool,
     mixed_errors: bool,
 ) -> DomainAdapter:
-    """Resolve adapter with optional mixed per-command error policy."""
+    """
+    Resolve adapter with optional mixed per-command error policy.
+
+    Only domains that support mixed-mode behavior branch here; all others fall
+    back to the base resolver.
+    """
     if domain == "gridtool":
         from tracks.cli_sqlite.domains.gridtool_adapter import GridtoolAdapter
 
@@ -70,4 +83,3 @@ def resolve_adapter_with_mode(
         cryptic_errors=cryptic_errors,
         semi_helpful_errors=semi_helpful_errors,
     )
-
