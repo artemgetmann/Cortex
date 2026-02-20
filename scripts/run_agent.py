@@ -17,6 +17,12 @@ def main() -> int:
     ap.add_argument("--session", type=int, default=1)
     ap.add_argument("--max-steps", type=int, default=80)
     ap.add_argument("--model", default="")
+    ap.add_argument(
+        "--effort",
+        default=None,
+        choices=["low", "medium", "high"],
+        help="claude_print effort level. Omit to use environment/default behavior.",
+    )
     ap.add_argument("--no-skills", action="store_true")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--posttask-mode", choices=["direct", "candidate"], default="candidate")
@@ -42,6 +48,7 @@ def main() -> int:
         posttask_learn=not args.no_posttask_learn,
         posttask_mode=args.posttask_mode,
         llm_backend=args.llm_backend,
+        claude_print_effort=args.effort,
         verbose=args.verbose,
     )
     print("metrics:", res.metrics)

@@ -354,6 +354,7 @@ def _assistant_blocks_from_claude_print_payload(
 def _create_executor_response_via_claude_print(
     *,
     model: str,
+    effort: str | None,
     system_blocks: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     messages: list[dict[str, Any]],
@@ -402,6 +403,10 @@ def _create_executor_response_via_claude_print(
         "- Prefer one decisive tool call at a time.\n"
         "- tool_calls may be empty if task is complete.\n"
         "- input must satisfy tool input_schema.\n"
+        "- For computer tool calls, input.action must exactly match the schema enum.\n"
+        "- Never use shorthand actions like click/drag/type/press; use exact names such as left_click, left_click_drag, mouse_move, key, screenshot, scroll.\n"
+        "- For left_click_drag, provide both start_coordinate and coordinate.\n"
+        "- For scroll, provide both scroll_direction and scroll_amount.\n"
         "- Output strict JSON only (no markdown).\n\n"
         f"SYSTEM_PROMPT:\n{system_text}\n\n"
         f"TOOLS:\n{json.dumps(tools_for_prompt, ensure_ascii=True, indent=2, sort_keys=True)}\n\n"
@@ -422,11 +427,17 @@ def _create_executor_response_via_claude_print(
     }
 
     timeout_s = max(15, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "120")))
-    # Force high-quality planning for computer-use runs unless explicitly overridden.
-    effective_model = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "claude-opus-4-6").strip() or "claude-opus-4-6"
-    effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
-    if effort not in {"low", "medium", "high"}:
-        effort = "high"
+    # Respect the run's requested model by default.
+    # Optional env override exists for operators who want to force a specific
+    # claude -p model across all invocations.
+    requested_model = str(model or "").strip() or "claude-opus-4-6"
+    env_model_override = os.getenv("CORTEX_CLAUDE_PRINT_MODEL", "").strip()
+    effective_model = env_model_override or requested_model
+    requested_effort = str(effort or "").strip().lower()
+    if not requested_effort:
+        requested_effort = os.getenv("CORTEX_CLAUDE_PRINT_EFFORT", "high").strip().lower() or "high"
+    if requested_effort not in {"low", "medium", "high"}:
+        requested_effort = "high"
     cmd = [
         "claude",
         "-p",
@@ -438,7 +449,7 @@ def _create_executor_response_via_claude_print(
         "--tools",
         "",
         "--effort",
-        effort,
+        requested_effort,
     ]
     cmd.extend(["--model", effective_model])
     # claude_print should use subscription auth by default. If ANTHROPIC_API_KEY
@@ -504,8 +515,8 @@ def _create_executor_response_via_claude_print(
     usage_payload = {
         "backend": "claude_print",
         "model": effective_model,
-        "requested_model": model,
-        "effort": effort,
+        "requested_model": requested_model,
+        "effort": requested_effort,
         "stdout_chars": len(stdout),
         "stderr_chars": len(stderr),
         **usage_payload,
@@ -707,6 +718,7 @@ def run_agent(
     posttask_learn: bool = True,
     posttask_mode: str = "direct",
     llm_backend: str = DEFAULT_LLM_BACKEND,
+    claude_print_effort: str | None = None,
     verbose: bool = False,
 ) -> RunResult:
     llm_backend = _normalize_llm_backend(llm_backend)
@@ -716,6 +728,13 @@ def run_agent(
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
         client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+    if claude_print_effort is not None:
+        normalized_effort = str(claude_print_effort).strip().lower()
+        if normalized_effort not in {"low", "medium", "high"}:
+            raise ValueError(
+                f"Invalid claude_print_effort={claude_print_effort!r}. Expected one of: low, medium, high."
+            )
+        claude_print_effort = normalized_effort
 
     # Tool version + beta flag must match the chosen model's computer-use support.
     # Do not rely on "heavy vs decider" naming because users may run Sonnet as the
@@ -891,6 +910,7 @@ def run_agent(
         else:
             assistant_blocks, usage = _create_executor_response_via_claude_print(
                 model=model,
+                effort=claude_print_effort,
                 system_blocks=system_blocks,
                 tools=tools,
                 messages=messages,
