@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -319,3 +320,58 @@ def test_repeated_dependency_setup_failures_trigger_fallback_reflection(
     assert reflection_texts
     assert "Deterministic fallback check:" in reflection_texts[0]
     assert "pip install" not in reflection_texts[0]
+
+
+def test_contract_gap_checker_injects_one_retry_before_stop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _FakeResponse([{"type": "text", "text": "done"}]),
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    sessions_root, adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=604,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=True,
+        contract_gap_retry_steps=1,
+    )
+
+    events = read_events(sessions_root / "session-604" / "events.jsonl")
+    tools = [str(event.get("tool", "")) for event in events]
+    assert "contract_gap_retry" in tools
+    assert "run_sqlite" in tools
+    assert result.metrics["contract_gap_retry_attempts"] == 1
+    assert result.metrics["contract_gap_retry_triggered"] == 1
+    assert result.metrics["contract_gap_unresolved_count_prestop"] >= 1
+    assert result.metrics["contract_gap_unresolved_count_final"] == 0
+    assert any(
+        "Deterministic contract gap check found unresolved requirements." in text
+        for text in _collect_user_text_messages(result.messages)
+    )
+    assert adapter.execute_calls == [{"sql": "SELECT 1;"}]

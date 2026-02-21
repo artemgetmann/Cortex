@@ -85,6 +85,9 @@ class LessonRecord:
     task_id: str
     task: str
     domain: str
+    reason_code: str
+    gap_type: str
+    gap_signature: str
     source_session_ids: tuple[int, ...]
     reliability: float
     retrieval_count: int
@@ -110,6 +113,9 @@ class LessonRecord:
         trigger_fingerprints: Sequence[str],
         tags: Sequence[str] | None = None,
         status: str = "candidate",
+        reason_code: str = "",
+        gap_type: str = "",
+        gap_signature: str = "",
     ) -> "LessonRecord":
         normalized = normalize_rule_text(rule_text)
         fingerprints = tuple(sorted({str(fp).strip() for fp in trigger_fingerprints if str(fp).strip()}))
@@ -130,6 +136,9 @@ class LessonRecord:
             task_id=str(task_id).strip(),
             task=str(task).strip(),
             domain=str(domain).strip(),
+            reason_code=str(reason_code).strip(),
+            gap_type=str(gap_type).strip(),
+            gap_signature=str(gap_signature).strip(),
             source_session_ids=(int(session_id),) if int(session_id) > 0 else (),
             reliability=0.5,
             retrieval_count=0,
@@ -182,6 +191,9 @@ class LessonRecord:
                 task_id=str(row.get("task_id", "")).strip(),
                 task=str(row.get("task", "")).strip(),
                 domain=str(row.get("domain", "")).strip(),
+                reason_code=str(row.get("reason_code", "")).strip(),
+                gap_type=str(row.get("gap_type", "")).strip(),
+                gap_signature=str(row.get("gap_signature", "")).strip(),
                 source_session_ids=source_ids,
                 reliability=_clamp(float(row.get("reliability", 0.5) or 0.5), 0.0, 1.0),
                 retrieval_count=max(0, int(row.get("retrieval_count", 0) or 0)),
@@ -224,6 +236,9 @@ class LessonRecord:
             task_id=str(row.get("task_id", "")).strip(),
             task=str(row.get("task", "")).strip(),
             domain=str(row.get("domain", "")).strip(),
+            reason_code="",
+            gap_type="",
+            gap_signature="",
             source_session_ids=(session_id,) if session_id > 0 else (),
             reliability=reliability,
             retrieval_count=0,
@@ -267,6 +282,9 @@ class LessonRecord:
             "trigger_fingerprints": list(self.trigger_fingerprints),
             "tags": list(self.tags),
             "domain": self.domain,
+            "reason_code": self.reason_code,
+            "gap_type": self.gap_type,
+            "gap_signature": self.gap_signature,
             "source_session_ids": list(self.source_session_ids),
             "reliability": round(float(self.reliability), 4),
             "retrieval_count": int(self.retrieval_count),
@@ -348,6 +366,9 @@ def _merge_records(existing: LessonRecord, incoming: LessonRecord) -> LessonReco
         task_id=existing.task_id or incoming.task_id,
         task=existing.task or incoming.task,
         domain=existing.domain or incoming.domain,
+        reason_code=existing.reason_code or incoming.reason_code,
+        gap_type=existing.gap_type or incoming.gap_type,
+        gap_signature=existing.gap_signature or incoming.gap_signature,
         source_session_ids=source_ids,
         reliability=_clamp(reliability, 0.0, 1.0),
         retrieval_count=max(existing.retrieval_count, incoming.retrieval_count),

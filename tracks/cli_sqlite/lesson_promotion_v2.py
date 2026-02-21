@@ -23,6 +23,7 @@ class LessonOutcome:
     referee_score_gain: float | None = None
     major_regression: bool = False
     contradiction_lost: bool = False
+    gap_resolved: bool | None = None
 
 
 def compute_utility(
@@ -61,6 +62,9 @@ def _update_record(record: LessonRecord, outcome: LessonOutcome) -> LessonRecord
     status = record.status
     relevant_runs = len(history)
     mean_utility = _mean(history[-min(10, relevant_runs):])
+    has_structured_gap = bool(str(record.reason_code).strip() and str(record.gap_type).strip())
+    requires_gap_resolution = has_structured_gap
+    gap_resolved = outcome.gap_resolved
 
     # Suppression guards run first: harmful retrievals or contradiction losses
     # should immediately stop future retrieval amplification.
@@ -73,6 +77,10 @@ def _update_record(record: LessonRecord, outcome: LessonOutcome) -> LessonRecord
         and relevant_runs >= 3
         and mean_utility >= 0.20
         and major_regressions == 0
+        and (
+            (not requires_gap_resolution)
+            or bool(gap_resolved is True)
+        )
     ):
         status = "promoted"
 

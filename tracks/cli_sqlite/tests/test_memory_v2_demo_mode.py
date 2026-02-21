@@ -348,6 +348,37 @@ def test_run_cli_agent_script_forwards_judge_diagnostic_flag(
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_forwards_contract_gap_and_structured_lesson_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--contract-gap-retry",
+            "--contract-gap-retry-steps",
+            "1",
+            "--structured-lessons-required",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["contract_gap_retry"] is True
+    assert captured["contract_gap_retry_steps"] == 1
+    assert captured["structured_lessons_required"] is True
+    capsys.readouterr()
+
+
 def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

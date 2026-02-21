@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied, _required_skill_refs_for_domain
-from tracks.cli_sqlite.eval_cli import evaluate_cli_session
+from tracks.cli_sqlite.eval_cli import evaluate_cli_session, unresolved_contract_gaps
 from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
 from tracks.cli_sqlite.learning_cli import (
     Lesson,
@@ -194,6 +194,30 @@ class EvalTests(unittest.TestCase):
             self.assertIn("matched_forbidden_pattern", result.reasons)
             self.assertIn("required_query_mismatch", result.reasons)
             self.assertIn("too_many_errors", result.reasons)
+
+    def test_unresolved_contract_gaps_extracts_structured_rows(self) -> None:
+        track_tasks = Path(__file__).resolve().parents[1] / "tasks"
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "task.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute("CREATE TABLE sales(category TEXT NOT NULL, amount INTEGER NOT NULL)")
+                conn.commit()
+            events = [
+                {"tool": "run_sqlite", "tool_input": {"sql": "DROP TABLE sales;"}, "ok": False},
+            ]
+            result = evaluate_cli_session(
+                task="sqlite import aggregate grouped totals",
+                task_id="import_aggregate",
+                events=events,
+                db_path=db_path,
+                tasks_root=track_tasks,
+            )
+            gaps = unresolved_contract_gaps(result)
+            self.assertTrue(gaps)
+            for row in gaps:
+                self.assertTrue(str(row.get("reason_code", "")).strip())
+                self.assertTrue(str(row.get("gap_type", "")).strip())
+                self.assertTrue(str(row.get("gap_signature", "")).strip())
 
     def test_eval_incremental_reconcile_pass_case(self) -> None:
         track_tasks = Path(__file__).resolve().parents[1] / "tasks"

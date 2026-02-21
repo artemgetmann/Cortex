@@ -20,11 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
+    DEFAULT_CONTRACT_GAP_RETRY,
+    DEFAULT_CONTRACT_GAP_RETRY_STEPS,
     DEFAULT_DOC_BUDGET_TOKENS,
     DEFAULT_DOC_MODE,
     DEFAULT_DOC_RETRIEVAL_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LEARNING_MODE,
+    DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     LEARNING_MODES,
     run_cli_agent,
 )
@@ -61,6 +64,24 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Run LLM judge even when contract passes for per-run diagnostics.",
+    )
+    ap.add_argument(
+        "--contract-gap-retry",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_CONTRACT_GAP_RETRY,
+        help="Enable deterministic pre-stop contract gap checker with one retry.",
+    )
+    ap.add_argument(
+        "--contract-gap-retry-steps",
+        type=int,
+        default=DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+        help="Retry budget for contract gap checker (hard-capped to 1 in runtime).",
+    )
+    ap.add_argument(
+        "--structured-lessons-required",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_STRUCTURED_LESSONS_REQUIRED,
+        help="Require V2 candidates to include reason_code + gap_type metadata.",
     )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -125,6 +146,9 @@ def main() -> int:
             judge_docs=args.judge_docs == "on",
             executor_docs=args.executor_docs == "on",
             judge_diagnostic=bool(args.judge_diagnostic),
+            contract_gap_retry=bool(args.contract_gap_retry),
+            contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
+            structured_lessons_required=bool(args.structured_lessons_required),
             llm_backend=args.llm_backend,
         )
 

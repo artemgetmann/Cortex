@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, load_lesson_records
 
@@ -77,6 +77,7 @@ class RetrievalScore:
     text_similarity: float
     reliability: float
     recency: float
+    gap_match: float
 
 
 @dataclass(frozen=True)
@@ -161,11 +162,54 @@ def _is_transfer_candidate_strong_enough(
         float(score.fingerprint_match) >= 0.7
         or float(score.tag_overlap) >= float(anchor_threshold)
         or float(score.text_similarity) >= float(anchor_threshold)
+        or float(score.gap_match) >= float(anchor_threshold)
     )
 
 
 def _is_active(record: LessonRecord) -> bool:
     return record.status not in {"suppressed", "archived"}
+
+
+def _gap_match_bonus(
+    *,
+    lesson: LessonRecord,
+    unresolved_gaps: Sequence[dict[str, Any]],
+    query_domain: str = "",
+    query_task_id: str = "",
+) -> float:
+    if not unresolved_gaps:
+        return 0.0
+    lesson_signature = str(getattr(lesson, "gap_signature", "") or "").strip()
+    lesson_reason = str(getattr(lesson, "reason_code", "") or "").strip()
+    lesson_type = str(getattr(lesson, "gap_type", "") or "").strip()
+    if not lesson_signature and not lesson_reason and not lesson_type:
+        return 0.0
+    normalized_domain = str(query_domain).strip().lower()
+    normalized_task_id = str(query_task_id).strip()
+    best = 0.0
+    for gap in unresolved_gaps:
+        if not isinstance(gap, dict):
+            continue
+        signature = str(gap.get("gap_signature", "")).strip()
+        reason = str(gap.get("reason_code", "")).strip()
+        gap_type = str(gap.get("gap_type", "")).strip()
+        score = 0.0
+        if lesson_signature and signature and lesson_signature == signature:
+            score = 1.0
+        elif lesson_reason and lesson_type and lesson_reason == reason and lesson_type == gap_type:
+            score = 0.8
+        elif lesson_reason and lesson_reason == reason:
+            score = 0.55
+        elif lesson_type and lesson_type == gap_type:
+            score = 0.35
+        if score <= 0.0:
+            continue
+        if normalized_domain and str(getattr(lesson, "domain", "")).strip().lower() == normalized_domain:
+            score += 0.1
+        if normalized_task_id and str(getattr(lesson, "task_id", "")).strip() == normalized_task_id:
+            score += 0.1
+        best = max(best, score)
+    return _clamp(best, 0.0, 1.0)
 
 
 def _build_score(
@@ -174,18 +218,28 @@ def _build_score(
     query_fingerprint: str,
     query_tags: set[str],
     query_text: str,
+    unresolved_gaps: Sequence[dict[str, Any]] = (),
+    query_domain: str = "",
+    query_task_id: str = "",
 ) -> RetrievalScore:
     fingerprint = _fingerprint_match(query_fingerprint, lesson)
     tags = _tag_overlap(query_tags, set(lesson.tags))
     similarity = _jaccard(query_text, lesson.rule_text)
     reliability = _clamp(lesson.reliability, 0.0, 1.0)
     recency = _recency_score(lesson.updated_at)
+    gap_match = _gap_match_bonus(
+        lesson=lesson,
+        unresolved_gaps=unresolved_gaps,
+        query_domain=query_domain,
+        query_task_id=query_task_id,
+    )
     total = (
         (0.40 * fingerprint)
         + (0.25 * tags)
         + (0.20 * similarity)
         + (0.10 * reliability)
         + (0.05 * recency)
+        + (0.45 * gap_match)
     )
     return RetrievalScore(
         lesson_id=lesson.lesson_id,
@@ -195,6 +249,7 @@ def _build_score(
         text_similarity=similarity,
         reliability=reliability,
         recency=recency,
+        gap_match=gap_match,
     )
 
 
@@ -336,6 +391,9 @@ def _rank_lessons(
     query_text: str,
     query_fingerprint: str = "",
     query_tags: Sequence[str] = (),
+    unresolved_gaps: Sequence[dict[str, Any]] = (),
+    query_domain: str = "",
+    query_task_id: str = "",
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
 ) -> list[RetrievalMatch]:
@@ -351,6 +409,9 @@ def _rank_lessons(
             query_fingerprint=query_fingerprint,
             query_tags=query_tag_set,
             query_text=query_text,
+            unresolved_gaps=unresolved_gaps,
+            query_domain=query_domain,
+            query_task_id=query_task_id,
         )
         weighted_total = score.score * weight
         if weighted_total <= 0:
@@ -364,6 +425,7 @@ def _rank_lessons(
                 text_similarity=score.text_similarity,
                 reliability=score.reliability,
                 recency=score.recency,
+                gap_match=score.gap_match,
             )
         ranked.append(RetrievalMatch(lesson=lesson, score=score, lane=lane))
 
@@ -384,6 +446,9 @@ def retrieve_lessons(
     query_text: str,
     query_fingerprint: str = "",
     query_tags: Sequence[str] = (),
+    unresolved_gaps: Sequence[dict[str, Any]] = (),
+    query_domain: str = "",
+    query_task_id: str = "",
     config: RetrievalConfig | None = None,
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
@@ -393,6 +458,9 @@ def retrieve_lessons(
         query_text=query_text,
         query_fingerprint=query_fingerprint,
         query_tags=query_tags,
+        unresolved_gaps=unresolved_gaps,
+        query_domain=query_domain,
+        query_task_id=query_task_id,
         lane=lane,
         score_multiplier=score_multiplier,
     )
@@ -419,6 +487,9 @@ def retrieve_pre_run(
         query_text=task_text,
         query_fingerprint=primary_fingerprint,
         query_tags=query_tags,
+        unresolved_gaps=(),
+        query_domain=domain,
+        query_task_id=task_id,
         config=RetrievalConfig(max_results=max_results),
     )
 
@@ -437,6 +508,7 @@ def retrieve_on_error(
     transfer_policy: str | None = None,
     transfer_max_results: int = DEFAULT_TRANSFER_MAX_RESULTS,
     transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
+    unresolved_gaps: Sequence[dict[str, Any]] = (),
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """
     On-error retrieval prioritizing exact fingerprint matches.
@@ -488,6 +560,9 @@ def retrieve_on_error(
         query_text=error_text,
         query_fingerprint=fingerprint,
         query_tags=query_tags,
+        unresolved_gaps=unresolved_gaps,
+        query_domain=normalized_domain,
+        query_task_id=normalized_task,
         lane=LANE_STRICT,
     )
     strict_matches, strict_losers = _select_with_guards(ranked=strict_ranked, config=strict_config)
@@ -505,6 +580,9 @@ def retrieve_on_error(
         query_text=error_text,
         query_fingerprint=fingerprint,
         query_tags=query_tags,
+        unresolved_gaps=unresolved_gaps,
+        query_domain=normalized_domain,
+        query_task_id=normalized_task,
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
     )
@@ -551,6 +629,7 @@ __all__ = [
     "RetrievalConfig",
     "RetrievalMatch",
     "RetrievalScore",
+    "_gap_match_bonus",
     "retrieve_lessons",
     "retrieve_on_error",
     "retrieve_pre_run",

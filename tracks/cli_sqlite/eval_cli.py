@@ -28,6 +28,139 @@ class CliEvaluation:
         }
 
 
+def unresolved_contract_gaps(evaluation: CliEvaluation | dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Convert deterministic evaluation output into normalized unresolved-gap rows.
+
+    These rows are designed for two in-loop uses:
+    - targeted pre-stop retry prompts
+    - structured lesson metadata (reason_code/gap_type/gap_signature)
+    """
+    payload = evaluation.to_dict() if isinstance(evaluation, CliEvaluation) else dict(evaluation or {})
+    evidence = payload.get("evidence", {})
+    if not isinstance(evidence, dict):
+        evidence = {}
+    gaps: list[dict[str, Any]] = []
+
+    required_missing = evidence.get("required_patterns", {}).get("missing", [])
+    if isinstance(required_missing, list):
+        for pattern in required_missing:
+            text = str(pattern).strip()
+            if not text:
+                continue
+            gaps.append(
+                {
+                    "reason_code": "missing_required_pattern",
+                    "gap_type": "required_sql_pattern",
+                    "detail": text,
+                    "gap_signature": f"missing_required_pattern|required_sql_pattern|{text}",
+                }
+            )
+
+    forbidden_matched = evidence.get("forbidden_patterns", {}).get("matched", [])
+    if isinstance(forbidden_matched, list):
+        for pattern in forbidden_matched:
+            text = str(pattern).strip()
+            if not text:
+                continue
+            gaps.append(
+                {
+                    "reason_code": "matched_forbidden_pattern",
+                    "gap_type": "forbidden_sql_pattern",
+                    "detail": text,
+                    "gap_signature": f"matched_forbidden_pattern|forbidden_sql_pattern|{text}",
+                }
+            )
+
+    required_event_missing = evidence.get("required_event_patterns", {}).get("missing", [])
+    if isinstance(required_event_missing, list):
+        for pattern in required_event_missing:
+            text = str(pattern).strip()
+            if not text:
+                continue
+            gaps.append(
+                {
+                    "reason_code": "missing_required_event_pattern",
+                    "gap_type": "required_event_pattern",
+                    "detail": text,
+                    "gap_signature": f"missing_required_event_pattern|required_event_pattern|{text}",
+                }
+            )
+
+    forbidden_event_matched = evidence.get("forbidden_event_patterns", {}).get("matched", [])
+    if isinstance(forbidden_event_matched, list):
+        for pattern in forbidden_event_matched:
+            text = str(pattern).strip()
+            if not text:
+                continue
+            gaps.append(
+                {
+                    "reason_code": "matched_forbidden_event_pattern",
+                    "gap_type": "forbidden_event_pattern",
+                    "detail": text,
+                    "gap_signature": f"matched_forbidden_event_pattern|forbidden_event_pattern|{text}",
+                }
+            )
+
+    required_files_missing = evidence.get("required_files", {}).get("missing", [])
+    if isinstance(required_files_missing, list):
+        for rel_path in required_files_missing:
+            text = str(rel_path).strip()
+            if not text:
+                continue
+            gaps.append(
+                {
+                    "reason_code": "missing_required_file",
+                    "gap_type": "required_file",
+                    "detail": text,
+                    "gap_signature": f"missing_required_file|required_file|{text}",
+                }
+            )
+
+    required_queries = evidence.get("required_queries", [])
+    if isinstance(required_queries, list):
+        for query in required_queries:
+            if not isinstance(query, dict):
+                continue
+            if bool(query.get("matched", False)):
+                continue
+            query_id = str(query.get("id", "required_query")).strip() or "required_query"
+            query_error = str(query.get("error", "")).strip()
+            detail = query_id if not query_error else f"{query_id}: {query_error}"
+            gaps.append(
+                {
+                    "reason_code": "required_query_mismatch",
+                    "gap_type": "required_query",
+                    "detail": detail,
+                    "gap_signature": f"required_query_mismatch|required_query|{query_id}",
+                }
+            )
+
+    error_count = int(evidence.get("error_count", 0) or 0)
+    max_error_count = int(evidence.get("max_error_count", 0) or 0)
+    if error_count > max_error_count:
+        detail = f"error_count={error_count} max_error_count={max_error_count}"
+        gaps.append(
+            {
+                "reason_code": "too_many_errors",
+                "gap_type": "error_budget",
+                "detail": detail,
+                "gap_signature": f"too_many_errors|error_budget|{detail}",
+            }
+        )
+
+    # Keep order deterministic while removing accidental duplicates.
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in gaps:
+        signature = str(row.get("gap_signature", "")).strip()
+        if not signature or signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(row)
+    return deduped
+
+
 DEFAULT_CONTRACT = {
     "id": "cli-sqlite-import-aggregate-v1",
     "task_match": {"all": ["sqlite"], "any": ["import", "aggregate", "group"]},

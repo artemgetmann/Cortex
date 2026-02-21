@@ -37,7 +37,7 @@ from tracks.cli_sqlite.docs_pipeline import (
     normalize_doc_retrieval_mode,
     write_doc_artifacts,
 )
-from tracks.cli_sqlite.eval_cli import evaluate_cli_session
+from tracks.cli_sqlite.eval_cli import evaluate_cli_session, unresolved_contract_gaps
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
@@ -115,6 +115,9 @@ DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
+DEFAULT_CONTRACT_GAP_RETRY = True
+DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
+DEFAULT_STRUCTURED_LESSONS_REQUIRED = True
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
@@ -211,6 +214,41 @@ def _build_reflection_prompt(
         "- Do not repeat the same failing setup path.\n"
         "- Choose the smallest local alternative that avoids the missing dependency."
     )
+
+
+def _format_contract_gap_retry_prompt(
+    *,
+    unresolved_gaps: list[dict[str, Any]],
+    injected_hints: list[str] | None = None,
+    max_items: int = 5,
+) -> str:
+    lines = [
+        "Deterministic contract gap check found unresolved requirements.",
+        "Execute one focused correction step now. Do not stop yet.",
+        "Unresolved gaps:",
+    ]
+    for index, gap in enumerate(unresolved_gaps[:max_items], start=1):
+        reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
+        gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
+        detail = str(gap.get("detail", "")).strip()
+        suffix = f" detail={detail}" if detail else ""
+        lines.append(f"{index}. reason_code={reason} gap_type={gap_type}{suffix}")
+    extra = [str(row).strip() for row in (injected_hints or []) if str(row).strip()]
+    if extra:
+        lines.append("Prior lessons matching these gaps:")
+        for hint in extra[:2]:
+            lines.append(f"- {hint}")
+    lines.append("Return tool calls only after this message.")
+    return "\n".join(lines)
+
+
+def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
+    reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
+    gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
+    detail = str(gap.get("detail", "")).strip()
+    if detail:
+        return f"When reason_code={reason}, resolve gap_type={gap_type} by fixing: {detail}."
+    return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."
 
 
 def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -> bool:
@@ -941,6 +979,9 @@ def run_cli_agent(
     judge_docs: bool = False,
     executor_docs: bool = False,
     judge_diagnostic: bool = False,
+    contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
+    contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    structured_lessons_required: bool = DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
@@ -954,6 +995,7 @@ def run_cli_agent(
     doc_mode = normalize_doc_mode(doc_mode)
     doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
     doc_budget_tokens = max(128, int(doc_budget_tokens))
+    contract_gap_retry_steps = max(0, min(1, int(contract_gap_retry_steps)))
     llm_backend = _normalize_llm_backend(llm_backend)
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
@@ -1159,6 +1201,12 @@ def run_cli_agent(
         "executor_docs": bool(executor_docs),
         "judge_docs": bool(judge_docs),
         "judge_diagnostic": bool(judge_diagnostic),
+        "contract_gap_retry_enabled": bool(contract_gap_retry),
+        "contract_gap_retry_steps_budget": int(contract_gap_retry_steps),
+        "contract_gap_retry_attempts": 0,
+        "contract_gap_retry_triggered": 0,
+        "contract_gap_unresolved_count_prestop": 0,
+        "contract_gap_unresolved_count_final": 0,
         "docs_raw_count": len(docs_bundle.raw_docs),
         "docs_selected_chunks_count": len(docs_bundle.selected_chunks),
         "docs_selected_source_ids": docs_selected_source_ids,
@@ -1231,6 +1279,9 @@ def run_cli_agent(
     reflection_pending: str | None = None
     reflection_threshold_triggered = False
     reflection_fingerprints: set[str] = set()
+    contract_gap_retries_used = 0
+    contract_gap_prestop_artifacts: list[str] = []
+    latest_unresolved_gaps: list[dict[str, Any]] = []
     dependency_setup_retries: Counter[str] = Counter()
     dependency_setup_reflections: set[str] = set()
     hard_failure_count = 0
@@ -1539,6 +1590,7 @@ def run_cli_agent(
                     transfer_policy=transfer_retrieval_policy,
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
+                    unresolved_gaps=latest_unresolved_gaps,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
@@ -1645,6 +1697,94 @@ def run_cli_agent(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
+            if (
+                has_contract
+                and bool(contract_gap_retry)
+                and contract_gap_retries_used < int(contract_gap_retry_steps)
+            ):
+                prestop_eval = evaluate_cli_session(
+                    task=task_text,
+                    task_id=task_id,
+                    events=read_events(paths.events_path),
+                    db_path=workspace.work_dir / "task.db",
+                    tasks_root=TASKS_ROOT,
+                ).to_dict()
+                unresolved_gaps = unresolved_contract_gaps(prestop_eval)
+                latest_unresolved_gaps = unresolved_gaps
+                metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
+                prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
+                prestop_artifact_path.write_text(
+                    json.dumps(
+                        {
+                            "step": step,
+                            "attempt": contract_gap_retries_used + 1,
+                            "eval_result": prestop_eval,
+                            "unresolved_gaps": unresolved_gaps,
+                        },
+                        ensure_ascii=True,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                contract_gap_prestop_artifacts.append(str(prestop_artifact_path))
+                if unresolved_gaps:
+                    metrics["contract_gap_retry_attempts"] = int(metrics.get("contract_gap_retry_attempts", 0) or 0) + 1
+                    metrics["contract_gap_retry_triggered"] = int(metrics.get("contract_gap_retry_triggered", 0) or 0) + 1
+                    contract_gap_retries_used += 1
+                    gap_query = " | ".join(
+                        f"{row.get('reason_code', '')}:{row.get('gap_type', '')}:{row.get('detail', '')}"
+                        for row in unresolved_gaps[:4]
+                    )
+                    gap_tags = [
+                        str(row.get("reason_code", "")).strip()
+                        for row in unresolved_gaps
+                        if str(row.get("reason_code", "")).strip()
+                    ] + [
+                        str(row.get("gap_type", "")).strip()
+                        for row in unresolved_gaps
+                        if str(row.get("gap_type", "")).strip()
+                    ]
+                    gap_matches, _ = retrieve_on_error(
+                        path=LESSONS_V2_PATH,
+                        error_text=gap_query,
+                        fingerprint="",
+                        domain=domain,
+                        task_id=task_id,
+                        query_tags=gap_tags,
+                        max_results=2,
+                        include_domainless=False,
+                        enable_transfer=enable_transfer_retrieval,
+                        transfer_policy=transfer_retrieval_policy,
+                        transfer_max_results=transfer_retrieval_max_results,
+                        transfer_score_weight=transfer_retrieval_score_weight,
+                        unresolved_gaps=unresolved_gaps,
+                    )
+                    gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
+                    retry_prompt = _format_contract_gap_retry_prompt(
+                        unresolved_gaps=unresolved_gaps,
+                        injected_hints=gap_hints,
+                    )
+                    messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
+                    write_event(
+                        paths.events_path,
+                        {
+                            "step": step,
+                            "tool": "contract_gap_retry",
+                            "tool_input": {
+                                "attempt": contract_gap_retries_used,
+                                "unresolved_gaps": unresolved_gaps,
+                            },
+                            "ok": True,
+                            "error": None,
+                            "output": "retry_prompt_injected",
+                        },
+                    )
+                    if verbose:
+                        print(
+                            f"[step {step:03d}] no tool call; contract gaps detected ({len(unresolved_gaps)}). Injecting one retry.",
+                            flush=True,
+                        )
+                    continue
             if verbose:
                 print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
             break
@@ -1681,6 +1821,26 @@ def run_cli_agent(
         metrics["eval_reasons"] = list(eval_result.get("reasons", [])) if isinstance(eval_result.get("reasons"), list) else []
     else:
         eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
+    final_unresolved_gaps = unresolved_contract_gaps(eval_result) if has_contract else []
+    latest_unresolved_gaps = final_unresolved_gaps
+    metrics["contract_gap_unresolved_count_final"] = int(len(final_unresolved_gaps))
+    if contract_gap_prestop_artifacts:
+        metrics["contract_gap_prestop_artifacts"] = list(contract_gap_prestop_artifacts)
+    if has_contract and bool(contract_gap_retry) and contract_gap_retries_used > 0:
+        postretry_artifact_path = paths.session_dir / "contract_gap_postretry.json"
+        postretry_artifact_path.write_text(
+            json.dumps(
+                {
+                    "retry_attempts_used": contract_gap_retries_used,
+                    "eval_result": eval_result,
+                    "unresolved_gaps": final_unresolved_gaps,
+                },
+                ensure_ascii=True,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        metrics["contract_gap_postretry_artifact"] = str(postretry_artifact_path)
 
     # LLM Judge can run in diagnostic mode even when deterministic contract passes.
     # Contract pass/fail remains authoritative whenever a contract exists.
@@ -1815,18 +1975,36 @@ def run_cli_agent(
         prioritized_fingerprints = recurring_fingerprints or [fingerprint for fingerprint, _ in fingerprint_counts.most_common(3)]
         repeated_error_signatures = list(recurring_fingerprints)
         v2_candidates: list[LessonRecord] = []
-        for lesson in v2_reflection.filtered_lessons:
-            tags = extract_tags(error=lesson.lesson)
+        structured_gap_rows = list(final_unresolved_gaps)
+        fallback_rules: list[str] = []
+        if structured_lessons_required and not v2_reflection.filtered_lessons and structured_gap_rows:
+            fallback_rules = [_fallback_rule_for_gap(row) for row in structured_gap_rows[:3]]
+            metrics["v2_structured_fallback_lessons"] = len(fallback_rules)
+        source_lesson_texts = [lesson.lesson for lesson in v2_reflection.filtered_lessons] + fallback_rules
+        for idx, lesson_text in enumerate(source_lesson_texts):
+            gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)] if structured_gap_rows else {}
+            reason_code = str(gap_row.get("reason_code", "")).strip()
+            gap_type = str(gap_row.get("gap_type", "")).strip()
+            gap_signature = str(gap_row.get("gap_signature", "")).strip()
+            if structured_lessons_required and (not reason_code or not gap_type):
+                # Ensure structured rows remain machine-actionable.
+                reason_code = str(metrics.get("eval_reasons", ["unknown_reason"])[0] if metrics.get("eval_reasons") else "unknown_reason")
+                gap_type = "eval_reason"
+                gap_signature = f"{reason_code}|eval_reason|{task_id}"
+            tags = extract_tags(error=lesson_text)
             v2_candidates.append(
                 LessonRecord.from_candidate(
                     session_id=session_id,
                     task_id=task_id,
                     task=task_text,
                     domain=domain,
-                    rule_text=lesson.lesson,
+                    rule_text=lesson_text,
                     trigger_fingerprints=prioritized_fingerprints,
                     tags=tags,
                     status="candidate",
+                    reason_code=reason_code,
+                    gap_type=gap_type,
+                    gap_signature=gap_signature,
                 )
             )
         v2_candidate_lessons = [
@@ -1835,9 +2013,34 @@ def run_cli_agent(
                 "rule_text": row.rule_text,
                 "trigger_fingerprints": list(row.trigger_fingerprints),
                 "tags": list(row.tags),
+                "reason_code": row.reason_code,
+                "gap_type": row.gap_type,
+                "gap_signature": row.gap_signature,
             }
             for row in v2_candidates
         ]
+        posttask_lessons_raw = {
+            "raw_lessons": [_serialize_lesson(lesson) for lesson in v2_reflection.raw_lessons],
+            "filtered_lessons": [_serialize_lesson(lesson) for lesson in v2_reflection.filtered_lessons],
+            "fallback_rules": list(fallback_rules),
+            "unresolved_gaps": list(final_unresolved_gaps),
+        }
+        posttask_lessons_applied = {
+            "candidates": v2_candidate_lessons,
+            "structured_required": bool(structured_lessons_required),
+        }
+        posttask_lessons_raw_path = paths.session_dir / "posttask_lessons_raw.json"
+        posttask_lessons_applied_path = paths.session_dir / "posttask_lessons_applied.json"
+        posttask_lessons_raw_path.write_text(
+            json.dumps(posttask_lessons_raw, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+        posttask_lessons_applied_path.write_text(
+            json.dumps(posttask_lessons_applied, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+        metrics["posttask_lessons_raw_path"] = str(posttask_lessons_raw_path)
+        metrics["posttask_lessons_applied_path"] = str(posttask_lessons_applied_path)
         v2_store_result = upsert_lesson_records(LESSONS_V2_PATH, v2_candidates)
         metrics["v2_lessons_generated"] = int(v2_store_result.get("inserted", 0))
         metrics["v2_lessons_merged"] = int(v2_store_result.get("merged", 0))
@@ -1877,8 +2080,32 @@ def run_cli_agent(
                 bucket["count"] += 1.0
 
         outcomes: list[LessonOutcome] = []
+        current_records_by_id = {row.lesson_id: row for row in load_lesson_records(LESSONS_V2_PATH)}
+        unresolved_reason_codes = {
+            str(row.get("reason_code", "")).strip()
+            for row in final_unresolved_gaps
+            if str(row.get("reason_code", "")).strip()
+        }
+        unresolved_gap_signatures = {
+            str(row.get("gap_signature", "")).strip()
+            for row in final_unresolved_gaps
+            if str(row.get("gap_signature", "")).strip()
+        }
         for lesson_id, bucket in activations_by_lesson.items():
             count = max(1.0, bucket["count"])
+            current_record = current_records_by_id.get(lesson_id)
+            gap_resolved: bool | None = None
+            if current_record is not None and (
+                str(current_record.reason_code).strip() or str(current_record.gap_type).strip()
+            ):
+                candidate_signature = str(current_record.gap_signature).strip()
+                candidate_reason = str(current_record.reason_code).strip()
+                if candidate_signature and candidate_signature in unresolved_gap_signatures:
+                    gap_resolved = False
+                elif candidate_reason and candidate_reason in unresolved_reason_codes:
+                    gap_resolved = False
+                else:
+                    gap_resolved = True
             outcomes.append(
                 LessonOutcome(
                     lesson_id=lesson_id,
@@ -1887,6 +2114,7 @@ def run_cli_agent(
                     referee_score_gain=referee_gain,
                     major_regression=bool(metrics.get("eval_score", 0.0) < 0.2 and metrics.get("tool_errors", 0) > 0),
                     contradiction_lost=False,
+                    gap_resolved=gap_resolved,
                 )
             )
         for lesson_id, count in contradiction_loser_counts.items():
@@ -1899,6 +2127,7 @@ def run_cli_agent(
                     step_efficiency_gain=0.0,
                     referee_score_gain=referee_gain,
                     contradiction_lost=True,
+                    gap_resolved=False,
                 )
             )
         records_before = {row.lesson_id: row.status for row in load_lesson_records(LESSONS_V2_PATH)}
@@ -2108,6 +2337,17 @@ def run_cli_agent(
 
     docs_artifacts_path = write_doc_artifacts(session_dir=paths.session_dir, bundle=docs_bundle)
     learning_artifacts = {
+        "contract_gap_retry": {
+            "enabled": bool(contract_gap_retry),
+            "steps_budget": int(contract_gap_retry_steps),
+            "attempts": int(metrics.get("contract_gap_retry_attempts", 0) or 0),
+            "triggered": int(metrics.get("contract_gap_retry_triggered", 0) or 0),
+            "prestop_artifacts": list(metrics.get("contract_gap_prestop_artifacts", [])),
+            "postretry_artifact": metrics.get("contract_gap_postretry_artifact"),
+            "unresolved_count_prestop": int(metrics.get("contract_gap_unresolved_count_prestop", 0) or 0),
+            "unresolved_count_final": int(metrics.get("contract_gap_unresolved_count_final", 0) or 0),
+            "unresolved_gaps_final": list(final_unresolved_gaps),
+        },
         "lesson_candidates": v2_candidate_lessons,
         "promoted_lessons": promoted_lesson_ids,
         "suppressed_lessons": suppressed_lesson_ids,

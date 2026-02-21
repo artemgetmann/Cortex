@@ -29,6 +29,9 @@ def _record(
     reliability: float = 0.5,
     domain: str = "gridtool",
     task_id: str = "aggregate_report",
+    reason_code: str = "",
+    gap_type: str = "",
+    gap_signature: str = "",
 ) -> LessonRecord:
     rec = LessonRecord.from_candidate(
         session_id=session_id,
@@ -39,6 +42,9 @@ def _record(
         trigger_fingerprints=fingerprints,
         tags=tags,
         status=status,
+        reason_code=reason_code,
+        gap_type=gap_type,
+        gap_signature=gap_signature,
     )
     return LessonRecord(**{**rec.__dict__, "reliability": reliability})
 
@@ -466,6 +472,50 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertNotIn(suppressed.lesson_id, ids)
             self.assertNotIn(archived.lesson_id, ids)
 
+    def test_unresolved_gap_match_boosts_structured_lessons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            structured = _record(
+                session_id=1961,
+                rule_text="When required query mismatches, run checkpoint validation query exactly.",
+                fingerprints=("fp_generic",),
+                tags=("constraint_failed",),
+                reliability=0.4,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+            )
+            unstructured = _record(
+                session_id=1962,
+                rule_text="General SQL tip with high reliability.",
+                fingerprints=("fp_generic",),
+                tags=("generic",),
+                reliability=0.95,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+            )
+            upsert_lesson_records(path, [structured, unstructured])
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="query mismatch happened",
+                fingerprint="fp_generic",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                query_tags=("constraint_failed",),
+                max_results=2,
+                unresolved_gaps=[
+                    {
+                        "reason_code": "required_query_mismatch",
+                        "gap_type": "required_query",
+                        "gap_signature": "required_query_mismatch|required_query|checkpoint_query",
+                    }
+                ],
+            )
+            self.assertTrue(matches)
+            self.assertEqual(matches[0].lesson.lesson_id, structured.lesson_id)
+
 
 class PromotionV2Tests(unittest.TestCase):
     def test_compute_utility_weights(self) -> None:
@@ -509,6 +559,46 @@ class PromotionV2Tests(unittest.TestCase):
             apply_outcomes(path=path, outcomes=contradiction)
             rows = {row.lesson_id: row for row in load_lesson_records(path)}
             self.assertEqual(rows[second.lesson_id].status, "suppressed")
+
+    def test_structured_gap_lessons_require_gap_resolution_for_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            rec = _record(
+                session_id=1710,
+                rule_text="Fix required query mismatch by running the exact checkpoint query.",
+                status="candidate",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+            )
+            upsert_lesson_records(path, [rec])
+            unresolved_outcomes = [
+                LessonOutcome(
+                    lesson_id=rec.lesson_id,
+                    error_reduction=0.6,
+                    step_efficiency_gain=0.2,
+                    gap_resolved=False,
+                )
+                for _ in range(3)
+            ]
+            apply_outcomes(path=path, outcomes=unresolved_outcomes)
+            still_candidate = load_lesson_records(path)[0]
+            self.assertEqual(still_candidate.status, "candidate")
+
+            resolved_outcomes = [
+                LessonOutcome(
+                    lesson_id=rec.lesson_id,
+                    error_reduction=0.6,
+                    step_efficiency_gain=0.3,
+                    gap_resolved=True,
+                )
+                for _ in range(3)
+            ]
+            apply_outcomes(path=path, outcomes=resolved_outcomes)
+            promoted = load_lesson_records(path)[0]
+            self.assertEqual(promoted.status, "promoted")
 
 
 if __name__ == "__main__":
