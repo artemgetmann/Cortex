@@ -27,6 +27,7 @@ DEFAULT_ESCALATION_PATH = LEARNING_ROOT / "critic_escalation_state.json"
 
 DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "strict"))
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
+BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
 DEFAULT_CRITIC_MODEL = str(getattr(agent_cli, "DEFAULT_CRITIC_MODEL", "claude-haiku-4-5"))
 
@@ -242,12 +243,20 @@ def _format_optional(value: float | None, precision: int = 3) -> str:
 
 def _render_markdown(payload: dict[str, Any]) -> str:
     overall = payload["overall"]
+    learning_gate = _learning_gate(payload.get("runs", []))
     lines = [
         "# Real-World CLI Learning Benchmark",
         "",
         "## Conclusion",
         "",
         f"- did_learning_improve: `{payload['did_learning_improve']}`",
+        (
+            "- learning_gate: "
+            f"`transfer_pass_lift={learning_gate['transfer_pass_lift']}, "
+            f"activation_nonzero={learning_gate['activation_nonzero']}, "
+            f"activation_trend={learning_gate['activation_trend']}, "
+            f"retrieval_help_ratio_lift={learning_gate['retrieval_help_ratio_lift']}`"
+        ),
         f"- success_rate_by_session: `{json.dumps(overall['success_rate_by_session'], sort_keys=True)}`",
         f"- median_steps_to_success: `{_format_optional(overall['median_steps_to_success'])}`",
         f"- median_repeated_error_delta: `{_format_optional(overall['median_repeated_error_delta'])}`",
@@ -282,13 +291,74 @@ def _render_markdown(payload: dict[str, Any]) -> str:
 
 
 def _infer_learning_gain(payload: dict[str, Any]) -> bool:
-    curve = payload["overall"]["success_rate_by_session"]
-    if not curve:
-        return False
-    ordered = [curve[key] for key in sorted(curve, key=lambda item: int(item))]
-    if len(ordered) < 2:
-        return False
-    return ordered[-1] > ordered[0]
+    gate = _learning_gate(payload.get("runs", []))
+    return bool(gate.get("did_learning_improve", False))
+
+
+def _mean_series_by_run(
+    rows: list[dict[str, Any]],
+    *,
+    key: str,
+    phase: str | None = None,
+    bool_as_int: bool = False,
+) -> list[float]:
+    grouped: dict[int, list[float]] = {}
+    for row in rows:
+        if phase and str(row.get("phase", "")).strip().lower() != phase:
+            continue
+        run_idx = _as_int(row.get("run_index", 0), default=0)
+        raw = row.get(key, 0)
+        if bool_as_int:
+            value = 1.0 if bool(raw) else 0.0
+        else:
+            value = _as_float(raw, default=0.0)
+        grouped.setdefault(run_idx, []).append(value)
+    ordered: list[float] = []
+    for run_idx in sorted(grouped):
+        values = grouped[run_idx]
+        if not values:
+            continue
+        ordered.append(sum(values) / float(len(values)))
+    return ordered
+
+
+def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, bool]:
+    # Learning is credited only when harder transfer outcomes improve and
+    # mechanism signals show retrieval/activation actually engaged.
+    transfer_pass_series = _mean_series_by_run(rows, key="passed", phase="transfer", bool_as_int=True)
+    activation_series = _mean_series_by_run(rows, key="lesson_activations", phase="transfer")
+    retrieval_series = _mean_series_by_run(rows, key="retrieval_help_ratio", phase="transfer")
+
+    if (
+        len(transfer_pass_series) < 2
+        or len(activation_series) < 2
+        or len(retrieval_series) < 2
+    ):
+        return {
+            "did_learning_improve": False,
+            "transfer_pass_lift": False,
+            "activation_nonzero": False,
+            "activation_trend": False,
+            "retrieval_help_ratio_lift": False,
+        }
+
+    transfer_pass_lift = transfer_pass_series[-1] > transfer_pass_series[0]
+    activation_nonzero = any(value > 0.0 for value in activation_series)
+    activation_trend = activation_series[-1] >= activation_series[0]
+    retrieval_help_ratio_lift = retrieval_series[-1] > retrieval_series[0]
+    did_learning_improve = (
+        transfer_pass_lift
+        and activation_nonzero
+        and activation_trend
+        and retrieval_help_ratio_lift
+    )
+    return {
+        "did_learning_improve": did_learning_improve,
+        "transfer_pass_lift": transfer_pass_lift,
+        "activation_nonzero": activation_nonzero,
+        "activation_trend": activation_trend,
+        "retrieval_help_ratio_lift": retrieval_help_ratio_lift,
+    }
 
 
 def main() -> int:
@@ -296,15 +366,15 @@ def main() -> int:
     ap.add_argument("--sessions", type=int, default=5, help="Runs per arm; use >=10 for stronger curves.")
     ap.add_argument("--start-session", type=int, default=76001)
     ap.add_argument("--max-steps", type=int, default=10)
-    ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
+    ap.add_argument("--learning-mode", default=BENCHMARK_DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
-    ap.add_argument("--model-judge", default=None)
+    ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
-    ap.add_argument("--llm-backend", default="claude_print", choices=["anthropic", "claude_print"])
+    ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
     ap.add_argument(
         "--auto-escalate-critic",
         default="off",
@@ -341,7 +411,7 @@ def main() -> int:
     cfg = load_config()
     model_executor = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
     model_critic = args.model_critic.strip() or DEFAULT_CRITIC_MODEL
-    model_judge = args.model_judge.strip() if args.model_judge else None
+    model_judge = args.model_judge.strip() if args.model_judge else model_executor
     doc_retriever_model = str(args.doc_retriever_model).strip() or None
     auto_escalate_critic = str(args.auto_escalate_critic).strip().lower() == "on"
 

@@ -91,7 +91,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --sessions 5 \
   --start-session 73001 \
   --learning-mode strict \
-  --llm-backend claude_print \
+  --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
   --auto-escalate-critic off \
   --output-json tracks/cli_sqlite/reports/realworld_learning_benchmark.json \
@@ -102,15 +102,16 @@ Run a fast SQLite-only 5-run curve (docs on + lossy + lessons on):
 
 ```bash
 python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
-  --sessions 5 \
+  --sessions 10 \
   --start-session 78301 \
-  --suite sqlite \
+  --suite sqlite --suite git \
   --arm docs_on__mode_lossy__lessons_on \
-  --llm-backend claude_print \
+  --max-steps 6 \
+  --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
   --auto-escalate-critic off \
-  --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
-  --output-md tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.md
+  --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
+  --output-md tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.md
 ```
 
 Run a deeper pass (10+ sessions per arm):
@@ -126,5 +127,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Runtime artifacts are under `tracks/cli_sqlite/sessions/` and `tracks/cli_sqlite/learning/`.
 - Each session now includes `docs_artifacts.json` and `learning_artifacts.json`.
 - `--learning-mode strict` is the default benchmark mode.
+- Benchmark default backend is API (`anthropic`) with Haiku 4.5.
+- Learning is credited only when transfer pass lifts and mechanism metrics engage (`lesson_activations > 0`, `retrieval_help_ratio` lift).
 - For transfer/holdout protocol details, see `docs/MEMORY-V2-BENCHMARKS.md`.
 - Latest SQLite benchmark write-up: `tracks/cli_sqlite/reports/benchmark_report_sqlite_2026-02-21.md`.

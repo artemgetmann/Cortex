@@ -111,15 +111,17 @@ Run real-world CLI learning benchmark with docs + persistence ablations
 python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --sessions 10 \
   --start-session 76001 \
-  --max-steps 10 \
+  --max-steps 6 \
+  --suite sqlite --suite git \
+  --arm docs_on__mode_lossy__lessons_on \
   --learning-mode strict \
-  --llm-backend claude_print \
+  --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
   --auto-escalate-critic off \
   --doc-retrieval auto \
   --doc-budget-tokens 900 \
-  --output-json tracks/cli_sqlite/reports/realworld_learning_benchmark.json \
-  --output-md tracks/cli_sqlite/reports/realworld_learning_benchmark.md
+  --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
+  --output-md tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.md
 ```
 
 Faster SQLite-only curve (5 runs, one arm):
@@ -130,7 +132,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --start-session 78301 \
   --suite sqlite \
   --arm docs_on__mode_lossy__lessons_on \
-  --llm-backend claude_print \
+  --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
   --auto-escalate-critic off \
   --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
@@ -143,6 +145,7 @@ This runner reports:
 - repeated-error delta (`v2_fingerprint_recurrence_after - before`)
 - transfer performance on unseen tasks
 - per-arm comparison for docs on/off, lossy/full docs, lessons on/off
+- strict learning gate: transfer pass lift + non-zero lesson activations + retrieval help ratio lift
 
 Inspect one session as a visual timeline:
 
