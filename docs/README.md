@@ -13,6 +13,9 @@ This folder is split into active Memory V2 docs and archived historical tracks.
 - `docs/archive/memory-v2-history/` - older transfer plans, A/B findings, baseline snapshots, pilot handoffs.
 - `docs/archive/fl-studio-legacy/` - original FL Studio track docs and legacy architecture diagram.
 
+## Research
+- `docs/research/` - AGI ideation/reference artifacts (`agi-ideas-complete.md`, `agi-ideas.jsx`).
+
 ## Usage Rules
 - When updating behavior or implementation decisions, update active docs first.
 - Do not treat files in `docs/archive/` as current requirements.
