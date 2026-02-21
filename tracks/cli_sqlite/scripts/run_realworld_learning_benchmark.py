@@ -29,7 +29,6 @@ DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "strict"
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
-DEFAULT_CRITIC_MODEL = str(getattr(agent_cli, "DEFAULT_CRITIC_MODEL", "claude-haiku-4-5"))
 
 run_cli_agent = agent_cli.run_cli_agent
 LESSONS_PATH = Path(getattr(agent_cli, "LESSONS_PATH", DEFAULT_LESSONS_PATH))
@@ -368,19 +367,12 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=10)
     ap.add_argument("--learning-mode", default=BENCHMARK_DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
-    ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
-    ap.add_argument(
-        "--auto-escalate-critic",
-        default="off",
-        choices=["on", "off"],
-        help="Keep critic model stable by default for reproducible curve timing.",
-    )
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument(
         "--suite",
@@ -410,10 +402,12 @@ def main() -> int:
 
     cfg = load_config()
     model_executor = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
-    model_critic = args.model_critic.strip() or DEFAULT_CRITIC_MODEL
+    # Benchmark policy: no separate critic tuning surface.
+    # Keep critic aligned with executor and disable escalation for reproducibility.
+    model_critic = model_executor
     model_judge = args.model_judge.strip() if args.model_judge else model_executor
     doc_retriever_model = str(args.doc_retriever_model).strip() or None
-    auto_escalate_critic = str(args.auto_escalate_critic).strip().lower() == "on"
+    auto_escalate_critic = False
 
     selected_suites = {str(item).strip() for item in args.suite if str(item).strip()}
     active_suites = [
@@ -456,7 +450,7 @@ def main() -> int:
     print(
         f"  arms={len(arms)} sessions_per_arm={args.sessions} max_steps={args.max_steps} "
         f"learning_mode={args.learning_mode} model_executor={model_executor} "
-        f"auto_escalate_critic={auto_escalate_critic}"
+        "critic=executor(locked)"
     )
     print(f"{'=' * 96}\n")
 
@@ -571,7 +565,7 @@ def main() -> int:
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,
             "llm_backend": args.llm_backend,
-            "auto_escalate_critic": auto_escalate_critic,
+            "auto_escalate_critic": False,
         },
         "task_schedule": task_schedule,
         "overall": _summarize(all_rows),

@@ -117,7 +117,6 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --learning-mode strict \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
-  --auto-escalate-critic off \
   --doc-retrieval auto \
   --doc-budget-tokens 900 \
   --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
@@ -134,7 +133,6 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --arm docs_on__mode_lossy__lessons_on \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
-  --auto-escalate-critic off \
   --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
   --output-md tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.md
 ```
@@ -146,6 +144,7 @@ This runner reports:
 - transfer performance on unseen tasks
 - per-arm comparison for docs on/off, lossy/full docs, lessons on/off
 - strict learning gate: transfer pass lift + non-zero lesson activations + retrieval help ratio lift
+- benchmark runner uses fixed critic behavior (no critic tuning flags exposed)
 
 Inspect one session as a visual timeline:
 

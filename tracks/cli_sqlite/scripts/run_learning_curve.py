@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
-    DEFAULT_CRITIC_MODEL,
     DEFAULT_DOC_BUDGET_TOKENS,
     DEFAULT_DOC_MODE,
     DEFAULT_DOC_RETRIEVAL_MODE,
@@ -46,10 +45,8 @@ def main() -> int:
     ap.add_argument("--semi-helpful-errors", action="store_true", help="Semi-helpful errors: hint at fixes without full syntax")
     ap.add_argument("--mixed-errors", action="store_true", help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
-    ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
-    ap.add_argument("--auto-escalate-critic", default="off", choices=["on", "off"])
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument("--documentation", action="append", default=[])
@@ -76,7 +73,7 @@ def main() -> int:
     print(
         f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  "
         f"sessions={args.sessions}  executor_model={args.model_executor} judge_model={args.model_judge} "
-        f"backend={args.llm_backend} auto_escalate_critic={args.auto_escalate_critic}"
+        f"backend={args.llm_backend} critic=executor(locked)"
     )
     print(
         f"  docs mode={args.doc_mode} retrieval={args.doc_retrieval} "
@@ -100,12 +97,12 @@ def main() -> int:
             domain=args.domain,
             learning_mode=args.learning_mode,
             model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
-            model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
+            model_critic=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
             model_judge=args.model_judge.strip() if args.model_judge else (args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL),
             posttask_mode=args.posttask_mode,
             posttask_learn=not bool(args.no_posttask_learn),
             verbose=args.verbose,
-            auto_escalate_critic=args.auto_escalate_critic == "on",
+            auto_escalate_critic=False,
             escalation_score_threshold=0.75,
             escalation_consecutive_runs=2,
             require_skill_read=not args.bootstrap,

@@ -93,7 +93,6 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --learning-mode strict \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
-  --auto-escalate-critic off \
   --output-json tracks/cli_sqlite/reports/realworld_learning_benchmark.json \
   --output-md tracks/cli_sqlite/reports/realworld_learning_benchmark.md
 ```
@@ -109,7 +108,6 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --max-steps 6 \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
-  --auto-escalate-critic off \
   --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
   --output-md tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.md
 ```
@@ -128,6 +126,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Each session now includes `docs_artifacts.json` and `learning_artifacts.json`.
 - `--learning-mode strict` is the default benchmark mode.
 - Benchmark default backend is API (`anthropic`) with Haiku 4.5.
+- Critic tuning flags are intentionally hidden in benchmark runners; critic stays locked to executor-equivalent behavior.
 - Learning is credited only when transfer pass lifts and mechanism metrics engage (`lesson_activations > 0`, `retrieval_help_ratio` lift).
 - For transfer/holdout protocol details, see `docs/MEMORY-V2-BENCHMARKS.md`.
 - Latest SQLite benchmark write-up: `tracks/cli_sqlite/reports/benchmark_report_sqlite_2026-02-21.md`.
