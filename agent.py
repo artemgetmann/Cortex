@@ -513,7 +513,7 @@ def _latest_screenshot_from_events(events: list[dict[str, Any]]) -> Path | None:
 def _build_fallback_updates(
     *,
     eval_result: dict[str, Any],
-    read_skill_refs: set[str],
+    allowed_skill_refs: set[str],
     skill_digests: dict[str, str],
 ) -> tuple[list[SkillUpdate], float]:
     reasons = eval_result.get("reasons")
@@ -524,7 +524,7 @@ def _build_fallback_updates(
         return [], 0.0
 
     target_ref = "fl-studio/drum-pattern"
-    if target_ref not in read_skill_refs:
+    if target_ref not in allowed_skill_refs:
         return [], 0.0
     digest = skill_digests.get(target_ref, "")
     if not digest:
@@ -725,6 +725,8 @@ def run_agent(
         "posttask_patch_attempted": False,
         "posttask_patch_applied": 0,
         "posttask_candidates_queued": 0,
+        "posttask_allowed_source": None,
+        "posttask_allowed_skill_refs": [],
         "posttask_skip_reason": None,
         "lessons_loaded": lessons_loaded,
         "lessons_generated": 0,
@@ -1075,6 +1077,15 @@ def run_agent(
             eval_score = 0.0
 
         routed_refs = [e.skill_ref for e in routed_skill_entries]
+        # If executor skipped read_skill, fallback to routed refs so posttask
+        # can still learn from the skills already provided in system context.
+        if read_skill_refs:
+            allowed_posttask_refs = set(read_skill_refs)
+            metrics["posttask_allowed_source"] = "read_skill_refs"
+        else:
+            allowed_posttask_refs = set(routed_refs)
+            metrics["posttask_allowed_source"] = "routed_refs_fallback"
+        metrics["posttask_allowed_skill_refs"] = sorted(allowed_posttask_refs)
         skill_texts: list[str] = []
         skill_digests: dict[str, str] = {}
         for ref in routed_refs[:3]:
@@ -1186,7 +1197,7 @@ def run_agent(
             if (not updates) and (not eval_passed):
                 fallback_updates, fallback_conf = _build_fallback_updates(
                     eval_result=drum_eval,
-                    read_skill_refs=read_skill_refs,
+                    allowed_skill_refs=allowed_posttask_refs,
                     skill_digests=skill_digests,
                 )
                 if fallback_updates:
@@ -1199,7 +1210,7 @@ def run_agent(
                     confidence=confidence,
                     session_id=session_id,
                     required_skill_digests=skill_digests,
-                    allowed_skill_refs=read_skill_refs,
+                    allowed_skill_refs=allowed_posttask_refs,
                     min_confidence=0.7,
                     evaluation=drum_eval,
                 )
@@ -1212,9 +1223,10 @@ def run_agent(
                     min_confidence=0.7,
                     valid_steps=valid_steps,
                     required_skill_digests=skill_digests,
-                    allowed_skill_refs=read_skill_refs,
+                    allowed_skill_refs=allowed_posttask_refs,
                 )
                 metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+            metrics["posttask_skip_reason"] = patch_result.get("skipped_reason")
 
             if posttask_mode == "candidate":
                 promotion = auto_promote_queued_candidates(

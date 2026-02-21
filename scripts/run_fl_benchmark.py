@@ -155,20 +155,35 @@ def main() -> int:
             "judge_confidence": metrics.get("judge_confidence"),
             "steps": _to_int(metrics.get("steps")),
             "tool_errors": _to_int(metrics.get("tool_errors")),
+            "skill_reads": _to_int(metrics.get("skill_reads")),
             "loop_guard_blocks": _to_int(metrics.get("loop_guard_blocks")),
+            "lessons_generated": _to_int(metrics.get("lessons_generated")),
+            "posttask_patch_attempted": bool(metrics.get("posttask_patch_attempted", False)),
+            "posttask_patch_applied": _to_int(metrics.get("posttask_patch_applied")),
+            "posttask_candidates_queued": _to_int(metrics.get("posttask_candidates_queued")),
+            "posttask_allowed_source": metrics.get("posttask_allowed_source"),
+            "posttask_skip_reason": metrics.get("posttask_skip_reason"),
+            "auto_promotion_applied": _to_int(metrics.get("auto_promotion_applied")),
+            "auto_promotion_reason": metrics.get("auto_promotion_reason"),
             "elapsed_s": round(_to_float(metrics.get("elapsed_s")), 3),
             "metrics_path": str(_metrics_path(session_id)),
             "events_path": str(_events_path(session_id)),
         }
         rows.append(row)
         print(
-            "   verdict={verdict} det={det} judge={judge} score={score:.2f} steps={steps} errors={errors}".format(
+            "   verdict={verdict} det={det} judge={judge} score={score:.2f} "
+            "steps={steps} errors={errors} read_skill={reads} "
+            "posttask(applied={applied},queued={queued},skip={skip})".format(
                 verdict=row["eval_final_verdict"],
                 det=row.get("eval_det_passed"),
                 judge=row.get("judge_passed"),
                 score=row["eval_score"],
                 steps=row["steps"],
                 errors=row["tool_errors"],
+                reads=row["skill_reads"],
+                applied=row["posttask_patch_applied"],
+                queued=row["posttask_candidates_queued"],
+                skip=row["posttask_skip_reason"],
             ),
             flush=True,
         )
