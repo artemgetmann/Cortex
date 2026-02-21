@@ -254,6 +254,7 @@ def _create_executor_response_via_claude_print(
     system_prompt: str,
     tools: list[dict[str, Any]],
     messages: list[dict[str, Any]],
+    prompt_logger: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run one executor turn via `claude -p` and return synthetic assistant blocks."""
     tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
@@ -289,6 +290,8 @@ def _create_executor_response_via_claude_print(
         f"TOOLS:\n{json.dumps(tools_for_prompt, ensure_ascii=True, indent=2, sort_keys=True)}\n\n"
         f"MESSAGE_HISTORY:\n{history_text}\n"
     )
+    if prompt_logger is not None:
+        prompt_logger(prompt)
     timeout_s = max(10, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "90")))
     requested_model, effective_model = resolve_claude_print_model(
         model,
@@ -626,6 +629,20 @@ def _prioritize_domain_routed_entries(
     )
 
 
+def _required_skill_refs_for_domain(
+    *,
+    routed_refs: list[str],
+    domain: str,
+    require_skill_read: bool,
+) -> set[str]:
+    """Gate only on active-domain skills to prevent cross-domain deadlocks."""
+    if not require_skill_read:
+        return set()
+    domain_prefix = f"{domain}/"
+    domain_refs = [ref for ref in routed_refs if ref.startswith(domain_prefix)]
+    return set(domain_refs[:1])
+
+
 def _is_skill_gate_satisfied(
     *,
     read_skill_refs: set[str],
@@ -667,6 +684,14 @@ def _serialize_lesson(lesson: Any) -> dict[str, Any]:
         "eval_score": getattr(lesson, "eval_score", 0.0),
         "eval_passed": getattr(lesson, "eval_passed", False),
     }
+
+
+def _clone_json(value: Any) -> Any:
+    """Best-effort deep clone that stays JSON-serializable for artifacts."""
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=True))
+    except Exception:
+        return {"unserializable": str(value)}
 
 
 def _build_critic_context_query(
@@ -790,7 +815,11 @@ def prepare_cli_prompt_preview(
         routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
         routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
         routed_refs = [entry.skill_ref for entry in routed_entries]
-        required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
+        required_skill_refs = _required_skill_refs_for_domain(
+            routed_refs=routed_refs,
+            domain=domain,
+            require_skill_read=require_skill_read,
+        )
         skills_text = manifest_summaries_text(routed_entries)
 
     domain_keywords = adapter.quality_keywords()
@@ -911,6 +940,7 @@ def run_cli_agent(
     doc_retriever_model: str | None = None,
     judge_docs: bool = False,
     executor_docs: bool = False,
+    judge_diagnostic: bool = False,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
@@ -978,7 +1008,11 @@ def run_cli_agent(
         routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
         routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
         routed_refs = [entry.skill_ref for entry in routed_entries]
-        required_skill_refs = set(routed_refs[:1]) if require_skill_read else set()
+        required_skill_refs = _required_skill_refs_for_domain(
+            routed_refs=routed_refs,
+            domain=domain,
+            require_skill_read=require_skill_read,
+        )
         skills_text = manifest_summaries_text(routed_entries)
     domain_keywords = adapter.quality_keywords()
     lessons_text, lessons_loaded = load_relevant_lessons(
@@ -1108,6 +1142,10 @@ def run_cli_agent(
         "v2_prerun_lesson_ids": prerun_v2_ids,
         "lesson_activations": 0,
         "v2_lesson_activations": 0,
+        "v2_lesson_activations_by_step": {},
+        "v2_lesson_activations_per_run": 0,
+        "v2_lesson_activation_rate": 0.0,
+        "v2_lesson_activation_lane_counts": {},
         "v2_error_events": 0,
         "v2_retrieval_help_ratio": 0.0,
         "v2_transfer_retrieval_enabled": transfer_retrieval_policy != TRANSFER_POLICY_OFF,
@@ -1120,6 +1158,7 @@ def run_cli_agent(
         "doc_retriever_model": str(doc_retriever_model or "").strip() or None,
         "executor_docs": bool(executor_docs),
         "judge_docs": bool(judge_docs),
+        "judge_diagnostic": bool(judge_diagnostic),
         "docs_raw_count": len(docs_bundle.raw_docs),
         "docs_selected_chunks_count": len(docs_bundle.selected_chunks),
         "docs_selected_source_ids": docs_selected_source_ids,
@@ -1149,6 +1188,12 @@ def run_cli_agent(
         "posttask_skill_patching_skip_reason": None,
         "posttask_candidates_queued": 0,
         "posttask_patch_applied": 0,
+        "posttask_rejection_counts": {
+            "parse_fail": 0,
+            "required_digest_mismatch": 0,
+            "duplicate_jaccard": 0,
+            "replace_miss": 0,
+        },
         "auto_promotion_applied": 0,
         "auto_promotion_reason": None,
         "memory_v2_demo_mode": bool(memory_v2_demo_mode),
@@ -1160,6 +1205,7 @@ def run_cli_agent(
         "eval_passed": False,
         "judge_score": None,
         "judge_passed": None,
+        "judge_invoked": False,
         "judge_reasons": [],
         "judge_doc_grounding": [],
         "judge_critique": "",
@@ -1194,6 +1240,9 @@ def run_cli_agent(
     promoted_lesson_ids: list[str] = []
     suppressed_lesson_ids: list[str] = []
     v2_candidate_lessons: list[dict[str, Any]] = []
+    executor_input_bundles: list[dict[str, Any]] = []
+    judge_input_bundle: dict[str, Any] | None = None
+    judge_payload_bundle: dict[str, Any] | None = None
 
     step = 1
     validation_retries_this_step = 0
@@ -1205,6 +1254,16 @@ def run_cli_agent(
             # domain-agnostic and helps break repeated failure loops.
             messages.append({"role": "user", "content": [{"type": "text", "text": reflection_pending}]})
             reflection_pending = None
+        # Persist exact executor inputs for this turn before any model call.
+        executor_input_bundle: dict[str, Any] = {
+            "step": step,
+            "backend": llm_backend,
+            "model": model_executor,
+            "system_prompt": system_prompt,
+            "messages": _clone_json(messages),
+            "tools": _clone_json(tools),
+        }
+        executor_input_bundles.append(executor_input_bundle)
         if llm_backend == "anthropic":
             if client is None:
                 raise RuntimeError("Anthropic client unavailable while llm_backend=anthropic.")
@@ -1227,6 +1286,7 @@ def run_cli_agent(
                 system_prompt=system_prompt,
                 tools=tools,
                 messages=messages,
+                prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
             )
         metrics["usage"].append(usage)
         messages.append({"role": "assistant", "content": assistant_blocks})
@@ -1622,13 +1682,20 @@ def run_cli_agent(
     else:
         eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
 
-    # LLM Judge — always run if no contract, or if contract failed
-    use_llm_judge = not has_contract or not metrics.get("eval_passed", False)
+    # LLM Judge can run in diagnostic mode even when deterministic contract passes.
+    # Contract pass/fail remains authoritative whenever a contract exists.
+    use_llm_judge = bool(judge_diagnostic) or not has_contract or not metrics.get("eval_passed", False)
+    metrics["judge_invoked"] = bool(use_llm_judge)
     if use_llm_judge:
         if client is None:
             raise RuntimeError("LLM judge requested but no LLM client is available.")
         final_state = adapter.capture_final_state(workspace)
         judge_docs_context = docs_judge_block
+
+        def _judge_input_logger(payload: dict[str, Any]) -> None:
+            nonlocal judge_input_bundle
+            judge_input_bundle = _clone_json(payload)
+
         judge_result: JudgeResult = llm_judge(
             client=client,
             model=effective_judge_model,
@@ -1637,12 +1704,17 @@ def run_cli_agent(
             final_state=final_state,
             domain_name=domain,
             docs_context=judge_docs_context,
+            input_logger=_judge_input_logger,
         )
         metrics["judge_passed"] = judge_result.passed
         metrics["judge_score"] = judge_result.score
         metrics["judge_reasons"] = judge_result.reasons
         metrics["judge_doc_grounding"] = list(judge_result.doc_grounding)
         metrics["judge_critique"] = judge_result.raw_response
+        judge_payload_bundle = {
+            "result": judge_result.to_dict(),
+            "raw_response": judge_result.raw_response,
+        }
 
         # If no CONTRACT exists, use judge as primary eval signal
         if not has_contract:
@@ -1852,6 +1924,26 @@ def run_cli_agent(
             float(helped) / float(max(1, len(lesson_activation_records))),
             4,
         )
+        activation_by_step: dict[str, int] = {}
+        activation_lane_counts: Counter[str] = Counter()
+        for activation in lesson_activation_records:
+            step_key = str(int(activation.get("step", 0) or 0))
+            lesson_ids = activation.get("lesson_ids", [])
+            step_count = len(lesson_ids) if isinstance(lesson_ids, list) else 0
+            activation_by_step[step_key] = activation_by_step.get(step_key, 0) + step_count
+            lane_map = activation.get("lesson_lanes", {})
+            if isinstance(lane_map, dict):
+                for lane in lane_map.values():
+                    lane_text = str(lane).strip().lower()
+                    if lane_text:
+                        activation_lane_counts[lane_text] += 1
+        metrics["v2_lesson_activations_by_step"] = activation_by_step
+        metrics["v2_lesson_activations_per_run"] = len(lesson_activation_records)
+        metrics["v2_lesson_activation_rate"] = round(
+            float(metrics.get("v2_lesson_activations", 0) or 0) / float(max(1, int(metrics.get("steps", 0) or 0))),
+            4,
+        )
+        metrics["v2_lesson_activation_lane_counts"] = dict(activation_lane_counts)
 
         # Simplified architecture stores lessons only and skips post-task skill patches.
         if not patching_enabled:
@@ -1874,10 +1966,23 @@ def run_cli_agent(
                 domain_name=adapter.name,
             )
             if not proposed_updates:
-                parsed_updates, parsed_confidence = parse_reflection_response(reflection_raw)
+                parse_rejection_counts = {
+                    "parse_fail": 0,
+                    "required_digest_mismatch": 0,
+                    "duplicate_jaccard": 0,
+                    "replace_miss": 0,
+                }
+                parsed_updates, parsed_confidence = parse_reflection_response(
+                    reflection_raw,
+                    rejection_counts=parse_rejection_counts,
+                )
                 if parsed_updates:
                     proposed_updates = parsed_updates
                     confidence = parsed_confidence
+                for reason, count in parse_rejection_counts.items():
+                    metrics["posttask_rejection_counts"][reason] = int(
+                        metrics["posttask_rejection_counts"].get(reason, 0)
+                    ) + int(count)
 
             critic_no_updates = len(proposed_updates) == 0
             required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
@@ -1894,6 +1999,13 @@ def run_cli_agent(
                     allowed_skill_refs=allowed_refs,
                 )
                 metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+                patch_rejections = patch_result.get("rejection_counts", {})
+                if isinstance(patch_rejections, dict):
+                    for reason, count in patch_rejections.items():
+                        reason_key = str(reason)
+                        metrics["posttask_rejection_counts"][reason_key] = int(
+                            metrics["posttask_rejection_counts"].get(reason_key, 0)
+                        ) + int(count)
             else:
                 patch_result = queue_skill_update_candidates(
                     queue_path=QUEUE_PATH,
@@ -1906,6 +2018,13 @@ def run_cli_agent(
                     evaluation=eval_result,
                 )
                 metrics["posttask_candidates_queued"] = int(patch_result.get("queued", 0))
+                queue_rejections = patch_result.get("rejection_counts", {})
+                if isinstance(queue_rejections, dict):
+                    for reason, count in queue_rejections.items():
+                        reason_key = str(reason)
+                        metrics["posttask_rejection_counts"][reason_key] = int(
+                            metrics["posttask_rejection_counts"].get(reason_key, 0)
+                        ) + int(count)
 
             write_event(
                 paths.events_path,
@@ -1993,6 +2112,15 @@ def run_cli_agent(
         "promoted_lessons": promoted_lesson_ids,
         "suppressed_lessons": suppressed_lesson_ids,
         "repeated_error_signatures": sorted(set(repeated_error_signatures)),
+        "posttask_rejection_counts": dict(metrics.get("posttask_rejection_counts", {})),
+        "lesson_activations_by_step": dict(metrics.get("v2_lesson_activations_by_step", {})),
+        "judge": {
+            "invoked": bool(metrics.get("judge_invoked", False)),
+            "diagnostic_mode": bool(metrics.get("judge_diagnostic", False)),
+            "reasons": list(metrics.get("judge_reasons", [])),
+            "doc_grounding": list(metrics.get("judge_doc_grounding", [])),
+            "critique": str(metrics.get("judge_critique", "")),
+        },
         "metrics_summary": {
             "eval_passed": bool(metrics.get("eval_passed", False)),
             "eval_score": float(metrics.get("eval_score", 0.0) or 0.0),
@@ -2010,6 +2138,52 @@ def run_cli_agent(
     )
     metrics["docs_artifacts_path"] = str(docs_artifacts_path)
     metrics["learning_artifacts_path"] = str(learning_artifacts_path)
+    prompt_artifacts = {
+        "executor": {
+            "system_prompt": system_prompt,
+            "task_payload": {"role": "user", "content": [{"type": "text", "text": task_text}]},
+            "docs_context": docs_executor_block,
+            "selected_lessons": {
+                "lessons_text": lessons_text,
+                "v2_prerun_lesson_ids": list(prerun_v2_ids),
+            },
+            "skills": {
+                "routed_refs": list(routed_refs),
+                "required_skill_refs": sorted(required_skill_refs),
+                "routed_entries": [
+                    {
+                        "skill_ref": entry.skill_ref,
+                        "title": entry.title,
+                        "description": entry.description,
+                        "version": entry.version,
+                        "path": entry.path,
+                    }
+                    for entry in routed_entries
+                ],
+            },
+            "tools": _clone_json(tools),
+            "calls": executor_input_bundles,
+        },
+        "judge": {
+            "invoked": bool(metrics.get("judge_invoked", False)),
+            "diagnostic_mode": bool(metrics.get("judge_diagnostic", False)),
+            "model": effective_judge_model,
+            "docs_context": docs_judge_block,
+            "input_bundle": judge_input_bundle,
+            "result_bundle": judge_payload_bundle,
+        },
+        "docs": {
+            "selected_source_ids": docs_selected_source_ids,
+            "docs_mode": doc_mode,
+            "docs_retrieval_mode": doc_retrieval,
+        },
+    }
+    prompt_artifacts_path = paths.session_dir / "prompt_artifacts.json"
+    prompt_artifacts_path.write_text(
+        json.dumps(prompt_artifacts, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    metrics["prompt_artifacts_path"] = str(prompt_artifacts_path)
 
     write_metrics(paths.metrics_path, metrics)
     return CliRunResult(

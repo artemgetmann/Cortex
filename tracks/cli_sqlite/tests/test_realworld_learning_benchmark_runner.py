@@ -114,3 +114,26 @@ def test_realworld_learning_benchmark_emits_expected_payload(
 
     summary_md = output_md.read_text(encoding="utf-8")
     assert "| arm_id | docs | doc_mode | lessons | pass_rate |" in summary_md
+
+
+def test_learning_gate_requires_activation_and_retrieval_lift() -> None:
+    rows = [
+        {"run_index": 1, "phase": "transfer", "passed": False, "lesson_activations": 0, "retrieval_help_ratio": 0.0},
+        {"run_index": 2, "phase": "transfer", "passed": True, "lesson_activations": 0, "retrieval_help_ratio": 0.0},
+    ]
+    gate = run_realworld_learning_benchmark._learning_gate(rows)
+    assert gate["transfer_pass_lift"] is True
+    assert gate["activation_nonzero"] is False
+    assert gate["retrieval_help_ratio_lift"] is False
+    assert gate["did_learning_improve"] is False
+    assert gate["transfer_pass_delta"] > 0.0
+
+
+def test_learning_gate_reports_numeric_deltas() -> None:
+    rows = [
+        {"run_index": 1, "phase": "transfer", "passed": False, "lesson_activations": 1, "retrieval_help_ratio": 0.1},
+        {"run_index": 2, "phase": "transfer", "passed": True, "lesson_activations": 2, "retrieval_help_ratio": 0.4},
+    ]
+    gate = run_realworld_learning_benchmark._learning_gate(rows)
+    assert gate["activation_delta"] > 0.0
+    assert gate["retrieval_help_ratio_delta"] > 0.0

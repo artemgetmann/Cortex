@@ -136,7 +136,7 @@ def _configure_agent_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(agent_cli, "upsert_lesson_records", lambda *args, **kwargs: {"inserted": 0, "merged": 0, "conflict_links": 0})
     monkeypatch.setattr(agent_cli, "apply_outcomes", lambda *args, **kwargs: {"promoted": 0, "suppressed": 0, "updated": 0})
     monkeypatch.setattr(agent_cli, "propose_skill_updates", lambda **kwargs: ([], 0.0, "[]"))
-    monkeypatch.setattr(agent_cli, "parse_reflection_response", lambda raw: ([], 0.0))
+    monkeypatch.setattr(agent_cli, "parse_reflection_response", lambda raw, **kwargs: ([], 0.0))
     monkeypatch.setattr(agent_cli, "queue_skill_update_candidates", lambda **kwargs: {"attempted": False, "queued": 0})
     monkeypatch.setattr(agent_cli, "auto_promote_queued_candidates", lambda **kwargs: {"applied": 0, "reason": "no_updates"})
     return sessions_root
@@ -159,6 +159,7 @@ def test_memory_v2_demo_mode_suppresses_legacy_hook_events(monkeypatch: pytest.M
         posttask_learn=True,
         memory_v2_demo_mode=True,
         require_skill_read=False,
+        llm_backend="anthropic",
     )
     demo_events = read_events(sessions_root / "session-101" / "events.jsonl")
     demo_tools = [str(row.get("tool", "")) for row in demo_events]
@@ -180,6 +181,7 @@ def test_memory_v2_demo_mode_suppresses_legacy_hook_events(monkeypatch: pytest.M
         posttask_learn=True,
         memory_v2_demo_mode=False,
         require_skill_read=False,
+        llm_backend="anthropic",
     )
     normal_events = read_events(sessions_root / "session-102" / "events.jsonl")
     normal_tools = [str(row.get("tool", "")) for row in normal_events]
@@ -320,6 +322,32 @@ def test_run_cli_agent_script_forwards_documentation_flags(
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_forwards_judge_diagnostic_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--judge-diagnostic",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["judge_diagnostic"] is True
+    capsys.readouterr()
+
+
 def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -352,6 +380,36 @@ def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     assert result.metrics["posttask_patch_attempted"] is True
     assert result.metrics["posttask_skill_patching_skip_reason"] is None
     assert result.metrics["eval_passed"] is True
+
+
+def test_run_cli_agent_writes_prompt_artifacts_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    sessions_root = _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task=None,
+        session_id=104,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        judge_diagnostic=True,
+        llm_backend="anthropic",
+    )
+    artifact_path = Path(str(result.metrics["prompt_artifacts_path"]))
+    assert artifact_path.exists()
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert set(payload.keys()) == {"executor", "judge", "docs"}
+    assert payload["executor"]["system_prompt"]
+    assert isinstance(payload["executor"]["calls"], list)
+    assert payload["judge"]["invoked"] is True
+    assert payload["judge"]["diagnostic_mode"] is True
+    assert str(artifact_path).startswith(str(sessions_root))
 
 
 def test_run_memory_stability_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

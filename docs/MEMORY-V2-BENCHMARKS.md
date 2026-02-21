@@ -117,6 +117,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --learning-mode strict \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
+  --judge-diagnostic \
   --doc-retrieval auto \
   --doc-budget-tokens 900 \
   --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
@@ -133,6 +134,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --arm docs_on__mode_lossy__lessons_on \
   --llm-backend anthropic \
   --model-judge claude-haiku-4-5 \
+  --judge-diagnostic \
   --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
   --output-md tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.md
 ```
@@ -141,10 +143,12 @@ This runner reports:
 - success rate by session
 - median steps to success
 - repeated-error delta (`v2_fingerprint_recurrence_after - before`)
+- mean lesson activations and retrieval-help ratio trends
 - transfer performance on unseen tasks
 - per-arm comparison for docs on/off, lossy/full docs, lessons on/off
 - strict learning gate: transfer pass lift + non-zero lesson activations + retrieval help ratio lift
 - benchmark runner uses fixed critic behavior (no critic tuning flags exposed)
+- `--judge-diagnostic` captures judge rationale every run, but deterministic contracts remain the source of truth for pass/fail.
 
 Inspect one session as a visual timeline:
 

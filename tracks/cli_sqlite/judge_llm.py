@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 JUDGE_TIER_MAP = {
@@ -72,6 +72,7 @@ def llm_judge(
     final_state: str,
     domain_name: str,
     docs_context: str = "",
+    input_logger: Callable[[dict[str, Any]], None] | None = None,
 ) -> JudgeResult:
     """Evaluate task completion using an LLM judge.
 
@@ -140,6 +141,19 @@ def llm_judge(
         f"FINAL STATE:\n{final_state}\n\n"
         f"DOCUMENTATION CONTEXT (may be empty):\n{docs_context}\n"
     )
+    if input_logger is not None:
+        input_logger(
+            {
+                "model": model,
+                "domain_name": domain_name,
+                "task_text": task_text,
+                "system_prompt": system,
+                "user_payload": user,
+                "events_compact": compact_events,
+                "final_state": final_state,
+                "docs_context": docs_context,
+            }
+        )
 
     try:
         response = client.messages.create(

@@ -9,6 +9,26 @@ from typing import Any
 
 from tracks.cli_sqlite.skill_routing_cli import SkillManifestEntry, build_skill_manifest
 
+REJECTION_REASON_KEYS: tuple[str, ...] = (
+    "parse_fail",
+    "required_digest_mismatch",
+    "duplicate_jaccard",
+    "replace_miss",
+)
+
+
+def _empty_rejection_counts() -> dict[str, int]:
+    return {reason: 0 for reason in REJECTION_REASON_KEYS}
+
+
+def _bump_rejection_count(counts: dict[str, int] | None, reason: str) -> None:
+    if counts is None:
+        return
+    key = str(reason).strip()
+    if not key:
+        return
+    counts[key] = int(counts.get(key, 0)) + 1
+
 
 def _tokenize(text: str) -> set[str]:
     return {tok for tok in "".join(ch.lower() if ch.isalnum() else " " for ch in text).split() if tok}
@@ -63,9 +83,14 @@ def _extract_json_object(raw: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def parse_reflection_response(raw: str) -> tuple[list[SkillUpdate], float]:
+def parse_reflection_response(
+    raw: str,
+    *,
+    rejection_counts: dict[str, int] | None = None,
+) -> tuple[list[SkillUpdate], float]:
     obj = _extract_json_object(raw)
     if obj is None:
+        _bump_rejection_count(rejection_counts, "parse_fail")
         return [], 0.0
     confidence = float(obj.get("confidence", 0.0) or 0.0)
     updates_raw = obj.get("skill_updates")
@@ -251,6 +276,7 @@ def apply_skill_updates(
         "updated_skill_refs": [],
         "confidence": confidence,
         "skipped_reason": None,
+        "rejection_counts": _empty_rejection_counts(),
     }
     if not updates:
         result["skipped_reason"] = "no_updates"
@@ -271,6 +297,7 @@ def apply_skill_updates(
         if required_skill_digests is not None:
             expected = required_skill_digests.get(update.skill_ref, "")
             if not expected or expected.lower() != update.skill_digest.lower():
+                _bump_rejection_count(result["rejection_counts"], "required_digest_mismatch")
                 continue
 
         path = Path(entry.path)
@@ -281,6 +308,7 @@ def apply_skill_updates(
             actual_digest = skill_digest(text).lower()
             expected_digest = required_skill_digests.get(update.skill_ref, "").lower()
             if expected_digest and actual_digest != expected_digest:
+                _bump_rejection_count(result["rejection_counts"], "required_digest_mismatch")
                 continue
         original = text
         existing_lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -291,6 +319,8 @@ def apply_skill_updates(
             if rule.find in text and rule.replace not in text:
                 text = text.replace(rule.find, rule.replace, 1)
                 changed = True
+            elif rule.find not in text:
+                _bump_rejection_count(result["rejection_counts"], "replace_miss")
 
         section = "## Learned Updates"
         if section not in text:
@@ -300,6 +330,7 @@ def apply_skill_updates(
 
         for bullet in update.append_bullets:
             if any(_jaccard(bullet, line) >= 0.55 for line in existing_lines):
+                _bump_rejection_count(result["rejection_counts"], "duplicate_jaccard")
                 continue
             evidence = ", ".join(str(step) for step in sorted(set(update.evidence_steps))[:4])
             line = f"- [{stamp}] {bullet} (evidence steps: {evidence})"
@@ -363,6 +394,7 @@ def queue_skill_update_candidates(
         "queued_skill_refs": [],
         "queue_path": str(queue_path),
         "skipped_reason": None,
+        "rejection_counts": _empty_rejection_counts(),
     }
     if not updates:
         result["skipped_reason"] = "no_updates"
@@ -391,6 +423,7 @@ def queue_skill_update_candidates(
         if required_skill_digests is not None:
             expected = required_skill_digests.get(update.skill_ref, "")
             if not expected or expected.lower() != update.skill_digest.lower():
+                _bump_rejection_count(result["rejection_counts"], "required_digest_mismatch")
                 continue
         if not update.root_cause or not update.evidence_steps:
             continue

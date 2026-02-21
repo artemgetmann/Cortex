@@ -126,6 +126,12 @@ def main() -> int:
         choices=["on", "off"],
         help="Whether to provide docs context to the executor prompt.",
     )
+    ap.add_argument(
+        "--judge-diagnostic",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run LLM judge even when deterministic contract passes (diagnostic-only; contract remains primary).",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -172,6 +178,7 @@ def main() -> int:
         doc_retriever_model=str(args.doc_retriever_model).strip() or None,
         judge_docs=args.judge_docs == "on",
         executor_docs=args.executor_docs == "on",
+        judge_diagnostic=bool(args.judge_diagnostic),
         llm_backend=args.llm_backend,
     )
     print(json_dump(result.metrics))

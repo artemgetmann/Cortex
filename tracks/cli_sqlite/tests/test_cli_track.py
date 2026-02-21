@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied
+from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied, _required_skill_refs_for_domain
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
 from tracks.cli_sqlite.learning_cli import (
@@ -23,8 +23,11 @@ from tracks.cli_sqlite.self_improve_cli import _scores_improving
 from tracks.cli_sqlite.tool_aliases import build_alias_map, get_tool_api_name, get_tool_description
 from tracks.cli_sqlite.memory_cli import ensure_session, write_event
 from tracks.cli_sqlite.self_improve_cli import (
+    ReplaceRule,
     SkillUpdate,
+    apply_skill_updates,
     auto_promote_queued_candidates,
+    parse_reflection_response,
     queue_skill_update_candidates,
     skill_digest,
 )
@@ -249,6 +252,21 @@ class SkillGateTests(unittest.TestCase):
             )
         )
 
+    def test_required_skill_refs_only_gate_active_domain(self) -> None:
+        refs = ["sqlite/incremental-reconcile", "shell/git-release-flow"]
+        self.assertEqual(
+            _required_skill_refs_for_domain(routed_refs=refs, domain="shell", require_skill_read=True),
+            {"shell/git-release-flow"},
+        )
+        self.assertEqual(
+            _required_skill_refs_for_domain(routed_refs=refs, domain="artic", require_skill_read=True),
+            set(),
+        )
+        self.assertEqual(
+            _required_skill_refs_for_domain(routed_refs=refs, domain="shell", require_skill_read=False),
+            set(),
+        )
+
 
 class LearningAndPromotionTests(unittest.TestCase):
     def test_learning_store_and_load_relevance(self) -> None:
@@ -277,6 +295,104 @@ class LearningAndPromotionTests(unittest.TestCase):
             )
             self.assertEqual(loaded, 1)
             self.assertIn("order grouped rows", summary)
+
+    def test_parse_reflection_response_counts_parse_fail(self) -> None:
+        counts = {
+            "parse_fail": 0,
+            "required_digest_mismatch": 0,
+            "duplicate_jaccard": 0,
+            "replace_miss": 0,
+        }
+        updates, confidence = parse_reflection_response("not-json", rejection_counts=counts)
+        self.assertEqual([], updates)
+        self.assertEqual(0.0, confidence)
+        self.assertEqual(1, counts["parse_fail"])
+
+    def test_apply_skill_updates_tracks_rejection_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_root = root / "skills"
+            manifest_path = skills_root / "skills_manifest.json"
+            skill_path = skills_root / "sqlite" / "basics" / "SKILL.md"
+            skill_path.parent.mkdir(parents=True, exist_ok=True)
+            skill_path.write_text(
+                (
+                    "---\n"
+                    "name: sqlite-basics\n"
+                    "description: Base sqlite workflow.\n"
+                    "version: 1\n"
+                    "---\n\n"
+                    "# SQLite Basics\n"
+                    "- Keep SQL deterministic.\n"
+                ),
+                encoding="utf-8",
+            )
+            entries = build_skill_manifest(skills_root=skills_root, manifest_path=manifest_path)
+            digest = skill_digest(skill_path.read_text(encoding="utf-8"))
+            update = SkillUpdate(
+                skill_ref="sqlite/basics",
+                skill_digest=digest,
+                root_cause="Repeated mistakes.",
+                evidence_steps=[2, 3],
+                replace_rules=[ReplaceRule(find="missing-line", replace="new-line")],
+                append_bullets=["Keep SQL deterministic."],
+            )
+            result = apply_skill_updates(
+                entries=entries,
+                updates=[update],
+                confidence=0.9,
+                skills_root=skills_root,
+                manifest_path=manifest_path,
+                required_skill_digests={"sqlite/basics": digest},
+                allowed_skill_refs={"sqlite/basics"},
+            )
+            self.assertEqual(0, result["applied"])
+            self.assertEqual(1, result["rejection_counts"]["replace_miss"])
+            self.assertEqual(1, result["rejection_counts"]["duplicate_jaccard"])
+
+            bad_digest_update = SkillUpdate(
+                skill_ref="sqlite/basics",
+                skill_digest="deadbeef",
+                root_cause="Digest mismatch case.",
+                evidence_steps=[1],
+                replace_rules=[],
+                append_bullets=["Always verify output rows."],
+            )
+            mismatch_result = apply_skill_updates(
+                entries=entries,
+                updates=[bad_digest_update],
+                confidence=0.9,
+                skills_root=skills_root,
+                manifest_path=manifest_path,
+                required_skill_digests={"sqlite/basics": digest},
+                allowed_skill_refs={"sqlite/basics"},
+            )
+            self.assertEqual(0, mismatch_result["applied"])
+            self.assertEqual(1, mismatch_result["rejection_counts"]["required_digest_mismatch"])
+
+    def test_queue_skill_update_candidates_tracks_digest_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_path = root / "learning" / "pending_skill_patches.json"
+            update = SkillUpdate(
+                skill_ref="sqlite/basics",
+                skill_digest="wrong-digest",
+                root_cause="Mismatch case.",
+                evidence_steps=[1],
+                replace_rules=[],
+                append_bullets=["Use transactions for multi-statement changes."],
+            )
+            result = queue_skill_update_candidates(
+                queue_path=queue_path,
+                updates=[update],
+                confidence=0.9,
+                session_id=7,
+                task_id="import_aggregate",
+                required_skill_digests={"sqlite/basics": "expected-digest"},
+                allowed_skill_refs={"sqlite/basics"},
+            )
+            self.assertEqual(0, result["queued"])
+            self.assertEqual(1, result["rejection_counts"]["required_digest_mismatch"])
 
     def test_promotion_gate_applies_only_when_trend_condition_met(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

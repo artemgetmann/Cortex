@@ -186,6 +186,7 @@ def _build_row(
         "promoted_count": _as_int(metrics.get("v2_promoted", 0), default=0),
         "suppressed_count": _as_int(metrics.get("v2_suppressed", 0), default=0),
         "retrieval_help_ratio": _as_float(metrics.get("v2_retrieval_help_ratio", 0.0), default=0.0),
+        "judge_invoked": bool(metrics.get("judge_invoked", False)),
         "transfer_retrieval_enabled": bool(metrics.get("v2_transfer_retrieval_enabled", False)),
         "transfer_lane_activations": _as_int(metrics.get("v2_transfer_lane_activations", 0), default=0),
         "prerun_lesson_ids": list(metrics.get("v2_prerun_lesson_ids", []))
@@ -209,16 +210,24 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "success_rate_by_session": {},
             "median_steps_to_success": None,
             "median_repeated_error_delta": None,
+            "mean_lesson_activations": 0.0,
+            "mean_retrieval_help_ratio": 0.0,
         }
     pass_count = sum(1 for row in rows if bool(row.get("passed", False)))
     success_steps = [_as_float(row.get("steps", 0), default=0.0) for row in rows if bool(row.get("passed", False))]
     repeated_deltas = [_as_float(row.get("repeated_error_delta", 0.0), default=0.0) for row in rows]
+    lesson_activations = [_as_float(row.get("lesson_activations", 0.0), default=0.0) for row in rows]
+    retrieval_ratios = [_as_float(row.get("retrieval_help_ratio", 0.0), default=0.0) for row in rows]
+    mean_activations = (sum(lesson_activations) / float(len(lesson_activations))) if lesson_activations else 0.0
+    mean_retrieval = (sum(retrieval_ratios) / float(len(retrieval_ratios))) if retrieval_ratios else 0.0
     return {
         "run_count": len(rows),
         "pass_rate": pass_count / float(len(rows)),
         "success_rate_by_session": _success_rate_by_session(rows),
         "median_steps_to_success": _median_or_none(success_steps),
         "median_repeated_error_delta": _median_or_none(repeated_deltas),
+        "mean_lesson_activations": round(mean_activations, 4),
+        "mean_retrieval_help_ratio": round(mean_retrieval, 4),
     }
 
 
@@ -256,25 +265,33 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             f"activation_trend={learning_gate['activation_trend']}, "
             f"retrieval_help_ratio_lift={learning_gate['retrieval_help_ratio_lift']}`"
         ),
+        f"- transfer_pass_delta: `{learning_gate['transfer_pass_delta']:.4f}`",
+        f"- activation_delta: `{learning_gate['activation_delta']:.4f}`",
+        f"- retrieval_help_ratio_delta: `{learning_gate['retrieval_help_ratio_delta']:.4f}`",
         f"- success_rate_by_session: `{json.dumps(overall['success_rate_by_session'], sort_keys=True)}`",
         f"- median_steps_to_success: `{_format_optional(overall['median_steps_to_success'])}`",
         f"- median_repeated_error_delta: `{_format_optional(overall['median_repeated_error_delta'])}`",
+        f"- mean_lesson_activations: `{_format_optional(overall['mean_lesson_activations'])}`",
+        f"- mean_retrieval_help_ratio: `{_format_optional(overall['mean_retrieval_help_ratio'])}`",
         "",
         "## Transfer (Unseen Tasks)",
         "",
         f"- overall_transfer_pass_rate: `{float(payload['transfer']['pass_rate']):.2%}`",
         f"- overall_transfer_median_steps_to_success: `{_format_optional(payload['transfer']['median_steps_to_success'])}`",
         f"- overall_transfer_median_repeated_error_delta: `{_format_optional(payload['transfer']['median_repeated_error_delta'])}`",
+        f"- overall_transfer_mean_lesson_activations: `{_format_optional(payload['transfer']['mean_lesson_activations'])}`",
+        f"- overall_transfer_mean_retrieval_help_ratio: `{_format_optional(payload['transfer']['mean_retrieval_help_ratio'])}`",
         "",
         "## Arm Results",
         "",
-        "| arm_id | docs | doc_mode | lessons | pass_rate | median_steps_to_success | median_repeated_error_delta | transfer_pass_rate |",
-        "|---|---|---|---|---:|---:|---:|---:|",
+        "| arm_id | docs | doc_mode | lessons | pass_rate | median_steps_to_success | median_repeated_error_delta | mean_lesson_activations | retrieval_help_ratio_delta | transfer_pass_rate |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for arm_id in sorted(payload["arms"]):
         arm = payload["arms"][arm_id]
         summary = arm["summary"]
         transfer = arm["transfer"]
+        arm_gate = _learning_gate(arm.get("runs", []))
         lines.append(
             f"| {arm_id} | "
             f"{'on' if arm['docs_enabled'] else 'off'} | "
@@ -283,6 +300,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             f"{float(summary['pass_rate']):.2%} | "
             f"{_format_optional(summary['median_steps_to_success'])} | "
             f"{_format_optional(summary['median_repeated_error_delta'])} | "
+            f"{_format_optional(summary['mean_lesson_activations'])} | "
+            f"{float(arm_gate.get('retrieval_help_ratio_delta', 0.0)):.4f} | "
             f"{float(transfer['pass_rate']):.2%} |"
         )
     lines.append("")
@@ -321,7 +340,7 @@ def _mean_series_by_run(
     return ordered
 
 
-def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, bool]:
+def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     # Learning is credited only when harder transfer outcomes improve and
     # mechanism signals show retrieval/activation actually engaged.
     transfer_pass_series = _mean_series_by_run(rows, key="passed", phase="transfer", bool_as_int=True)
@@ -339,8 +358,14 @@ def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, bool]:
             "activation_nonzero": False,
             "activation_trend": False,
             "retrieval_help_ratio_lift": False,
+            "transfer_pass_delta": 0.0,
+            "activation_delta": 0.0,
+            "retrieval_help_ratio_delta": 0.0,
         }
 
+    transfer_pass_delta = transfer_pass_series[-1] - transfer_pass_series[0]
+    activation_delta = activation_series[-1] - activation_series[0]
+    retrieval_help_ratio_delta = retrieval_series[-1] - retrieval_series[0]
     transfer_pass_lift = transfer_pass_series[-1] > transfer_pass_series[0]
     activation_nonzero = any(value > 0.0 for value in activation_series)
     activation_trend = activation_series[-1] >= activation_series[0]
@@ -357,6 +382,9 @@ def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, bool]:
         "activation_nonzero": activation_nonzero,
         "activation_trend": activation_trend,
         "retrieval_help_ratio_lift": retrieval_help_ratio_lift,
+        "transfer_pass_delta": transfer_pass_delta,
+        "activation_delta": activation_delta,
+        "retrieval_help_ratio_delta": retrieval_help_ratio_delta,
     }
 
 
@@ -373,6 +401,12 @@ def main() -> int:
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
+    ap.add_argument(
+        "--judge-diagnostic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run LLM judge even when deterministic contract passes to capture rationale taxonomy.",
+    )
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument(
         "--suite",
@@ -450,7 +484,7 @@ def main() -> int:
     print(
         f"  arms={len(arms)} sessions_per_arm={args.sessions} max_steps={args.max_steps} "
         f"learning_mode={args.learning_mode} model_executor={model_executor} "
-        "critic=executor(locked)"
+        f"critic=executor(locked) judge_diagnostic={bool(args.judge_diagnostic)}"
     )
     print(f"{'=' * 96}\n")
 
@@ -515,6 +549,7 @@ def main() -> int:
                 doc_retriever_model=doc_retriever_model,
                 judge_docs=judge_docs,
                 executor_docs=executor_docs,
+                judge_diagnostic=bool(args.judge_diagnostic),
                 llm_backend=args.llm_backend,
             )
             metrics = result.metrics if isinstance(result.metrics, dict) else {}
@@ -566,6 +601,7 @@ def main() -> int:
             "doc_retriever_model": doc_retriever_model,
             "llm_backend": args.llm_backend,
             "auto_escalate_critic": False,
+            "judge_diagnostic": bool(args.judge_diagnostic),
         },
         "task_schedule": task_schedule,
         "overall": _summarize(all_rows),

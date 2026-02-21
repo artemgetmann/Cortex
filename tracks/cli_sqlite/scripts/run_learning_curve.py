@@ -56,6 +56,12 @@ def main() -> int:
     ap.add_argument("--doc-retriever-model", default="")
     ap.add_argument("--judge-docs", default="off", choices=["on", "off"])
     ap.add_argument("--executor-docs", default="off", choices=["on", "off"])
+    ap.add_argument(
+        "--judge-diagnostic",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run LLM judge even when contract passes for per-run diagnostics.",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -118,6 +124,7 @@ def main() -> int:
             doc_retriever_model=str(args.doc_retriever_model).strip() or None,
             judge_docs=args.judge_docs == "on",
             executor_docs=args.executor_docs == "on",
+            judge_diagnostic=bool(args.judge_diagnostic),
             llm_backend=args.llm_backend,
         )
 
