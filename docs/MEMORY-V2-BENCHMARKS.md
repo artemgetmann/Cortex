@@ -104,6 +104,46 @@ python3 tracks/cli_sqlite/scripts/run_transfer_pressure.py \
   --output-md tracks/cli_sqlite/sessions/transfer_pressure_53001.md
 ```
 
+Run real-world CLI learning benchmark with docs + persistence ablations
+(`git`, `sqlite`, `xlsx` train/transfer schedule; Haiku pressure by default):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 10 \
+  --start-session 76001 \
+  --max-steps 10 \
+  --learning-mode strict \
+  --llm-backend claude_print \
+  --model-judge claude-haiku-4-5 \
+  --auto-escalate-critic off \
+  --doc-retrieval auto \
+  --doc-budget-tokens 900 \
+  --output-json tracks/cli_sqlite/reports/realworld_learning_benchmark.json \
+  --output-md tracks/cli_sqlite/reports/realworld_learning_benchmark.md
+```
+
+Faster SQLite-only curve (5 runs, one arm):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 5 \
+  --start-session 78301 \
+  --suite sqlite \
+  --arm docs_on__mode_lossy__lessons_on \
+  --llm-backend claude_print \
+  --model-judge claude-haiku-4-5 \
+  --auto-escalate-critic off \
+  --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
+  --output-md tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.md
+```
+
+This runner reports:
+- success rate by session
+- median steps to success
+- repeated-error delta (`v2_fingerprint_recurrence_after - before`)
+- transfer performance on unseen tasks
+- per-arm comparison for docs on/off, lossy/full docs, lessons on/off
+
 Inspect one session as a visual timeline:
 
 ```bash

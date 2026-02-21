@@ -17,6 +17,7 @@ from tracks.cli_sqlite.tool_aliases import ToolAlias
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 RUN_BASH_TOOL_NAME = "run_bash"
+SHELL_DOCS_DIR = Path(__file__).resolve().parent / "docs"
 
 _SHELL_KEYWORDS = re.compile(
     r"(?i)\b("
@@ -262,4 +263,18 @@ class ShellAdapter:
         return result
 
     def docs_manifest(self) -> list[DomainDoc]:
-        return []
+        docs = [
+            DomainDoc(
+                doc_id="shell/git-reference",
+                path=SHELL_DOCS_DIR / "shell-git-reference.md",
+                title="Shell Git Reference",
+                tags=("shell", "git", "commit", "branch", "merge", "patch"),
+            ),
+            DomainDoc(
+                doc_id="shell/xlsx-reference",
+                path=SHELL_DOCS_DIR / "shell-xlsx-reference.md",
+                title="Shell XLSX Reference",
+                tags=("shell", "python", "openpyxl", "xlsx", "summary", "csv"),
+            ),
+        ]
+        return [doc for doc in docs if doc.path.exists()]

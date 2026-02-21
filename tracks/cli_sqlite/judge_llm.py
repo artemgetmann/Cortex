@@ -26,6 +26,7 @@ class JudgeResult:
     passed: bool
     score: float
     reasons: list[str]
+    doc_grounding: list[dict[str, str]]
     raw_response: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +34,7 @@ class JudgeResult:
             "passed": self.passed,
             "score": self.score,
             "reasons": self.reasons,
+            "doc_grounding": self.doc_grounding,
         }
 
 
@@ -69,6 +71,7 @@ def llm_judge(
     events: list[dict[str, Any]],
     final_state: str,
     domain_name: str,
+    docs_context: str = "",
 ) -> JudgeResult:
     """Evaluate task completion using an LLM judge.
 
@@ -109,7 +112,8 @@ def llm_judge(
         f"Domain: {domain_name}\n\n"
         "Your job: judge whether the agent completed the assigned task correctly.\n\n"
         "Return STRICT JSON only:\n"
-        '{"passed": true|false, "score": 0.0-1.0, "reasons": ["specific reason 1", ...]}\n\n'
+        '{"passed": true|false, "score": 0.0-1.0, "reasons": ["specific reason 1", ...], '
+        '"doc_grounding": [{"source_id":"...","note":"..."}]}\n\n'
         "Scoring guide:\n"
         "- 1.0: Task fully completed, correct output\n"
         "- 0.75: Task mostly complete, minor issues\n"
@@ -121,6 +125,7 @@ def llm_judge(
         "- Do NOT give generic reasons like 'good job' or 'needs improvement'.\n"
         "- Judge based on the TASK REQUIREMENTS, not on style or approach.\n"
         "- If the final state shows correct results, the task passes regardless of how many errors occurred along the way.\n"
+        "- If documentation context is supplied, cite it in doc_grounding when used.\n"
         "\n"
         "Visual evidence guidance:\n"
         "- UI-heavy demos (FL Studio/computer-use) include explicit zoom and screenshot expectations. Track every zoom action and screenshot entry in the event log and cite those that align with the expected success image before you score.\n"
@@ -132,7 +137,8 @@ def llm_judge(
         f"TASK:\n{task_text}\n\n"
         f"EVENT LOG (last {len(compact_events)} events):\n"
         f"{json.dumps(compact_events, ensure_ascii=True, indent=1)}\n\n"
-        f"FINAL STATE:\n{final_state}\n"
+        f"FINAL STATE:\n{final_state}\n\n"
+        f"DOCUMENTATION CONTEXT (may be empty):\n{docs_context}\n"
     )
 
     try:
@@ -147,6 +153,7 @@ def llm_judge(
             passed=False,
             score=0.0,
             reasons=[f"judge_call_failed: {type(exc).__name__}: {exc}"],
+            doc_grounding=[],
             raw_response="",
         )
 
@@ -162,6 +169,7 @@ def llm_judge(
             passed=False,
             score=0.0,
             reasons=["judge_response_unparseable"],
+            doc_grounding=[],
             raw_response=raw[:500],
         )
 
@@ -173,10 +181,27 @@ def llm_judge(
 
     reasons_raw = obj.get("reasons", [])
     reasons = [str(r).strip()[:280] for r in reasons_raw if isinstance(r, str) and str(r).strip()][:6] if isinstance(reasons_raw, list) else []
+    grounding_rows: list[dict[str, str]] = []
+    grounding_raw = obj.get("doc_grounding", [])
+    if isinstance(grounding_raw, list):
+        for row in grounding_raw[:12]:
+            if not isinstance(row, dict):
+                continue
+            source_id = str(row.get("source_id", "")).strip()
+            note = str(row.get("note", "")).strip()
+            if not source_id and not note:
+                continue
+            grounding_rows.append(
+                {
+                    "source_id": source_id[:120],
+                    "note": note[:240],
+                }
+            )
 
     return JudgeResult(
         passed=passed,
         score=score,
         reasons=reasons,
+        doc_grounding=grounding_rows,
         raw_response=raw[:500],
     )

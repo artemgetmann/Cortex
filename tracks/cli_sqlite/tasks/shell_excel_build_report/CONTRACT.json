@@ -1,0 +1,39 @@
+{
+  "id": "cli-shell-excel-build-report-v2",
+  "task_match": {
+    "all": [
+      "shell"
+    ],
+    "any": [
+      "excel",
+      "summary",
+      "report"
+    ]
+  },
+  "setup": {
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_event_patterns": [
+      "(?is)sales_report\\.xlsx",
+      "(?is)BUILD_OK\\s+path=.*raw_rows=10\\s+summary_rows=3"
+    ],
+    "forbidden_event_patterns": [
+      "(?is)\\b/tmp\\b"
+    ],
+    "required_files": [
+      "sales_report.xlsx"
+    ],
+    "required_queries": [],
+    "max_error_count": 0
+  },
+  "pass_rule": "all_required_events && no_forbidden_events && required_files_present && errors_within_budget",
+  "reason_codes": [
+    "missing_required_event_pattern",
+    "matched_forbidden_event_pattern",
+    "missing_required_file",
+    "too_many_errors"
+  ]
+}

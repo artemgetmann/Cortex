@@ -1,0 +1,48 @@
+{
+  "id": "cli-shell-git-transfer-hotfix-v1",
+  "task_match": {
+    "all": [
+      "shell",
+      "git"
+    ],
+    "any": [
+      "transfer",
+      "patch",
+      "hotfix"
+    ]
+  },
+  "setup": {
+    "fixture_paths": [
+      "hotfix_payload.txt"
+    ]
+  },
+  "signals": {
+    "required_event_patterns": [
+      "(?is)git\\s+init\\s+source_repo",
+      "(?is)git\\s+init\\s+target_repo",
+      "(?is)git\\s+format-patch\\s+-1\\s+HEAD\\s+--stdout",
+      "(?is)git\\s+am\\s+\\.\\./hotfix\\.patch",
+      "(?is)hotfix:\\s+add\\s+retry\\s+backoff\\s+note",
+      "(?is)GIT_TRANSFER_OK\\s+target=target_repo\\s+branch=main\\s+patches=1\\s+file=hotfix\\.txt"
+    ],
+    "forbidden_event_patterns": [
+      "(?is)\\b/tmp\\b"
+    ],
+    "required_files": [
+      "source_repo/.git",
+      "target_repo/.git",
+      "hotfix.patch",
+      "target_repo/hotfix.txt",
+      "target_repo/transfer_summary.txt"
+    ],
+    "required_queries": [],
+    "max_error_count": 0
+  },
+  "pass_rule": "all_required_events && no_forbidden_events && required_files_present && errors_within_budget",
+  "reason_codes": [
+    "missing_required_event_pattern",
+    "matched_forbidden_event_pattern",
+    "missing_required_file",
+    "too_many_errors"
+  ]
+}

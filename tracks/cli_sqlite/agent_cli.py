@@ -30,6 +30,13 @@ from claude_print_runtime import (
 from config import CortexConfig
 from tracks.cli_sqlite.adapter_registry import resolve_adapter, resolve_adapter_with_mode
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
+from tracks.cli_sqlite.docs_pipeline import (
+    DocumentationBundle,
+    build_documentation_bundle,
+    normalize_doc_mode,
+    normalize_doc_retrieval_mode,
+    write_doc_artifacts,
+)
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
@@ -44,7 +51,12 @@ from tracks.cli_sqlite.lesson_retrieval_v2 import (
     retrieve_on_error,
     retrieve_pre_run,
 )
-from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, migrate_legacy_lessons, upsert_lesson_records
+from tracks.cli_sqlite.lesson_store_v2 import (
+    LessonRecord,
+    load_lesson_records,
+    migrate_legacy_lessons,
+    upsert_lesson_records,
+)
 from tracks.cli_sqlite.learning_cli import (
     find_lessons_for_error,
     generate_lessons,
@@ -100,6 +112,9 @@ ARCHITECTURE_MODES = ("full", "simplified")
 DEFAULT_ARCHITECTURE_MODE = "full"
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
+DEFAULT_DOC_MODE = "none"
+DEFAULT_DOC_RETRIEVAL_MODE = "off"
+DEFAULT_DOC_BUDGET_TOKENS = 1200
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
@@ -739,6 +754,12 @@ def prepare_cli_prompt_preview(
     cryptic_errors: bool = False,
     semi_helpful_errors: bool = False,
     mixed_errors: bool = False,
+    documentation: list[str] | None = None,
+    doc_mode: str = DEFAULT_DOC_MODE,
+    doc_budget_tokens: int = DEFAULT_DOC_BUDGET_TOKENS,
+    doc_retrieval: str = DEFAULT_DOC_RETRIEVAL_MODE,
+    doc_retriever_model: str | None = None,
+    executor_docs: bool = False,
 ) -> CliPromptPreview:
     """Build the exact prompt/tools payload without executing a session."""
     # Workstream 1 only introduces mode plumbing; strict/legacy behavior split lands
@@ -806,6 +827,24 @@ def prepare_cli_prompt_preview(
         lessons_text=lessons_text,
         domain_fragment=domain_fragment,
     )
+    normalized_doc_mode = normalize_doc_mode(doc_mode)
+    normalized_doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
+    if executor_docs and normalized_doc_mode != "none":
+        docs_bundle = build_documentation_bundle(
+            task_text=task_text,
+            track_root=TRACK_ROOT,
+            docs_manifest=adapter.docs_manifest(),
+            documentation=documentation,
+            mode=normalized_doc_mode,
+            retrieval_mode=normalized_doc_retrieval,
+            budget_tokens=int(doc_budget_tokens),
+            retriever_model=doc_retriever_model,
+            llm_client=None,
+            max_chunks=10,
+        )
+        docs_block = docs_bundle.render_for_prompt(max_chars=8000)
+        if docs_block:
+            system_prompt += f"\n\n{docs_block}\n"
     if required_skill_refs:
         executor_tool = adapter.executor_tool_name
         system_prompt += (
@@ -865,6 +904,13 @@ def run_cli_agent(
     enable_transfer_retrieval: bool = False,
     transfer_retrieval_max_results: int = DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     transfer_retrieval_score_weight: float = DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
+    documentation: list[str] | None = None,
+    doc_mode: str = DEFAULT_DOC_MODE,
+    doc_budget_tokens: int = DEFAULT_DOC_BUDGET_TOKENS,
+    doc_retrieval: str = DEFAULT_DOC_RETRIEVAL_MODE,
+    doc_retriever_model: str | None = None,
+    judge_docs: bool = False,
+    executor_docs: bool = False,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
@@ -875,6 +921,9 @@ def run_cli_agent(
     knowledge_provider = LocalDocsKnowledgeProvider()
     transfer_retrieval_max_results = max(0, int(transfer_retrieval_max_results))
     transfer_retrieval_score_weight = max(0.0, float(transfer_retrieval_score_weight))
+    doc_mode = normalize_doc_mode(doc_mode)
+    doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
+    doc_budget_tokens = max(128, int(doc_budget_tokens))
     llm_backend = _normalize_llm_backend(llm_backend)
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
@@ -959,6 +1008,24 @@ def run_cli_agent(
         task_id=task_id,
         domain_keywords=domain_keywords,
     )
+    docs_bundle: DocumentationBundle = build_documentation_bundle(
+        task_text=task_text,
+        track_root=TRACK_ROOT,
+        docs_manifest=adapter.docs_manifest(),
+        documentation=documentation,
+        mode=doc_mode,
+        retrieval_mode=doc_retrieval,
+        budget_tokens=doc_budget_tokens,
+        retriever_model=doc_retriever_model,
+        llm_client=client,
+        max_chunks=10,
+    )
+    # Render once so metrics and runtime behavior share the exact same payload.
+    docs_executor_block = docs_bundle.render_for_prompt(max_chars=9000) if executor_docs else ""
+    docs_judge_block = docs_bundle.render_for_prompt(max_chars=9000) if judge_docs else ""
+    docs_prompt_available = bool(docs_bundle.brief.strip())
+    docs_selected_source_ids = sorted({chunk.source_id for chunk in docs_bundle.selected_chunks})
+    docs_read_error_entries = [dict(row) for row in docs_bundle.load_errors]
 
     domain_fragment = adapter.system_prompt_fragment()
     if bootstrap:
@@ -976,6 +1043,8 @@ def run_cli_agent(
         lessons_text=lessons_text,
         domain_fragment=domain_fragment,
     )
+    if docs_executor_block:
+        system_prompt += f"\n\n{docs_executor_block}\n"
     if required_skill_refs:
         executor_tool = adapter.executor_tool_name
         system_prompt += (
@@ -1045,6 +1114,25 @@ def run_cli_agent(
         "v2_transfer_retrieval_policy": transfer_retrieval_policy,
         "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
         "v2_transfer_retrieval_score_weight": transfer_retrieval_score_weight,
+        "doc_mode": doc_mode,
+        "doc_retrieval_mode": doc_retrieval,
+        "doc_budget_tokens": doc_budget_tokens,
+        "doc_retriever_model": str(doc_retriever_model or "").strip() or None,
+        "executor_docs": bool(executor_docs),
+        "judge_docs": bool(judge_docs),
+        "docs_raw_count": len(docs_bundle.raw_docs),
+        "docs_selected_chunks_count": len(docs_bundle.selected_chunks),
+        "docs_selected_source_ids": docs_selected_source_ids,
+        "docs_brief_chars": len(docs_bundle.brief),
+        "docs_brief_strategy": docs_bundle.brief_strategy,
+        "docs_distillation_used": docs_bundle.brief_strategy == "lossy_llm",
+        "docs_prompt_available": docs_prompt_available,
+        "docs_executor_prompt_chars": len(docs_executor_block),
+        "docs_judge_prompt_chars": len(docs_judge_block),
+        "docs_executor_prompt_injected": bool(docs_executor_block),
+        "docs_judge_prompt_injected": bool(docs_judge_block),
+        "docs_read_error_count": len(docs_read_error_entries),
+        "docs_read_errors": docs_read_error_entries,
         "llm_backend": llm_backend,
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
@@ -1073,6 +1161,7 @@ def run_cli_agent(
         "judge_score": None,
         "judge_passed": None,
         "judge_reasons": [],
+        "judge_doc_grounding": [],
         "judge_critique": "",
         "critic_raw_lessons": [],
         "critic_filtered_lessons": [],
@@ -1101,6 +1190,10 @@ def run_cli_agent(
     hard_failure_count = 0
     lesson_activation_records: list[dict[str, Any]] = []
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
+    repeated_error_signatures: list[str] = []
+    promoted_lesson_ids: list[str] = []
+    suppressed_lesson_ids: list[str] = []
+    v2_candidate_lessons: list[dict[str, Any]] = []
 
     step = 1
     validation_retries_this_step = 0
@@ -1535,6 +1628,7 @@ def run_cli_agent(
         if client is None:
             raise RuntimeError("LLM judge requested but no LLM client is available.")
         final_state = adapter.capture_final_state(workspace)
+        judge_docs_context = docs_judge_block
         judge_result: JudgeResult = llm_judge(
             client=client,
             model=effective_judge_model,
@@ -1542,10 +1636,12 @@ def run_cli_agent(
             events=events,
             final_state=final_state,
             domain_name=domain,
+            docs_context=judge_docs_context,
         )
         metrics["judge_passed"] = judge_result.passed
         metrics["judge_score"] = judge_result.score
         metrics["judge_reasons"] = judge_result.reasons
+        metrics["judge_doc_grounding"] = list(judge_result.doc_grounding)
         metrics["judge_critique"] = judge_result.raw_response
 
         # If no CONTRACT exists, use judge as primary eval signal
@@ -1583,17 +1679,20 @@ def run_cli_agent(
             # Strict-only critic retrieval path:
             # adapter exposes domain docs -> retrieval selects relevant chunks ->
             # critic prompt gets only those chunks as contextual grounding.
-            docs = adapter.docs_manifest()
             retrieval_query = _build_critic_context_query(
                 task_text=task_text,
                 eval_result=eval_result,
                 events_tail=tail_events,
             )
-            retrieved_chunks = knowledge_provider.retrieve(
-                query=retrieval_query,
-                docs=docs,
-                max_chunks=4,
-            )
+            if doc_mode != "none" and docs_bundle.selected_chunks:
+                retrieved_chunks = docs_bundle.selected_chunks[:4]
+            else:
+                docs = adapter.docs_manifest()
+                retrieved_chunks = knowledge_provider.retrieve(
+                    query=retrieval_query,
+                    docs=docs,
+                    max_chunks=4,
+                )
             critic_context = _format_critic_context(retrieved_chunks)
             critic_context_sources = [str(getattr(chunk, "source_id", "")) for chunk in retrieved_chunks]
         # Metrics always include provenance for observability/debugging, even
@@ -1642,6 +1741,7 @@ def run_cli_agent(
         fingerprint_counts = Counter(event.fingerprint for event in hard_events)
         recurring_fingerprints = [fingerprint for fingerprint, count in fingerprint_counts.items() if count >= 2]
         prioritized_fingerprints = recurring_fingerprints or [fingerprint for fingerprint, _ in fingerprint_counts.most_common(3)]
+        repeated_error_signatures = list(recurring_fingerprints)
         v2_candidates: list[LessonRecord] = []
         for lesson in v2_reflection.filtered_lessons:
             tags = extract_tags(error=lesson.lesson)
@@ -1657,6 +1757,15 @@ def run_cli_agent(
                     status="candidate",
                 )
             )
+        v2_candidate_lessons = [
+            {
+                "lesson_id": row.lesson_id,
+                "rule_text": row.rule_text,
+                "trigger_fingerprints": list(row.trigger_fingerprints),
+                "tags": list(row.tags),
+            }
+            for row in v2_candidates
+        ]
         v2_store_result = upsert_lesson_records(LESSONS_V2_PATH, v2_candidates)
         metrics["v2_lessons_generated"] = int(v2_store_result.get("inserted", 0))
         metrics["v2_lessons_merged"] = int(v2_store_result.get("merged", 0))
@@ -1720,10 +1829,24 @@ def run_cli_agent(
                     contradiction_lost=True,
                 )
             )
+        records_before = {row.lesson_id: row.status for row in load_lesson_records(LESSONS_V2_PATH)}
         promotion_result_v2 = apply_outcomes(path=LESSONS_V2_PATH, outcomes=outcomes)
+        records_after = {row.lesson_id: row.status for row in load_lesson_records(LESSONS_V2_PATH)}
+        promoted_lesson_ids = sorted(
+            lesson_id
+            for lesson_id, status in records_after.items()
+            if status == "promoted" and records_before.get(lesson_id) != "promoted"
+        )
+        suppressed_lesson_ids = sorted(
+            lesson_id
+            for lesson_id, status in records_after.items()
+            if status == "suppressed" and records_before.get(lesson_id) != "suppressed"
+        )
         metrics["v2_promoted"] = int(promotion_result_v2.get("promoted", 0))
         metrics["v2_suppressed"] = int(promotion_result_v2.get("suppressed", 0))
         metrics["v2_outcomes_updated"] = int(promotion_result_v2.get("updated", 0))
+        metrics["v2_promoted_ids"] = promoted_lesson_ids
+        metrics["v2_suppressed_ids"] = suppressed_lesson_ids
         metrics["v2_fingerprint_recurrence_after"] = len(fingerprints_recur_after)
         metrics["v2_retrieval_help_ratio"] = round(
             float(helped) / float(max(1, len(lesson_activation_records))),
@@ -1852,7 +1975,41 @@ def run_cli_agent(
         "last_trigger": escalation_state.get("last_trigger"),
         "auto_escalate_critic": auto_escalate_critic,
     }
+    if not repeated_error_signatures:
+        hard_failure_counts = Counter(
+            event.fingerprint for event in run_error_events if event.channel == "hard_failure"
+        )
+        repeated_error_signatures = [
+            fingerprint
+            for fingerprint, count in hard_failure_counts.items()
+            if count >= 2
+        ]
+    metrics["repeated_error_signatures"] = sorted(set(repeated_error_signatures))
     metrics["elapsed_s"] = round(time.time() - float(metrics["time_start"]), 3)
+
+    docs_artifacts_path = write_doc_artifacts(session_dir=paths.session_dir, bundle=docs_bundle)
+    learning_artifacts = {
+        "lesson_candidates": v2_candidate_lessons,
+        "promoted_lessons": promoted_lesson_ids,
+        "suppressed_lessons": suppressed_lesson_ids,
+        "repeated_error_signatures": sorted(set(repeated_error_signatures)),
+        "metrics_summary": {
+            "eval_passed": bool(metrics.get("eval_passed", False)),
+            "eval_score": float(metrics.get("eval_score", 0.0) or 0.0),
+            "steps": int(metrics.get("steps", 0) or 0),
+            "tool_errors": int(metrics.get("tool_errors", 0) or 0),
+            "lessons_loaded": int(metrics.get("lessons_loaded", 0) or 0),
+            "v2_lessons_generated": int(metrics.get("v2_lessons_generated", 0) or 0),
+            "v2_lesson_activations": int(metrics.get("v2_lesson_activations", 0) or 0),
+        },
+    }
+    learning_artifacts_path = paths.session_dir / "learning_artifacts.json"
+    learning_artifacts_path.write_text(
+        json.dumps(learning_artifacts, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    metrics["docs_artifacts_path"] = str(docs_artifacts_path)
+    metrics["learning_artifacts_path"] = str(learning_artifacts_path)
 
     write_metrics(paths.metrics_path, metrics)
     return CliRunResult(

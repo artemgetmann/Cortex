@@ -119,7 +119,17 @@ def _configure_agent_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     monkeypatch.setattr(agent_cli, "build_skill_manifest", lambda **kwargs: [fake_entry])
 
-    monkeypatch.setattr(agent_cli, "llm_judge", lambda **kwargs: JudgeResult(passed=True, score=1.0, reasons=["ok"], raw_response="{}"))
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=True,
+            score=1.0,
+            reasons=["ok"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
     monkeypatch.setattr(agent_cli, "generate_lessons", lambda **kwargs: LessonGenerationResult(raw_lessons=[], filtered_lessons=[]))
     monkeypatch.setattr(agent_cli, "store_lessons", lambda **kwargs: 0)
     monkeypatch.setattr(agent_cli, "prune_lessons", lambda *args, **kwargs: None)
@@ -257,6 +267,56 @@ def test_run_cli_agent_script_forwards_llm_backend_flag(
     rc = run_cli_agent_script.main()
     assert rc == 0
     assert captured["llm_backend"] == "claude_print"
+    capsys.readouterr()
+
+
+def test_run_cli_agent_script_forwards_documentation_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--documentation",
+            "tracks/cli_sqlite/domains/docs/sqlite-reference.md",
+            "--documentation",
+            "https://example.com/sqlite-cheatsheet",
+            "--doc-mode",
+            "lossy",
+            "--doc-budget-tokens",
+            "700",
+            "--doc-retrieval",
+            "auto",
+            "--doc-retriever-model",
+            "claude-haiku-4-5",
+            "--judge-docs",
+            "on",
+            "--executor-docs",
+            "on",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["documentation"] == [
+        "tracks/cli_sqlite/domains/docs/sqlite-reference.md",
+        "https://example.com/sqlite-cheatsheet",
+    ]
+    assert captured["doc_mode"] == "lossy"
+    assert captured["doc_budget_tokens"] == 700
+    assert captured["doc_retrieval"] == "auto"
+    assert captured["doc_retriever_model"] == "claude-haiku-4-5"
+    assert captured["judge_docs"] is True
+    assert captured["executor_docs"] is True
     capsys.readouterr()
 
 

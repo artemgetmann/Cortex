@@ -21,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
     DEFAULT_CRITIC_MODEL,
+    DEFAULT_DOC_BUDGET_TOKENS,
+    DEFAULT_DOC_MODE,
+    DEFAULT_DOC_RETRIEVAL_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LEARNING_MODE,
     LEARNING_MODES,
@@ -31,7 +34,7 @@ from tracks.cli_sqlite.agent_cli import (
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run N sessions and plot the learning curve")
     ap.add_argument("--task-id", required=True)
-    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic"])
+    ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"])
     ap.add_argument("--learning-mode", default=DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=5, help="Number of sequential sessions")
     ap.add_argument("--start-session", type=int, default=9001, help="Starting session ID")
@@ -44,6 +47,14 @@ def main() -> int:
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
+    ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument("--documentation", action="append", default=[])
+    ap.add_argument("--doc-mode", default=DEFAULT_DOC_MODE, choices=["none", "lossy", "full"])
+    ap.add_argument("--doc-budget-tokens", type=int, default=DEFAULT_DOC_BUDGET_TOKENS)
+    ap.add_argument("--doc-retrieval", default=DEFAULT_DOC_RETRIEVAL_MODE, choices=["off", "auto"])
+    ap.add_argument("--doc-retriever-model", default="")
+    ap.add_argument("--judge-docs", default="off", choices=["on", "off"])
+    ap.add_argument("--executor-docs", default="off", choices=["on", "off"])
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -59,6 +70,11 @@ def main() -> int:
     print(f"  Learning Curve Experiment")
     print(f"  task={args.task_id}  domain={args.domain}  learning_mode={args.learning_mode}  bootstrap={args.bootstrap}")
     print(f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  sessions={args.sessions}  model={args.model_executor}")
+    print(
+        f"  docs mode={args.doc_mode} retrieval={args.doc_retrieval} "
+        f"executor_docs={args.executor_docs} judge_docs={args.judge_docs} "
+        f"posttask_learn={not bool(args.no_posttask_learn)}"
+    )
     print(f"{'='*60}\n")
 
     for i in range(args.sessions):
@@ -79,7 +95,7 @@ def main() -> int:
             model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
             model_judge=args.model_judge.strip() if args.model_judge else None,
             posttask_mode=args.posttask_mode,
-            posttask_learn=True,
+            posttask_learn=not bool(args.no_posttask_learn),
             verbose=args.verbose,
             auto_escalate_critic=True,
             escalation_score_threshold=0.75,
@@ -90,6 +106,13 @@ def main() -> int:
             cryptic_errors=args.cryptic_errors,
             semi_helpful_errors=args.semi_helpful_errors,
             mixed_errors=args.mixed_errors,
+            documentation=[str(item).strip() for item in args.documentation if str(item).strip()],
+            doc_mode=args.doc_mode,
+            doc_budget_tokens=max(128, int(args.doc_budget_tokens)),
+            doc_retrieval=args.doc_retrieval,
+            doc_retriever_model=str(args.doc_retriever_model).strip() or None,
+            judge_docs=args.judge_docs == "on",
+            executor_docs=args.executor_docs == "on",
         )
 
         m = result.metrics

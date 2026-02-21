@@ -13,6 +13,9 @@ from tracks.cli_sqlite.agent_cli import (
     ARCHITECTURE_MODES,
     DEFAULT_CRITIC_MODEL,
     DEFAULT_ARCHITECTURE_MODE,
+    DEFAULT_DOC_BUDGET_TOKENS,
+    DEFAULT_DOC_MODE,
+    DEFAULT_DOC_RETRIEVAL_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
@@ -82,6 +85,47 @@ def main() -> int:
         choices=LLM_BACKENDS,
         help="Executor transport: anthropic (API) or claude_print (`claude -p` subscription path).",
     )
+    ap.add_argument(
+        "--documentation",
+        action="append",
+        default=[],
+        help="Path or URL to documentation source (repeatable).",
+    )
+    ap.add_argument(
+        "--doc-mode",
+        default=DEFAULT_DOC_MODE,
+        choices=["none", "lossy", "full"],
+        help="Documentation context mode.",
+    )
+    ap.add_argument(
+        "--doc-budget-tokens",
+        type=int,
+        default=DEFAULT_DOC_BUDGET_TOKENS,
+        help="Budget for lossy/full documentation brief.",
+    )
+    ap.add_argument(
+        "--doc-retrieval",
+        default=DEFAULT_DOC_RETRIEVAL_MODE,
+        choices=["off", "auto"],
+        help="Documentation retrieval strategy.",
+    )
+    ap.add_argument(
+        "--doc-retriever-model",
+        default="",
+        help="Optional model for doc distillation in auto retrieval mode.",
+    )
+    ap.add_argument(
+        "--judge-docs",
+        default="off",
+        choices=["on", "off"],
+        help="Whether to provide docs context to the judge.",
+    )
+    ap.add_argument(
+        "--executor-docs",
+        default="off",
+        choices=["on", "off"],
+        help="Whether to provide docs context to the executor prompt.",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -121,6 +165,13 @@ def main() -> int:
         enable_transfer_retrieval=bool(args.enable_transfer_retrieval),
         transfer_retrieval_max_results=max(0, int(args.transfer_retrieval_max_results)),
         transfer_retrieval_score_weight=max(0.0, float(args.transfer_retrieval_score_weight)),
+        documentation=[str(item).strip() for item in args.documentation if str(item).strip()],
+        doc_mode=args.doc_mode,
+        doc_budget_tokens=max(128, int(args.doc_budget_tokens)),
+        doc_retrieval=args.doc_retrieval,
+        doc_retriever_model=str(args.doc_retriever_model).strip() or None,
+        judge_docs=args.judge_docs == "on",
+        executor_docs=args.executor_docs == "on",
         llm_backend=args.llm_backend,
     )
     print(json_dump(result.metrics))

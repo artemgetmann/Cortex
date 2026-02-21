@@ -171,7 +171,17 @@ def _configure_retry_harness(
     monkeypatch.setattr(agent_cli, "load_lesson_objects", lambda **kwargs: [])
     monkeypatch.setattr(agent_cli, "migrate_legacy_lessons", lambda **kwargs: None)
     monkeypatch.setattr(agent_cli, "retrieve_pre_run", lambda **kwargs: ([], []))
-    monkeypatch.setattr(agent_cli, "llm_judge", lambda **kwargs: JudgeResult(passed=True, score=1.0, reasons=["ok"], raw_response="{}"))
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=True,
+            score=1.0,
+            reasons=["ok"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
     return sessions_root, adapter
 
 

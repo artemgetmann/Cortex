@@ -1,0 +1,3 @@
+Release prep checklist:
+- Confirm changelog entry for retry behavior.
+- Confirm handoff summary includes branch name.

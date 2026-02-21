@@ -1,0 +1,46 @@
+{
+  "id": "cli-shell-git-train-release-flow-v1",
+  "task_match": {
+    "all": [
+      "shell",
+      "git"
+    ],
+    "any": [
+      "train",
+      "release",
+      "merge"
+    ]
+  },
+  "setup": {
+    "fixture_paths": [
+      "release_seed.txt"
+    ]
+  },
+  "signals": {
+    "required_event_patterns": [
+      "(?is)git\\s+init\\s+trainer_repo",
+      "(?is)git\\s+checkout\\s+-b\\s+main",
+      "(?is)git\\s+checkout\\s+-b\\s+feature/release-flow",
+      "(?is)git\\s+merge\\s+--no-ff\\s+feature/release-flow",
+      "(?is)GIT_TRAIN_OK\\s+repo=trainer_repo\\s+branch=main\\s+commits=3\\s+merge=1\\s+summary=train_summary\\.txt"
+    ],
+    "forbidden_event_patterns": [
+      "(?is)\\b/tmp\\b"
+    ],
+    "required_files": [
+      "trainer_repo/.git",
+      "trainer_repo/release_notes.md",
+      "trainer_repo/handoff.md",
+      "trainer_repo/train_summary.txt"
+    ],
+    "required_queries": [],
+    "max_error_count": 0
+  },
+  "pass_rule": "all_required_events && no_forbidden_events && required_files_present && errors_within_budget",
+  "reason_codes": [
+    "missing_required_event_pattern",
+    "matched_forbidden_event_pattern",
+    "missing_required_file",
+    "too_many_errors"
+  ]
+}

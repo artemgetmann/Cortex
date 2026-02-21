@@ -30,6 +30,8 @@ For canonical docs index, use `docs/README.md`.
 - `aggregate_report`
 - `aggregate_report_holdout`
 - `shell_excel_build_report`
+- `shell_git_train_release_flow`
+- `shell_git_transfer_hotfix`
 
 ## Core Commands
 
@@ -53,6 +55,22 @@ python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
   --verbose
 ```
 
+Run with documentation-aware executor+judge (lossy retrieval mode):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id import_aggregate \
+  --domain sqlite \
+  --session 1003 \
+  --llm-backend claude_print \
+  --documentation tracks/cli_sqlite/domains/docs/sqlite-reference.md \
+  --doc-mode lossy \
+  --doc-retrieval auto \
+  --doc-budget-tokens 900 \
+  --executor-docs on \
+  --judge-docs on
+```
+
 Run tests:
 
 ```bash
@@ -66,8 +84,47 @@ AUTO_TIMELINE=1 AUTO_TOKEN_REPORT=1 \
 bash tracks/cli_sqlite/scripts/run_hackathon_demo.sh --pretty
 ```
 
+Run real-world learning benchmark pack (ablations: docs on/off, lossy/full, lessons on/off):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 5 \
+  --start-session 73001 \
+  --learning-mode strict \
+  --llm-backend claude_print \
+  --model-judge claude-haiku-4-5 \
+  --auto-escalate-critic off \
+  --output-json tracks/cli_sqlite/reports/realworld_learning_benchmark.json \
+  --output-md tracks/cli_sqlite/reports/realworld_learning_benchmark.md
+```
+
+Run a fast SQLite-only 5-run curve (docs on + lossy + lessons on):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 5 \
+  --start-session 78301 \
+  --suite sqlite \
+  --arm docs_on__mode_lossy__lessons_on \
+  --llm-backend claude_print \
+  --model-judge claude-haiku-4-5 \
+  --auto-escalate-critic off \
+  --output-json tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.json \
+  --output-md tracks/cli_sqlite/reports/realworld_curve_sqlite_5run_docs_lossy_lessons_on.md
+```
+
+Run a deeper pass (10+ sessions per arm):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 10 \
+  --start-session 74001
+```
+
 ## Notes
 
 - Runtime artifacts are under `tracks/cli_sqlite/sessions/` and `tracks/cli_sqlite/learning/`.
+- Each session now includes `docs_artifacts.json` and `learning_artifacts.json`.
 - `--learning-mode strict` is the default benchmark mode.
 - For transfer/holdout protocol details, see `docs/MEMORY-V2-BENCHMARKS.md`.
+- Latest SQLite benchmark write-up: `tracks/cli_sqlite/reports/benchmark_report_sqlite_2026-02-21.md`.

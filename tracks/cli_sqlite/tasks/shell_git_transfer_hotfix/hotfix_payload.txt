@@ -1,0 +1,3 @@
+Retry backoff tune:
+- Increase initial delay to 250ms.
+- Keep max retries at 3.
