@@ -10,6 +10,19 @@ The original FL Studio computer-use track is preserved as historical context und
 
 **Hackathon project:** Anthropic "Built with Opus 4.6" (Feb 10-16, 2026).
 
+## Project North Star (Important)
+
+The goal is **not** to build the best FL Studio autopilot.
+
+The goal is to test whether lessons improve agent performance over repeated attempts and whether those gains generalize across domains/tasks. FL Studio is one stress-test environment for computer-use, not the product end-state.
+
+When evaluating progress, prioritize:
+- Does the agent avoid repeating the same mistakes after failures?
+- Do post-task lessons/patches get applied and produce measurable lift?
+- Does learning transfer beyond one UI/task shape (especially to CLI Memory V2 domains)?
+
+If FL benchmarks are unstable due to environment issues (lock screen, hidden window, capture failures), treat those runs as infra-invalid and do not use them as evidence against learning quality.
+
 ## Commands
 
 ```bash
