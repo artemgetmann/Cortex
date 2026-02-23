@@ -68,3 +68,89 @@ def test_docs_pipeline_none_mode_is_noop(tmp_path: Path) -> None:
     assert bundle.brief == ""
     assert bundle.brief_strategy == "none"
     assert bundle.load_errors == []
+
+
+def test_docs_pipeline_lossy_auto_filters_nonmatching_tagged_domain_docs(tmp_path: Path) -> None:
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    git_doc = docs_dir / "shell-git-reference.md"
+    git_doc.write_text(
+        "Use git format-patch and git am for transfer workflows.",
+        encoding="utf-8",
+    )
+    xlsx_doc = docs_dir / "shell-xlsx-reference.md"
+    xlsx_doc.write_text(
+        "Use openpyxl to edit workbook cells and save reports.",
+        encoding="utf-8",
+    )
+
+    bundle = build_documentation_bundle(
+        task_text="Create a git hotfix patch and apply it cleanly to target repository",
+        track_root=tmp_path,
+        docs_manifest=[
+            DomainDoc(
+                doc_id="shell/git-reference",
+                path=git_doc,
+                title="Shell Git Reference",
+                tags=("shell", "git", "patch"),
+            ),
+            DomainDoc(
+                doc_id="shell/xlsx-reference",
+                path=xlsx_doc,
+                title="Shell XLSX Reference",
+                tags=("shell", "xlsx", "openpyxl"),
+            ),
+        ],
+        documentation=[],
+        mode="lossy",
+        retrieval_mode="auto",
+        budget_tokens=400,
+        retriever_model=None,
+        llm_client=None,
+    )
+    selected_ids = {chunk.source_id for chunk in bundle.selected_chunks}
+    assert "shell/git-reference" in selected_ids
+    assert "shell/xlsx-reference" not in selected_ids
+
+
+def test_docs_pipeline_lossy_off_filters_nonmatching_tagged_domain_docs(tmp_path: Path) -> None:
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    sqlite_doc = docs_dir / "sqlite-reference.md"
+    sqlite_doc.write_text(
+        "Use ORDER BY for deterministic output and verify row counts.",
+        encoding="utf-8",
+    )
+    git_doc = docs_dir / "shell-git-reference.md"
+    git_doc.write_text(
+        "Use git status before and after applying patches.",
+        encoding="utf-8",
+    )
+
+    bundle = build_documentation_bundle(
+        task_text="Reconcile sqlite totals incrementally and verify grouped sums",
+        track_root=tmp_path,
+        docs_manifest=[
+            DomainDoc(
+                doc_id="sqlite/reference",
+                path=sqlite_doc,
+                title="SQLite Reference",
+                tags=("sqlite", "sql", "query"),
+            ),
+            DomainDoc(
+                doc_id="shell/git-reference",
+                path=git_doc,
+                title="Shell Git Reference",
+                tags=("shell", "git", "patch"),
+            ),
+        ],
+        documentation=[],
+        mode="lossy",
+        retrieval_mode="off",
+        budget_tokens=400,
+        retriever_model=None,
+        llm_client=None,
+    )
+    selected_ids = {chunk.source_id for chunk in bundle.selected_chunks}
+    assert "sqlite/reference" in selected_ids
+    assert "shell/git-reference" not in selected_ids

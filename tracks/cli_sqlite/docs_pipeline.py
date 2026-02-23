@@ -35,6 +35,19 @@ def _clip_text(text: str, *, max_chars: int) -> str:
     return compact[: max_chars - 3] + "..."
 
 
+def _doc_tags_match_query(query_tokens: set[str], tags: tuple[str, ...]) -> bool:
+    # Domain docs can carry topical tags (e.g., git vs xlsx). In tight budgets,
+    # skipping non-overlapping topics prevents unrelated docs from polluting prompts.
+    if not tags:
+        return True
+    tag_tokens = {tag.strip().lower() for tag in tags if tag.strip()}
+    if not tag_tokens:
+        return True
+    if not query_tokens:
+        return True
+    return bool(tag_tokens & query_tokens)
+
+
 def normalize_doc_mode(value: str) -> str:
     mode = str(value or "none").strip().lower()
     if mode not in DOC_MODES:
@@ -126,6 +139,7 @@ class RawDoc:
     source_kind: str
     title: str
     text: str
+    tags: tuple[str, ...] = ()
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -135,6 +149,7 @@ class RawDoc:
             "source_kind": self.source_kind,
             "title": self.title,
             "text": self.text,
+            "tags": list(self.tags),
             "error": self.error,
         }
 
@@ -241,6 +256,7 @@ def _collect_explicit_docs(
                     source_kind="url",
                     title=ref,
                     text=_clip_text(text or "", max_chars=max_chars_per_doc),
+                    tags=(),
                     error=err,
                 )
             )
@@ -254,6 +270,7 @@ def _collect_explicit_docs(
                 source_kind="path",
                 title=path.name,
                 text=_clip_text(text or "", max_chars=max_chars_per_doc),
+                tags=(),
                 error=None if text is not None else "read_failed_or_missing",
             )
         )
@@ -275,6 +292,7 @@ def _collect_domain_docs(
                 source_kind="domain",
                 title=item.title,
                 text=_clip_text(text or "", max_chars=max_chars_per_doc),
+                tags=getattr(item, "tags", ()) or (),
                 error=None if text is not None else "read_failed_or_missing",
             )
         )
@@ -289,7 +307,11 @@ def _score_chunks(
 ) -> list[SelectedDocChunk]:
     ranked: list[SelectedDocChunk] = []
     q = query.strip()
+    query_tokens = _tokenize(q)
     for doc in docs:
+        # Keep chunk ranking task-focused: ignore docs whose tags do not match query tokens.
+        if not _doc_tags_match_query(query_tokens, doc.tags):
+            continue
         if doc.error or not doc.text.strip():
             continue
         title_bonus = 0.05 if _jaccard(q, doc.title) > 0 else 0.0
@@ -429,8 +451,12 @@ def build_documentation_bundle(
         )
     else:
         selected_chunks = []
+        query_tokens = _tokenize(retrieval_query)
         for doc in raw_docs:
             if doc.error or not doc.text.strip():
+                continue
+            # Fallback path (retrieval disabled/offline) still enforces topical filtering.
+            if not _doc_tags_match_query(query_tokens, doc.tags):
                 continue
             selected_chunks.append(
                 SelectedDocChunk(

@@ -125,11 +125,17 @@ def build_skill_manifest(
         )
 
     entries.sort(key=lambda item: item.skill_ref)
+    payload = json.dumps([asdict(entry) for entry in entries], indent=2, sort_keys=True) + "\n"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps([asdict(entry) for entry in entries], indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    existing = ""
+    if manifest_path.exists():
+        try:
+            existing = manifest_path.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+    # Avoid no-op rewrites so benchmark runs do not dirty git with timestamp-only noise.
+    if existing != payload:
+        manifest_path.write_text(payload, encoding="utf-8")
     return entries
 
 
