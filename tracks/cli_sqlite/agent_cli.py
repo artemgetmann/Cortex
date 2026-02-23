@@ -1295,6 +1295,108 @@ def run_cli_agent(
     judge_input_bundle: dict[str, Any] | None = None
     judge_payload_bundle: dict[str, Any] | None = None
 
+    def _maybe_inject_contract_gap_retry(*, current_step: int, trigger: str) -> bool:
+        nonlocal contract_gap_retries_used, latest_unresolved_gaps
+        if (
+            not has_contract
+            or not bool(contract_gap_retry)
+            or contract_gap_retries_used >= int(contract_gap_retry_steps)
+        ):
+            return False
+
+        # Evaluate unresolved contract gaps from actual run artifacts and use
+        # the deterministic result to drive one targeted retry prompt.
+        prestop_eval = evaluate_cli_session(
+            task=task_text,
+            task_id=task_id,
+            events=read_events(paths.events_path),
+            db_path=workspace.work_dir / "task.db",
+            tasks_root=TASKS_ROOT,
+        ).to_dict()
+        unresolved_gaps = unresolved_contract_gaps(prestop_eval)
+        latest_unresolved_gaps = unresolved_gaps
+        metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
+        prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
+        prestop_artifact_path.write_text(
+            json.dumps(
+                {
+                    "step": current_step,
+                    "attempt": contract_gap_retries_used + 1,
+                    "trigger": trigger,
+                    "eval_result": prestop_eval,
+                    "unresolved_gaps": unresolved_gaps,
+                },
+                ensure_ascii=True,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        contract_gap_prestop_artifacts.append(str(prestop_artifact_path))
+        if not unresolved_gaps:
+            return False
+
+        metrics["contract_gap_retry_attempts"] = int(metrics.get("contract_gap_retry_attempts", 0) or 0) + 1
+        metrics["contract_gap_retry_triggered"] = int(metrics.get("contract_gap_retry_triggered", 0) or 0) + 1
+        contract_gap_retries_used += 1
+        gap_query = " | ".join(
+            f"{row.get('reason_code', '')}:{row.get('gap_type', '')}:{row.get('detail', '')}"
+            for row in unresolved_gaps[:4]
+        )
+        gap_tags = [
+            str(row.get("reason_code", "")).strip()
+            for row in unresolved_gaps
+            if str(row.get("reason_code", "")).strip()
+        ] + [
+            str(row.get("gap_type", "")).strip()
+            for row in unresolved_gaps
+            if str(row.get("gap_type", "")).strip()
+        ]
+        gap_matches, _ = retrieve_on_error(
+            path=LESSONS_V2_PATH,
+            error_text=gap_query,
+            fingerprint="",
+            domain=domain,
+            task_id=task_id,
+            query_tags=gap_tags,
+            max_results=2,
+            include_domainless=False,
+            enable_transfer=enable_transfer_retrieval,
+            transfer_policy=transfer_retrieval_policy,
+            transfer_max_results=transfer_retrieval_max_results,
+            transfer_score_weight=transfer_retrieval_score_weight,
+            unresolved_gaps=unresolved_gaps,
+        )
+        gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
+        retry_prompt = _format_contract_gap_retry_prompt(
+            unresolved_gaps=unresolved_gaps,
+            injected_hints=gap_hints,
+        )
+        messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
+        write_event(
+            paths.events_path,
+            {
+                "step": current_step,
+                "tool": "contract_gap_retry",
+                "tool_input": {
+                    "attempt": contract_gap_retries_used,
+                    "trigger": trigger,
+                    "unresolved_gaps": unresolved_gaps,
+                },
+                "ok": True,
+                "error": None,
+                "output": "retry_prompt_injected",
+            },
+        )
+        if verbose:
+            print(
+                (
+                    f"[step {current_step:03d}] contract gaps detected ({len(unresolved_gaps)}), "
+                    f"trigger={trigger}; injecting one retry."
+                ),
+                flush=True,
+            )
+        return True
+
     step = 1
     validation_retries_this_step = 0
     validation_retry_capped_this_step = False
@@ -1697,94 +1799,8 @@ def run_cli_agent(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
-            if (
-                has_contract
-                and bool(contract_gap_retry)
-                and contract_gap_retries_used < int(contract_gap_retry_steps)
-            ):
-                prestop_eval = evaluate_cli_session(
-                    task=task_text,
-                    task_id=task_id,
-                    events=read_events(paths.events_path),
-                    db_path=workspace.work_dir / "task.db",
-                    tasks_root=TASKS_ROOT,
-                ).to_dict()
-                unresolved_gaps = unresolved_contract_gaps(prestop_eval)
-                latest_unresolved_gaps = unresolved_gaps
-                metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
-                prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
-                prestop_artifact_path.write_text(
-                    json.dumps(
-                        {
-                            "step": step,
-                            "attempt": contract_gap_retries_used + 1,
-                            "eval_result": prestop_eval,
-                            "unresolved_gaps": unresolved_gaps,
-                        },
-                        ensure_ascii=True,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-                contract_gap_prestop_artifacts.append(str(prestop_artifact_path))
-                if unresolved_gaps:
-                    metrics["contract_gap_retry_attempts"] = int(metrics.get("contract_gap_retry_attempts", 0) or 0) + 1
-                    metrics["contract_gap_retry_triggered"] = int(metrics.get("contract_gap_retry_triggered", 0) or 0) + 1
-                    contract_gap_retries_used += 1
-                    gap_query = " | ".join(
-                        f"{row.get('reason_code', '')}:{row.get('gap_type', '')}:{row.get('detail', '')}"
-                        for row in unresolved_gaps[:4]
-                    )
-                    gap_tags = [
-                        str(row.get("reason_code", "")).strip()
-                        for row in unresolved_gaps
-                        if str(row.get("reason_code", "")).strip()
-                    ] + [
-                        str(row.get("gap_type", "")).strip()
-                        for row in unresolved_gaps
-                        if str(row.get("gap_type", "")).strip()
-                    ]
-                    gap_matches, _ = retrieve_on_error(
-                        path=LESSONS_V2_PATH,
-                        error_text=gap_query,
-                        fingerprint="",
-                        domain=domain,
-                        task_id=task_id,
-                        query_tags=gap_tags,
-                        max_results=2,
-                        include_domainless=False,
-                        enable_transfer=enable_transfer_retrieval,
-                        transfer_policy=transfer_retrieval_policy,
-                        transfer_max_results=transfer_retrieval_max_results,
-                        transfer_score_weight=transfer_retrieval_score_weight,
-                        unresolved_gaps=unresolved_gaps,
-                    )
-                    gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
-                    retry_prompt = _format_contract_gap_retry_prompt(
-                        unresolved_gaps=unresolved_gaps,
-                        injected_hints=gap_hints,
-                    )
-                    messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
-                    write_event(
-                        paths.events_path,
-                        {
-                            "step": step,
-                            "tool": "contract_gap_retry",
-                            "tool_input": {
-                                "attempt": contract_gap_retries_used,
-                                "unresolved_gaps": unresolved_gaps,
-                            },
-                            "ok": True,
-                            "error": None,
-                            "output": "retry_prompt_injected",
-                        },
-                    )
-                    if verbose:
-                        print(
-                            f"[step {step:03d}] no tool call; contract gaps detected ({len(unresolved_gaps)}). Injecting one retry.",
-                            flush=True,
-                        )
-                    continue
+            if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
+                continue
             if verbose:
                 print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
             break
@@ -1798,6 +1814,12 @@ def run_cli_agent(
                     ),
                     flush=True,
                 )
+            continue
+        if step >= max_steps and _maybe_inject_contract_gap_retry(current_step=step, trigger="step_cap"):
+            # Retry executes at the same logical step so the deterministic gap
+            # close does not consume additional user-visible step budget.
+            validation_retries_this_step = 0
+            validation_retry_capped_this_step = False
             continue
         step += 1
         validation_retries_this_step = 0

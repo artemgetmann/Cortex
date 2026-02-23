@@ -375,3 +375,57 @@ def test_contract_gap_checker_injects_one_retry_before_stop(
         for text in _collect_user_text_messages(result.messages)
     )
     assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
+
+
+def test_contract_gap_checker_triggers_at_step_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+        _FakeResponse([{"type": "text", "text": "done"}]),
+    ]
+    sessions_root, adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-step-cap-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": [
+                "tool=run_sqlite",
+                "tool=contract_gap_retry",
+            ],
+            "forbidden_event_patterns": [],
+            "required_queries": [],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=605,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=True,
+        contract_gap_retry_steps=1,
+    )
+
+    events = read_events(sessions_root / "session-605" / "events.jsonl")
+    retry_rows = [row for row in events if str(row.get("tool", "")) == "contract_gap_retry"]
+    assert retry_rows
+    assert str(retry_rows[0].get("tool_input", {}).get("trigger", "")) == "step_cap"
+    assert result.metrics["contract_gap_retry_attempts"] == 1
+    assert result.metrics["contract_gap_retry_triggered"] == 1
+    assert result.metrics["contract_gap_unresolved_count_prestop"] >= 1
+    assert result.metrics["eval_passed"] is True
+    assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
