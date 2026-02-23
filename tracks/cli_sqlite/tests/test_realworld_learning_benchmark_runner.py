@@ -113,6 +113,9 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert "shell_excel_multi_summary" in schedule_task_ids
 
     summary_md = output_md.read_text(encoding="utf-8")
+    assert "## Metric Glossary" in summary_md
+    assert "## How To Read This Report" in summary_md
+    assert "## Artifact Notes" in summary_md
     assert "| arm_id | docs | doc_mode | lessons | pass_rate |" in summary_md
 
 

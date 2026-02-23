@@ -255,6 +255,26 @@ def _render_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# Real-World CLI Learning Benchmark",
         "",
+        "## Metric Glossary",
+        "",
+        "- `pass_rate`: fraction of runs that passed deterministic contract checks. High = reliable execution; low = unstable execution.",
+        "- `transfer_pass_rate`: pass rate on transfer-phase runs only (unseen/harder tasks). High = better generalization; low = overfitting to train tasks.",
+        "- `mean_X`: arithmetic average of metric X across selected runs. High/low depends on metric semantics, but it smooths run-to-run noise.",
+        "- `median_X`: middle value of metric X across selected runs. High/low depends on metric semantics; more robust than mean against outliers.",
+        "- `median_steps_to_success`: median step count among successful runs only. Low = faster convergence; high = slower/less efficient.",
+        "- `repeated_error_delta`: `fingerprint_recurrence_after - fingerprint_recurrence_before` within a run. Negative = fewer repeated mistakes; positive = more repeated mistakes.",
+        "- `median_repeated_error_delta`: median of `repeated_error_delta` across runs. Negative is good; positive is bad.",
+        "- `transfer_pass_delta`: `last_transfer_pass - first_transfer_pass` over run index. Positive = transfer pass trend improved.",
+        "- `activation_delta`: `last_transfer_lesson_activations - first_transfer_lesson_activations`. Positive = lesson mechanism engaged more over time.",
+        "- `retrieval_help_ratio_delta`: `last_transfer_retrieval_help_ratio - first_transfer_retrieval_help_ratio`. Positive = retrieved lessons helped more over time.",
+        "",
+        "## How To Read This Report",
+        "",
+        "- Primary signal: `transfer_pass_rate` and `transfer_pass_delta`.",
+        "- Mechanism signal: `activation_delta` and `retrieval_help_ratio_delta` should be positive, not just pass/fail changes.",
+        "- Error hygiene signal: `median_repeated_error_delta` should move negative over stronger runs.",
+        "- Gate: claim learning only when transfer improves and mechanism signals are non-zero/positive.",
+        "",
         "## Conclusion",
         "",
         f"- did_learning_improve: `{payload['did_learning_improve']}`",
@@ -304,6 +324,16 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             f"{float(arm_gate.get('retrieval_help_ratio_delta', 0.0)):.4f} | "
             f"{float(transfer['pass_rate']):.2%} |"
         )
+    lines.extend(
+        [
+            "",
+            "## Artifact Notes",
+            "",
+            "- `contract_gap_postretry.json`: deterministic final gap check after retry; unresolved rows are the exact blockers that still failed contract.",
+            "- `target_repo/hotfix.txt` (git transfer tasks): verifies patch content actually landed in target repo.",
+            "- `target_repo/transfer_summary.txt` (git transfer tasks): verifies expected transfer metadata (`TRANSFER_BRANCH`, `TRANSFER_PATCHES`) was produced.",
+        ]
+    )
     lines.append("")
     return "\n".join(lines)
 

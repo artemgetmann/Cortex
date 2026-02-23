@@ -1,0 +1,237 @@
+{
+  "config": {
+    "task_id": "shell_git_transfer_hotfix",
+    "domain": "shell",
+    "sessions": 10,
+    "start_session": 130200,
+    "max_steps": 4,
+    "learning_mode": "strict",
+    "llm_backend": "anthropic",
+    "model_executor": "claude-haiku-4-5",
+    "model_judge": "claude-haiku-4-5",
+    "docs_enabled": true,
+    "doc_mode": "lossy",
+    "doc_retrieval": "auto",
+    "doc_budget_tokens": 900,
+    "judge_diagnostic": true,
+    "posttask_mode": "candidate",
+    "posttask_learn": true,
+    "contract_gap_retry": true,
+    "contract_gap_retry_steps": 1,
+    "structured_lessons_required": true,
+    "fresh_learning_state": true
+  },
+  "summary": {
+    "transfer_pass_rate": 0.9,
+    "transfer_pass_count": 9,
+    "transfer_run_count": 10,
+    "median_steps_to_success": 4.0,
+    "runs_6_10_pass_rate": 1.0,
+    "runs_6_10_pass_count": 5,
+    "runs_6_10_run_count": 5
+  },
+  "failure_gap_taxonomy": {
+    "reason_code_counts": {
+      "missing_required_event_pattern": 1
+    },
+    "gap_type_counts": {
+      "required_event_pattern": 1
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix\\.patch",
+        "count": 1
+      }
+    ]
+  },
+  "interpretation": {
+    "rule": {
+      "low_case": "If transfer pass remains around ~50% after 10 runs => likely system issue (not variance).",
+      "high_case": "If transfer pass trends toward ~80% by runs 6\u201310 => learning signal is strong enough to proceed to ablations."
+    },
+    "observed": {
+      "transfer_pass_rate": 0.9,
+      "runs_6_10_pass_rate": 1.0,
+      "classification": "run ablations now"
+    }
+  },
+  "runs": [
+    {
+      "run_index": 1,
+      "session_id": 130200,
+      "passed": true,
+      "score": 1.0,
+      "steps": 4,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 1,
+      "contract_gap_retry_triggered": 1,
+      "contract_gap_unresolved_count_prestop": 1,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130200/contract_gap_postretry.json",
+      "elapsed_s": 39.121,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 2,
+      "session_id": 130201,
+      "passed": false,
+      "score": 0.923,
+      "steps": 4,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 1,
+      "contract_gap_retry_triggered": 1,
+      "contract_gap_unresolved_count_prestop": 2,
+      "contract_gap_unresolved_count_final": 1,
+      "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130201/contract_gap_postretry.json",
+      "elapsed_s": 46.8,
+      "unresolved_gaps": [
+        {
+          "reason_code": "missing_required_event_pattern",
+          "gap_type": "required_event_pattern",
+          "detail": "(?is)git\\s+am\\s+\\.\\./hotfix\\.patch",
+          "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix\\.patch"
+        }
+      ]
+    },
+    {
+      "run_index": 3,
+      "session_id": 130202,
+      "passed": true,
+      "score": 1.0,
+      "steps": 4,
+      "tool_errors": 2,
+      "lesson_activations": 4,
+      "retrieval_help_ratio": 1.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 34.449,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 4,
+      "session_id": 130203,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 27.809,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 5,
+      "session_id": 130204,
+      "passed": true,
+      "score": 1.0,
+      "steps": 4,
+      "tool_errors": 1,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 1.0,
+      "contract_gap_retry_attempts": 1,
+      "contract_gap_retry_triggered": 1,
+      "contract_gap_unresolved_count_prestop": 1,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130204/contract_gap_postretry.json",
+      "elapsed_s": 40.399,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 6,
+      "session_id": 130205,
+      "passed": true,
+      "score": 1.0,
+      "steps": 4,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 29.403,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 7,
+      "session_id": 130206,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 28.565,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 8,
+      "session_id": 130207,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 30.75,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 9,
+      "session_id": 130208,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 29.002,
+      "unresolved_gaps": []
+    },
+    {
+      "run_index": 10,
+      "session_id": 130209,
+      "passed": true,
+      "score": 1.0,
+      "steps": 4,
+      "tool_errors": 0,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "contract_gap_retry_attempts": 0,
+      "contract_gap_retry_triggered": 0,
+      "contract_gap_unresolved_count_prestop": 0,
+      "contract_gap_unresolved_count_final": 0,
+      "contract_gap_postretry_artifact": "",
+      "elapsed_s": 36.959,
+      "unresolved_gaps": []
+    }
+  ]
+}
