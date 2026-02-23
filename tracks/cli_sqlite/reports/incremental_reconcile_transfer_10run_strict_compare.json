@@ -1,0 +1,381 @@
+{
+  "lessons_on": {
+    "arm": "docs_on__mode_lossy__lessons_on",
+    "run_count": 10,
+    "pass_rate": 0.5,
+    "last5_pass_rate": 0.8,
+    "median_steps_success": 4,
+    "mean_repeated_error_delta": 0.0,
+    "mean_lesson_activations": 2.2,
+    "mean_retrieval_help_ratio": 0.6,
+    "activation_nonzero_runs": 6,
+    "retrieval_positive_runs": 6,
+    "activation_delta": 2.0,
+    "retrieval_help_ratio_delta": 1.0,
+    "lesson_activations_mean_by_step": {
+      "2": 0.9,
+      "3": 0.7,
+      "4": 0.6
+    },
+    "per_run": [
+      {
+        "session": 130700,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130701,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "lessons_loaded": 2,
+        "lesson_activations": 2,
+        "lesson_activations_by_step": {
+          "2": 1,
+          "3": 1
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130702,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 3,
+        "lessons_loaded": 2,
+        "lesson_activations": 6,
+        "lesson_activations_by_step": {
+          "2": 2,
+          "3": 2,
+          "4": 2
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130703,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "lessons_loaded": 4,
+        "lesson_activations": 6,
+        "lesson_activations_by_step": {
+          "3": 2,
+          "4": 4
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130704,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lessons_loaded": 4,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130705,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lessons_loaded": 6,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130706,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lessons_loaded": 8,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130707,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lessons_loaded": 10,
+        "lesson_activations": 4,
+        "lesson_activations_by_step": {
+          "2": 2,
+          "3": 2
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130708,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 10,
+        "lesson_activations": 2,
+        "lesson_activations_by_step": {
+          "2": 2
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130709,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 12,
+        "lesson_activations": 2,
+        "lesson_activations_by_step": {
+          "2": 2
+        },
+        "retrieval_help_ratio": 1.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      }
+    ],
+    "gap_taxonomy": {
+      "reason_codes": {
+        "too_many_errors": 5,
+        "missing_required_pattern": 1,
+        "required_query_mismatch": 1
+      },
+      "gap_types": {
+        "error_budget": 5,
+        "required_sql_pattern": 1,
+        "required_query": 1
+      },
+      "top_gap_signatures": [
+        {
+          "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 3
+        },
+        {
+          "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+          "count": 2
+        },
+        {
+          "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+          "count": 1
+        },
+        {
+          "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+          "count": 1
+        }
+      ]
+    }
+  },
+  "lessons_off": {
+    "arm": "docs_on__mode_lossy__lessons_off",
+    "run_count": 10,
+    "pass_rate": 0.3,
+    "last5_pass_rate": 0.4,
+    "median_steps_success": 4,
+    "mean_repeated_error_delta": 0.0,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "activation_nonzero_runs": 0,
+    "retrieval_positive_runs": 0,
+    "activation_delta": 0.0,
+    "retrieval_help_ratio_delta": 0.0,
+    "lesson_activations_mean_by_step": {},
+    "per_run": [
+      {
+        "session": 130800,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130801,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130802,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130803,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130804,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130805,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 3,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130806,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 0,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130807,
+        "passed": false,
+        "score": 0.583,
+        "steps": 4,
+        "tool_errors": 3,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130808,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      },
+      {
+        "session": 130809,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lessons_loaded": 0,
+        "lesson_activations": 0,
+        "lesson_activations_by_step": {},
+        "retrieval_help_ratio": 0.0,
+        "retry_attempts": 1,
+        "repeated_error_delta": 0.0
+      }
+    ],
+    "gap_taxonomy": {
+      "reason_codes": {
+        "required_query_mismatch": 7,
+        "too_many_errors": 5,
+        "missing_required_pattern": 2
+      },
+      "gap_types": {
+        "required_query": 7,
+        "error_budget": 5,
+        "required_sql_pattern": 2
+      },
+      "top_gap_signatures": [
+        {
+          "gap_signature": "required_query_mismatch|required_query|reject_count",
+          "count": 4
+        },
+        {
+          "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+          "count": 3
+        },
+        {
+          "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+          "count": 2
+        },
+        {
+          "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 2
+        },
+        {
+          "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+          "count": 2
+        }
+      ]
+    }
+  }
+}

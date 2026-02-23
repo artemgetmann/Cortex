@@ -95,6 +95,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert all(str(row.get("doc_mode")) == "none" for row in docs_off_rows)
     first_row = payload["runs"][0]
     assert "lesson_activations" in first_row
+    assert "lesson_activations_by_step" in first_row
     assert "promoted_count" in first_row
     assert "suppressed_count" in first_row
     assert "retrieval_help_ratio" in first_row
@@ -103,6 +104,8 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert "fingerprint_recurrence_after" in first_row
     assert set(payload["overall"]["success_rate_by_session"].keys()) == {"1", "2", "3", "4"}
     assert payload["transfer"]["run_count"] > 0
+    assert "mean_lesson_activations_by_step" in payload["overall"]
+    assert "activation_nonzero_run_count" in payload["overall"]
 
     schedule_task_ids = [str(item["task_id"]) for item in payload["task_schedule"]]
     assert "shell_git_train_release_flow" in schedule_task_ids
@@ -117,6 +120,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert "## How To Read This Report" in summary_md
     assert "## Artifact Notes" in summary_md
     assert "| arm_id | docs | doc_mode | lessons | pass_rate |" in summary_md
+    assert "mean_lesson_activations_by_step" in summary_md
 
 
 def test_learning_gate_requires_activation_and_retrieval_lift() -> None:

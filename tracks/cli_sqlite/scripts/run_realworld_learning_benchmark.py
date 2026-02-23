@@ -165,6 +165,14 @@ def _build_row(
         metrics.get("v2_lesson_activations", metrics.get("lesson_activations", 0)),
         default=0,
     )
+    step_activations_raw = metrics.get("v2_lesson_activations_by_step", {})
+    step_activations: dict[str, int] = {}
+    if isinstance(step_activations_raw, dict):
+        for key, value in step_activations_raw.items():
+            step_key = str(key).strip()
+            if not step_key:
+                continue
+            step_activations[step_key] = _as_int(value, default=0)
     return {
         "arm_id": str(arm["arm_id"]),
         "docs_enabled": bool(arm["docs_enabled"]),
@@ -183,6 +191,7 @@ def _build_row(
         "lessons_loaded": _as_int(metrics.get("lessons_loaded", 0), default=0),
         "lessons_generated": _as_int(metrics.get("lessons_generated", 0), default=0),
         "lesson_activations": lesson_activations,
+        "lesson_activations_by_step": step_activations,
         "promoted_count": _as_int(metrics.get("v2_promoted", 0), default=0),
         "suppressed_count": _as_int(metrics.get("v2_suppressed", 0), default=0),
         "retrieval_help_ratio": _as_float(metrics.get("v2_retrieval_help_ratio", 0.0), default=0.0),
@@ -212,6 +221,8 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "median_repeated_error_delta": None,
             "mean_lesson_activations": 0.0,
             "mean_retrieval_help_ratio": 0.0,
+            "mean_lesson_activations_by_step": {},
+            "activation_nonzero_run_count": 0,
         }
     pass_count = sum(1 for row in rows if bool(row.get("passed", False)))
     success_steps = [_as_float(row.get("steps", 0), default=0.0) for row in rows if bool(row.get("passed", False))]
@@ -220,6 +231,28 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     retrieval_ratios = [_as_float(row.get("retrieval_help_ratio", 0.0), default=0.0) for row in rows]
     mean_activations = (sum(lesson_activations) / float(len(lesson_activations))) if lesson_activations else 0.0
     mean_retrieval = (sum(retrieval_ratios) / float(len(retrieval_ratios))) if retrieval_ratios else 0.0
+    step_totals: dict[str, float] = {}
+    activation_nonzero_run_count = 0
+    for row in rows:
+        raw = row.get("lesson_activations_by_step", {})
+        if not isinstance(raw, dict):
+            continue
+        run_total = 0
+        for key, value in raw.items():
+            step_key = str(key).strip()
+            if not step_key:
+                continue
+            amount = _as_float(value, default=0.0)
+            if amount != 0.0:
+                run_total += 1
+            step_totals[step_key] = step_totals.get(step_key, 0.0) + amount
+        if run_total > 0:
+            activation_nonzero_run_count += 1
+    divisor = float(len(rows)) if rows else 1.0
+    mean_step_profile = {
+        key: round(step_totals.get(key, 0.0) / divisor, 4)
+        for key in sorted(step_totals, key=lambda item: int(item) if str(item).isdigit() else str(item))
+    }
     return {
         "run_count": len(rows),
         "pass_rate": pass_count / float(len(rows)),
@@ -228,6 +261,8 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "median_repeated_error_delta": _median_or_none(repeated_deltas),
         "mean_lesson_activations": round(mean_activations, 4),
         "mean_retrieval_help_ratio": round(mean_retrieval, 4),
+        "mean_lesson_activations_by_step": mean_step_profile,
+        "activation_nonzero_run_count": int(activation_nonzero_run_count),
     }
 
 
@@ -293,6 +328,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         f"- median_repeated_error_delta: `{_format_optional(overall['median_repeated_error_delta'])}`",
         f"- mean_lesson_activations: `{_format_optional(overall['mean_lesson_activations'])}`",
         f"- mean_retrieval_help_ratio: `{_format_optional(overall['mean_retrieval_help_ratio'])}`",
+        f"- mean_lesson_activations_by_step: `{json.dumps(overall.get('mean_lesson_activations_by_step', {}), sort_keys=True)}`",
+        f"- activation_nonzero_run_count: `{int(overall.get('activation_nonzero_run_count', 0))}`",
         "",
         "## Transfer (Unseen Tasks)",
         "",
@@ -301,6 +338,7 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         f"- overall_transfer_median_repeated_error_delta: `{_format_optional(payload['transfer']['median_repeated_error_delta'])}`",
         f"- overall_transfer_mean_lesson_activations: `{_format_optional(payload['transfer']['mean_lesson_activations'])}`",
         f"- overall_transfer_mean_retrieval_help_ratio: `{_format_optional(payload['transfer']['mean_retrieval_help_ratio'])}`",
+        f"- overall_transfer_mean_lesson_activations_by_step: `{json.dumps(payload['transfer'].get('mean_lesson_activations_by_step', {}), sort_keys=True)}`",
         "",
         "## Arm Results",
         "",
