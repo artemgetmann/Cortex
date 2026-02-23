@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+TRACK_DIR = ROOT_DIR / "tracks" / "cli_sqlite"
+TASKS_ROOT = TRACK_DIR / "tasks"
+SESSIONS_ROOT = TRACK_DIR / "sessions"
+LESSONS_V2_PATH = TRACK_DIR / "learning" / "lessons_v2.jsonl"
+RUNNER = TRACK_DIR / "scripts" / "run_cli_agent.py"
+
+KNOWN_TASK_DOMAIN: dict[str, str] = {
+    "aggregate_report": "gridtool",
+    "aggregate_report_holdout": "gridtool",
+    "basic_transform": "gridtool",
+    "multi_step_pipeline": "gridtool",
+    "multi_agg_pipeline": "gridtool",
+    "regional_performance": "gridtool",
+    "import_aggregate": "sqlite",
+    "incremental_reconcile": "sqlite",
+    "idempotent_rerun": "sqlite",
+    "partial_failure_recovery": "sqlite",
+    "shell_git_train_release_flow": "shell",
+    "shell_git_transfer_hotfix": "shell",
+    "shell_excel_build_report": "shell",
+    "shell_excel_multi_summary": "shell",
+    "artic_search_basic": "artic",
+    "artic_pagination_extract": "artic",
+    "artic_followup_fetch": "artic",
+}
+
+RUN_PREFIXES = ("/run", "run ")
+STATUS_PREFIXES = ("/learn-status", "/status", "learn status")
+CHAT_PREFIXES = ("/chat",)
+
+
+@dataclass(frozen=True)
+class DispatchPlan:
+    mode: str
+    chat_scope: str = "global"
+    domain: str | None = None
+    task_id: str | None = None
+    task_text: str | None = None
+    max_steps: int = 6
+    model_executor: str = "claude-haiku-4-5"
+    llm_backend: str = "anthropic"
+    posttask_learn: bool = True
+    reason: str = ""
+
+
+def _normalize_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip())
+
+
+def _strip_prefix(text: str, prefixes: tuple[str, ...]) -> str:
+    lowered = text.lower()
+    for prefix in prefixes:
+        if lowered.startswith(prefix.lower()):
+            return text[len(prefix):].strip()
+    return text.strip()
+
+
+def _parse_keyvals(payload: str) -> tuple[dict[str, str], str]:
+    """
+    Parse compact key-value controls from the front of the run payload.
+
+    Example:
+      "domain=shell steps=8 model=claude-haiku-4-5 build a git hotfix flow"
+    -> {"domain":"shell","steps":"8","model":"claude-haiku-4-5"}, "build a git hotfix flow"
+    """
+    controls: dict[str, str] = {}
+    tokens = payload.split()
+    tail_start = 0
+    for idx, token in enumerate(tokens):
+        if "=" not in token:
+            tail_start = idx
+            break
+        key, value = token.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if not key or not value:
+            tail_start = idx
+            break
+        controls[key] = value
+        tail_start = idx + 1
+    tail = " ".join(tokens[tail_start:]).strip()
+    return controls, tail
+
+
+def _infer_domain(task_text: str, fallback: str = "shell") -> str:
+    lowered = task_text.lower()
+    if any(key in lowered for key in ("sqlite", "sql ", "query", "table", "database")):
+        return "sqlite"
+    if any(key in lowered for key in ("gridtool", "tally", "rank ", "fixture.csv")):
+        return "gridtool"
+    if any(key in lowered for key in ("artic", "search api", "pagination")):
+        return "artic"
+    if any(key in lowered for key in ("shell", "bash", "git", "python", "xlsx", "excel", "csv")):
+        return "shell"
+    return fallback
+
+
+def _known_task_ids() -> set[str]:
+    rows: set[str] = set(KNOWN_TASK_DOMAIN.keys())
+    if not TASKS_ROOT.exists():
+        return rows
+    for item in TASKS_ROOT.iterdir():
+        if not item.is_dir():
+            continue
+        if (item / "task.md").exists():
+            rows.add(item.name)
+    return rows
+
+
+def _extract_known_task_id(text: str, known_ids: set[str]) -> str | None:
+    tokens = re.findall(r"[A-Za-z0-9_\\-]+", text)
+    for token in tokens:
+        if token in known_ids:
+            return token
+    return None
+
+
+def _dynamic_task_id(*, domain: str, chat_scope: str, task_text: str) -> str:
+    normalized = _normalize_ws(task_text).lower()
+    digest = hashlib.sha1(f"{chat_scope}|{domain}|{normalized}".encode("utf-8")).hexdigest()[:10]
+    scope_slug = re.sub(r"[^a-z0-9]+", "-", chat_scope.lower()).strip("-")[:18] or "global"
+    return f"openclaw_dynamic_{scope_slug}_{domain}_{digest}"
+
+
+def _ensure_dynamic_task_dir(*, task_id: str, domain: str, task_text: str, chat_scope: str) -> Path:
+    task_dir = TASKS_ROOT / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_md = task_dir / "task.md"
+    metadata_path = task_dir / "OPENCLAW_TASK.json"
+    if not task_md.exists():
+        # The task prompt is intentionally explicit so the executor has a clear
+        # objective without relying on benchmark-specific fixtures/contracts.
+        body = (
+            f"{domain} task: {task_id}\n\n"
+            "Goal:\n"
+            f"{task_text.strip()}\n\n"
+            "Constraints:\n"
+            "- Use available domain tools only.\n"
+            "- Verify your outcome with explicit evidence before stopping.\n"
+            "- If blocked, produce the smallest deterministic recovery step.\n"
+        )
+        task_md.write_text(body, encoding="utf-8")
+    metadata = {
+        "task_id": task_id,
+        "domain": domain,
+        "chat_scope": chat_scope,
+        "created_at_epoch_s": int(time.time()),
+        "source": "openclaw_dispatch",
+        "task_text": _normalize_ws(task_text),
+    }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    return task_dir
+
+
+def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchPlan:
+    normalized = _normalize_ws(text)
+    lowered = normalized.lower()
+
+    if any(lowered.startswith(prefix) for prefix in STATUS_PREFIXES):
+        return DispatchPlan(mode="status", chat_scope=chat_scope, reason="status_prefix")
+
+    if any(lowered.startswith(prefix) for prefix in CHAT_PREFIXES):
+        return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="chat_prefix")
+
+    if not any(lowered.startswith(prefix) for prefix in RUN_PREFIXES):
+        return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="no_run_prefix")
+
+    payload = _strip_prefix(normalized, RUN_PREFIXES)
+    controls, payload_tail = _parse_keyvals(payload)
+    known_ids = _known_task_ids()
+    explicit_task_id = controls.get("task_id", "").strip()
+    if explicit_task_id and explicit_task_id in known_ids:
+        task_id = explicit_task_id
+        domain = controls.get("domain", KNOWN_TASK_DOMAIN.get(task_id, default_domain)).strip() or default_domain
+        task_text = controls.get("task", "").strip() or payload_tail
+    else:
+        detected_task_id = _extract_known_task_id(payload_tail, known_ids)
+        if detected_task_id:
+            task_id = detected_task_id
+            domain = controls.get("domain", KNOWN_TASK_DOMAIN.get(task_id, default_domain)).strip() or default_domain
+            task_text = controls.get("task", "").strip() or payload_tail
+        else:
+            free_text = controls.get("task", "").strip() or payload_tail
+            if not free_text:
+                free_text = "Run a meaningful CLI task and provide verification evidence."
+            domain = controls.get("domain", "").strip() or _infer_domain(free_text, fallback=default_domain)
+            task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
+            task_text = free_text
+
+    max_steps_raw = controls.get("steps", "").strip()
+    try:
+        max_steps = max(2, min(20, int(max_steps_raw))) if max_steps_raw else 6
+    except ValueError:
+        max_steps = 6
+
+    model_executor = controls.get("model", "").strip() or "claude-haiku-4-5"
+    llm_backend = controls.get("backend", "").strip() or "anthropic"
+    learn_value = controls.get("learn", controls.get("persist", "")).strip().lower()
+    posttask_learn = not (learn_value in {"off", "false", "0", "no"})
+    return DispatchPlan(
+        mode="run",
+        chat_scope=chat_scope,
+        domain=domain,
+        task_id=task_id,
+        task_text=task_text,
+        max_steps=max_steps,
+        model_executor=model_executor,
+        llm_backend=llm_backend,
+        posttask_learn=posttask_learn,
+        reason="run_prefix",
+    )
+
+
+def _next_session_id() -> int:
+    # Epoch-second ids are deterministic enough for sequential mobile-triggered runs.
+    return int(time.time())
+
+
+def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
+    assert plan.mode == "run"
+    assert plan.domain is not None
+    assert plan.task_id is not None
+    assert plan.task_text is not None
+
+    if plan.task_id.startswith("openclaw_dynamic_") and not dry_run:
+        _ensure_dynamic_task_dir(
+            task_id=plan.task_id,
+            domain=plan.domain,
+            task_text=plan.task_text,
+            chat_scope=plan.chat_scope,
+        )
+
+    session_id = _next_session_id()
+    cmd = [
+        "python3",
+        str(RUNNER),
+        "--task-id",
+        plan.task_id,
+        "--task",
+        plan.task_text,
+        "--domain",
+        plan.domain,
+        "--session",
+        str(session_id),
+        "--max-steps",
+        str(plan.max_steps),
+        "--posttask-mode",
+        "direct",
+        "--contract-gap-retry",
+        "--contract-gap-retry-steps",
+        "1",
+        "--structured-lessons-required",
+        "--llm-backend",
+        plan.llm_backend,
+        "--model-executor",
+        plan.model_executor,
+    ]
+    if not plan.posttask_learn:
+        # Allow safe live testing without mutating shared lesson stores.
+        cmd.append("--no-posttask-learn")
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "command": cmd,
+            "task_id": plan.task_id,
+            "domain": plan.domain,
+            "session_id": session_id,
+        }
+
+    proc = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True)
+    session_dir = SESSIONS_ROOT / f"session-{session_id:03d}"
+    metrics_path = session_dir / "metrics.json"
+    metrics: dict[str, Any] = {}
+    if metrics_path.exists():
+        try:
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            metrics = {}
+
+    ok = proc.returncode == 0
+    return {
+        "ok": ok,
+        "task_id": plan.task_id,
+        "domain": plan.domain,
+        "session_id": session_id,
+        "session_dir": str(session_dir),
+        "returncode": proc.returncode,
+        "stdout_tail": "\n".join((proc.stdout or "").splitlines()[-16:]),
+        "stderr_tail": "\n".join((proc.stderr or "").splitlines()[-16:]),
+        "metrics": metrics,
+    }
+
+
+def _status_payload(*, chat_scope: str) -> dict[str, Any]:
+    lesson_count = 0
+    scoped_count = 0
+    if LESSONS_V2_PATH.exists():
+        for line in LESSONS_V2_PATH.read_text(encoding="utf-8").splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            lesson_count += 1
+            task_id = str(row.get("task_id", ""))
+            if chat_scope in task_id:
+                scoped_count += 1
+
+    recent_metrics: dict[str, Any] = {}
+    session_dirs = sorted(
+        [p for p in SESSIONS_ROOT.glob("session-*") if p.is_dir()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for session_dir in session_dirs:
+        metrics_path = session_dir / "metrics.json"
+        if not metrics_path.exists():
+            continue
+        try:
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        recent_metrics = payload
+        break
+
+    return {
+        "ok": True,
+        "mode": "status",
+        "chat_scope": chat_scope,
+        "lessons_total": lesson_count,
+        "lessons_scoped": scoped_count,
+        "latest_session": {
+            "task_id": recent_metrics.get("task_id"),
+            "domain": recent_metrics.get("domain"),
+            "eval_passed": recent_metrics.get("eval_passed"),
+            "eval_score": recent_metrics.get("eval_score"),
+            "lesson_activations": recent_metrics.get("lesson_activations"),
+            "v2_retrieval_help_ratio": recent_metrics.get("v2_retrieval_help_ratio"),
+        },
+    }
+
+
+def _chat_payload() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "mode": "chat",
+        "reply": (
+            "Chat mode. No learning run executed.\n"
+            "Use /run <task> to trigger Cortex learning loop.\n"
+            "Use /learn-status to inspect learning signals."
+        ),
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Dispatch Telegram/OpenClaw text into Cortex learning runs.")
+    ap.add_argument("--text", required=True, help="Raw inbound user message text.")
+    ap.add_argument("--chat-id", default="global", help="Chat/user scope for dynamic task ids.")
+    ap.add_argument("--default-domain", default="shell", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"])
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    chat_scope = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(args.chat_id).strip()) or "global"
+    plan = _build_plan(str(args.text), chat_scope=chat_scope, default_domain=args.default_domain)
+
+    if plan.mode == "chat":
+        print(json.dumps(_chat_payload(), ensure_ascii=True, indent=2))
+        return 0
+    if plan.mode == "status":
+        print(json.dumps(_status_payload(chat_scope=chat_scope), ensure_ascii=True, indent=2))
+        return 0
+
+    result = _run_task(plan, dry_run=bool(args.dry_run))
+    print(json.dumps({"mode": "run", "plan": plan.__dict__, "result": result}, ensure_ascii=True, indent=2))
+    return 0 if bool(result.get("ok", False)) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -162,6 +162,41 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 : > tracks/cli_sqlite/learning/lessons.jsonl
 ```
 
+## OpenClaw AGI Bridge (Isolated Runtime)
+
+The OpenClaw AGI bot must run in an isolated profile so the existing `~/.openclaw` bot is never affected.
+
+Rules:
+- Existing bot profile: `~/.openclaw` (do not modify for AGI bridge work).
+- AGI bot profile: `~/.openclaw-agi`.
+- AGI config path: `~/.openclaw-agi/openclaw.json`.
+- AGI workspace (inside Cortex for visibility): `integrations/openclaw-agi/workspace`.
+- Bridge script: `integrations/openclaw-agi/workspace/bin/cortex_cli_bridge.sh`.
+- Dispatcher script (chat/task router): `integrations/openclaw-agi/workspace/bin/cortex_openclaw_dispatch.sh`.
+
+Why:
+- Cortex remains the single source of truth for learning logic.
+- OpenClaw stays a thin Telegram ingress/egress connector.
+- Any improvement in `tracks/cli_sqlite` immediately improves AGI bot behavior.
+
+Setup and run:
+```bash
+cd /Users/user/Programming_Projects/Cortex
+./scripts/openclaw_agi_setup.sh
+./scripts/openclaw_agi_start.sh
+```
+
+Enable live Telegram testing with a dedicated token:
+```bash
+OPENCLAW_AGI_TELEGRAM_BOT_TOKEN="YOUR_NEW_BOT_TOKEN" ./scripts/openclaw_agi_setup.sh
+```
+
+Task-mode protocol (for live chat):
+- `/run ...` => execute Cortex learning loop and persist lessons.
+- `/run ... learn=off` => execute task without writing lessons (safe live smoke test).
+- `/learn-status` => summarize recent learning signals.
+- Anything else => chat mode (no lesson writes).
+
 ## Environment variables
 
 | Variable | Default | Purpose |
