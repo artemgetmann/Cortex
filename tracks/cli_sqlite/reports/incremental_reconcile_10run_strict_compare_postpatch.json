@@ -1,0 +1,472 @@
+{
+  "lessons_on": {
+    "sessions": [
+      {
+        "session_id": 144000,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144001,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: None",
+            "gap_signature": "required_query_mismatch|required_query|reject_count"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144002,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session_id": 144003,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144004,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144005,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144006,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session_id": 144007,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144008,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144009,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      }
+    ],
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 3.5,
+    "mean_lesson_activations": 2.0,
+    "mean_retrieval_help_ratio": 0.5,
+    "activation_delta": 0.0,
+    "retrieval_help_ratio_delta": 0.0,
+    "gap_reason_counts": {
+      "too_many_errors": 2,
+      "matched_forbidden_pattern": 1,
+      "missing_required_pattern": 1,
+      "required_query_mismatch": 1
+    },
+    "gap_type_counts": {
+      "error_budget": 2,
+      "forbidden_sql_pattern": 1,
+      "required_query": 1,
+      "required_sql_pattern": 1
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        "count": 2
+      },
+      {
+        "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+        "count": 1
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|reject_count",
+        "count": 1
+      }
+    ]
+  },
+  "lessons_off": {
+    "sessions": [
+      {
+        "session_id": 144100,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: None",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: None",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144101,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: None",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: None",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144102,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 144103,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: None",
+            "gap_signature": "required_query_mismatch|required_query|reject_count"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144104,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: None",
+            "gap_signature": "required_query_mismatch|required_query|reject_count"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144105,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144106,
+        "passed": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: None",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: None",
+            "gap_signature": "required_query_mismatch|required_query|reject_count"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: None",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144107,
+        "passed": false,
+        "score": 0.583,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: None",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: None",
+            "gap_signature": "required_query_mismatch|required_query|reject_count"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: None",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row"
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 144108,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session_id": 144109,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      }
+    ],
+    "pass_rate": 0.1,
+    "last5_pass_rate": 0.0,
+    "median_steps_to_success": 4,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "activation_delta": 0.0,
+    "retrieval_help_ratio_delta": 0.0,
+    "gap_reason_counts": {
+      "required_query_mismatch": 12,
+      "too_many_errors": 8,
+      "matched_forbidden_pattern": 2
+    },
+    "gap_type_counts": {
+      "required_query": 12,
+      "error_budget": 8,
+      "forbidden_sql_pattern": 2
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        "count": 5
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+        "count": 4
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+        "count": 4
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|reject_count",
+        "count": 4
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+        "count": 3
+      },
+      {
+        "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger",
+        "count": 2
+      }
+    ]
+  },
+  "delta": {
+    "pass_rate": 0.5,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": -0.5,
+    "mean_lesson_activations": 2.0,
+    "mean_retrieval_help_ratio": 0.5
+  }
+}
