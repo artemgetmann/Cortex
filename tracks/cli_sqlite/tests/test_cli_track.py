@@ -219,6 +219,71 @@ class EvalTests(unittest.TestCase):
                 self.assertTrue(str(row.get("gap_type", "")).strip())
                 self.assertTrue(str(row.get("gap_signature", "")).strip())
 
+    def test_eval_contract_checks_required_file_content_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_root = root / "tasks"
+            task_dir = tasks_root / "shell_content_check"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            (task_dir / "CONTRACT.json").write_text(
+                json.dumps(
+                    {
+                        "id": "shell-content-check-v1",
+                        "task_match": {"all": ["shell"], "any": []},
+                        "signals": {
+                            "required_event_patterns": [],
+                            "forbidden_event_patterns": [],
+                            "required_files": ["out.txt"],
+                            "required_file_content_patterns": [
+                                {"path": "out.txt", "patterns": ["(?m)^OK$"]},
+                            ],
+                            "required_queries": [],
+                            "max_error_count": 0,
+                        },
+                        "pass_rule": "required_file_content_patterns_present",
+                        "reason_codes": ["missing_required_file_content_pattern"],
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            work_dir = root / "sessions" / "session-001"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            db_path = work_dir / "task.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS marker(id INTEGER)")
+                conn.commit()
+            (work_dir / "out.txt").write_text("BROKEN\n", encoding="utf-8")
+
+            result = evaluate_cli_session(
+                task="shell deterministic content validation",
+                task_id="shell_content_check",
+                events=[],
+                db_path=db_path,
+                tasks_root=tasks_root,
+            )
+            self.assertFalse(result.passed)
+            self.assertIn("missing_required_file_content_pattern", result.reasons)
+            gaps = unresolved_contract_gaps(result)
+            self.assertTrue(
+                any(
+                    str(row.get("reason_code", "")) == "missing_required_file_content_pattern"
+                    and str(row.get("gap_type", "")) == "required_file_content_pattern"
+                    for row in gaps
+                )
+            )
+
+            (work_dir / "out.txt").write_text("OK\n", encoding="utf-8")
+            passed_result = evaluate_cli_session(
+                task="shell deterministic content validation",
+                task_id="shell_content_check",
+                events=[],
+                db_path=db_path,
+                tasks_root=tasks_root,
+            )
+            self.assertTrue(passed_result.passed)
+
     def test_eval_incremental_reconcile_pass_case(self) -> None:
         track_tasks = Path(__file__).resolve().parents[1] / "tasks"
         with tempfile.TemporaryDirectory() as tmp:

@@ -117,6 +117,25 @@ def unresolved_contract_gaps(evaluation: CliEvaluation | dict[str, Any]) -> list
                 }
             )
 
+    required_file_content_missing = evidence.get("required_file_content_patterns", {}).get("missing", [])
+    if isinstance(required_file_content_missing, list):
+        for row in required_file_content_missing:
+            if not isinstance(row, dict):
+                continue
+            rel_path = str(row.get("path", "")).strip()
+            pattern = str(row.get("pattern", "")).strip()
+            if not rel_path or not pattern:
+                continue
+            detail = f"{rel_path}::{pattern}"
+            gaps.append(
+                {
+                    "reason_code": "missing_required_file_content_pattern",
+                    "gap_type": "required_file_content_pattern",
+                    "detail": detail,
+                    "gap_signature": f"missing_required_file_content_pattern|required_file_content_pattern|{detail}",
+                }
+            )
+
     required_queries = evidence.get("required_queries", [])
     if isinstance(required_queries, list):
         for query in required_queries:
@@ -293,6 +312,20 @@ def evaluate_cli_session(
     required_event_patterns = [str(p) for p in signals.get("required_event_patterns", []) if str(p).strip()]
     forbidden_event_patterns = [str(p) for p in signals.get("forbidden_event_patterns", []) if str(p).strip()]
     required_files = [str(p) for p in signals.get("required_files", []) if str(p).strip()]
+    required_file_content_patterns_raw = signals.get("required_file_content_patterns", [])
+    required_file_content_patterns: list[dict[str, Any]] = []
+    if isinstance(required_file_content_patterns_raw, list):
+        for item in required_file_content_patterns_raw:
+            if not isinstance(item, dict):
+                continue
+            rel_path = str(item.get("path", "")).strip()
+            raw_patterns = item.get("patterns", [])
+            if not rel_path or not isinstance(raw_patterns, list):
+                continue
+            patterns = [str(pattern).strip() for pattern in raw_patterns if str(pattern).strip()]
+            if not patterns:
+                continue
+            required_file_content_patterns.append({"path": rel_path, "patterns": patterns})
     required_queries = signals.get("required_queries", [])
     if not isinstance(required_queries, list):
         required_queries = []
@@ -334,6 +367,35 @@ def evaluate_cli_session(
         if not (work_dir / rel_path).exists():
             missing_required_files.append(rel_path)
 
+    matched_required_file_content_patterns: list[dict[str, str]] = []
+    missing_required_file_content_patterns: list[dict[str, str]] = []
+    for row in required_file_content_patterns:
+        rel_path = str(row.get("path", "")).strip()
+        patterns = row.get("patterns", [])
+        if not rel_path or not isinstance(patterns, list):
+            continue
+        target_path = work_dir / rel_path
+        file_text = ""
+        if target_path.exists():
+            try:
+                file_text = target_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                file_text = ""
+        # Every required pattern is checked independently so failures are
+        # explicit in the gap report and directly usable for lesson routing.
+        for pattern in patterns:
+            pattern_text = str(pattern).strip()
+            if not pattern_text:
+                continue
+            if file_text and re.search(pattern_text, file_text, flags=0):
+                matched_required_file_content_patterns.append(
+                    {"path": rel_path, "pattern": pattern_text}
+                )
+            else:
+                missing_required_file_content_patterns.append(
+                    {"path": rel_path, "pattern": pattern_text}
+                )
+
     query_results: list[dict[str, Any]] = []
     query_failures = 0
     for query_spec in required_queries:
@@ -371,6 +433,7 @@ def evaluate_cli_session(
         + len(required_event_patterns)
         + len(forbidden_event_patterns)
         + len(required_files)
+        + sum(len(row.get("patterns", [])) for row in required_file_content_patterns)
         + len(query_results)
         + 1
     )
@@ -380,6 +443,7 @@ def evaluate_cli_session(
         + len(matched_required_event_patterns)
         + (len(forbidden_event_patterns) - len(matched_forbidden_event_patterns))
         + (len(required_files) - len(missing_required_files))
+        + len(matched_required_file_content_patterns)
         + (len(query_results) - query_failures)
         + (1 if error_count <= max_error_count else 0)
     )
@@ -398,6 +462,8 @@ def evaluate_cli_session(
         reasons.append("matched_forbidden_event_pattern")
     if missing_required_files:
         reasons.append("missing_required_file")
+    if missing_required_file_content_patterns:
+        reasons.append("missing_required_file_content_pattern")
     if error_count > max_error_count:
         reasons.append("too_many_errors")
     reasons = sorted(set(reasons))
@@ -415,6 +481,10 @@ def evaluate_cli_session(
         },
         "forbidden_event_patterns": {"matched": matched_forbidden_event_patterns},
         "required_files": {"missing": missing_required_files, "work_dir": str(work_dir)},
+        "required_file_content_patterns": {
+            "matched": matched_required_file_content_patterns,
+            "missing": missing_required_file_content_patterns,
+        },
         "required_queries": query_results,
     }
     return CliEvaluation(

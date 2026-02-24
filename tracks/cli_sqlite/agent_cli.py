@@ -604,6 +604,70 @@ def _format_v2_lesson_block(matches: list[Any]) -> tuple[str, list[str]]:
     return "\n".join(lines), [value for value in lesson_ids if value]
 
 
+def _select_high_signal_prerun_matches(
+    *,
+    matches: list[Any],
+    task_id: str,
+    domain: str,
+    max_results: int = 4,
+    min_score: float = 0.55,
+) -> list[Any]:
+    """
+    Keep pre-run memory injection small and targeted.
+
+    Why this exists:
+    - pre-run lesson blobs can become noisy and dilute tool execution quality
+    - task/domain exact matches should dominate broad historical hints
+    """
+    if not matches:
+        return []
+    normalized_domain = str(domain).strip().lower()
+    limit = max(0, int(max_results))
+    threshold = float(min_score)
+    selected: list[Any] = []
+    seen_ids: set[str] = set()
+
+    # Pass 1: exact task+domain matches with non-trivial score.
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None or score is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_ids:
+            continue
+        if str(getattr(lesson, "task_id", "")).strip() != task_id:
+            continue
+        if str(getattr(lesson, "domain", "")).strip().lower() != normalized_domain:
+            continue
+        if float(getattr(score, "score", 0.0) or 0.0) < threshold:
+            continue
+        selected.append(match)
+        seen_ids.add(lesson_id)
+        if len(selected) >= limit:
+            return selected
+
+    # Pass 2: same-domain fallback for remaining slots.
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None or score is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_ids:
+            continue
+        if str(getattr(lesson, "domain", "")).strip().lower() != normalized_domain:
+            continue
+        if float(getattr(score, "score", 0.0) or 0.0) < threshold:
+            continue
+        selected.append(match)
+        seen_ids.add(lesson_id)
+        if len(selected) >= limit:
+            break
+
+    return selected
+
+
 def _load_recent_eval_scores(
     *,
     sessions_root: Path,
@@ -875,7 +939,14 @@ def prepare_cli_prompt_preview(
         task_id=task_id,
         domain=domain,
         task_text=task_text,
-        max_results=6,
+        max_results=8,
+    )
+    v2_matches = _select_high_signal_prerun_matches(
+        matches=v2_matches,
+        task_id=task_id,
+        domain=domain,
+        max_results=4,
+        min_score=0.55,
     )
     v2_block, _ = _format_v2_lesson_block(v2_matches)
     if v2_block:
@@ -1074,6 +1145,13 @@ def run_cli_agent(
         domain=domain,
         task_text=task_text,
         max_results=8,
+    )
+    prerun_v2_matches = _select_high_signal_prerun_matches(
+        matches=prerun_v2_matches,
+        task_id=task_id,
+        domain=domain,
+        max_results=4,
+        min_score=0.55,
     )
     prerun_v2_block, prerun_v2_ids = _format_v2_lesson_block(prerun_v2_matches)
     if prerun_v2_block:
@@ -1367,6 +1445,33 @@ def run_cli_agent(
             unresolved_gaps=unresolved_gaps,
         )
         gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
+        if gap_matches:
+            gap_lanes: dict[str, str] = {}
+            for match in gap_matches:
+                lesson_id = str(getattr(match.lesson, "lesson_id", "")).strip()
+                if not lesson_id:
+                    continue
+                lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
+                gap_lanes[lesson_id] = lane
+                if lane == "transfer":
+                    metrics["v2_transfer_lane_activations"] += 1
+            # Record contract-gap retrieval activations so mechanism metrics
+            # reflect both on-error injection and deterministic retry guidance.
+            gap_fingerprint = "contract_gap:" + "|".join(
+                str(row.get("gap_signature", "")).strip()
+                for row in unresolved_gaps[:3]
+                if str(row.get("gap_signature", "")).strip()
+            )
+            lesson_activation_records.append(
+                {
+                    "step": current_step,
+                    "fingerprint": gap_fingerprint,
+                    "lesson_ids": list(gap_lanes.keys()),
+                    "lesson_lanes": gap_lanes,
+                }
+            )
+            metrics["lesson_activations"] += len(gap_lanes)
+            metrics["v2_lesson_activations"] += len(gap_lanes)
         retry_prompt = _format_contract_gap_retry_prompt(
             unresolved_gaps=unresolved_gaps,
             injected_hints=gap_hints,

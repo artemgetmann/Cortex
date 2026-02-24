@@ -18,6 +18,7 @@ DEFAULT_STRICT_WEAK_SCORE_THRESHOLD = 0.45
 DEFAULT_STRICT_WEAK_ANCHOR_THRESHOLD = 0.30
 DEFAULT_TRANSFER_MIN_SCORE = 0.20
 DEFAULT_TRANSFER_ANCHOR_THRESHOLD = 0.25
+DEFAULT_GAP_PRIORITY_MIN_MATCH = 0.35
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -316,6 +317,28 @@ def _select_with_guards(
     return selected, conflict_losers
 
 
+def _prioritize_gap_matches(
+    ranked: Sequence[RetrievalMatch],
+    *,
+    min_gap_match: float = DEFAULT_GAP_PRIORITY_MIN_MATCH,
+) -> list[RetrievalMatch]:
+    """
+    Front-load lessons that match unresolved contract gaps.
+
+    This is intentionally deterministic and simple: if any lesson has non-trivial
+    gap evidence, we place those lessons first while preserving score order within
+    each bucket. This increases odds that injected hints directly target blockers.
+    """
+    if not ranked:
+        return []
+    threshold = float(min_gap_match)
+    gap_matches = [row for row in ranked if float(row.score.gap_match) >= threshold]
+    if not gap_matches:
+        return list(ranked)
+    non_gap_matches = [row for row in ranked if float(row.score.gap_match) < threshold]
+    return gap_matches + non_gap_matches
+
+
 def _guard_counters(selected: Sequence[RetrievalMatch]) -> tuple[dict[int, int], dict[str, int]]:
     """Build guard counters from an existing selection for lane-aware merge."""
     per_session: dict[int, int] = {}
@@ -565,6 +588,8 @@ def retrieve_on_error(
         query_task_id=normalized_task,
         lane=LANE_STRICT,
     )
+    if unresolved_gaps:
+        strict_ranked = _prioritize_gap_matches(strict_ranked)
     strict_matches, strict_losers = _select_with_guards(ranked=strict_ranked, config=strict_config)
 
     transfer_cap = min(max(0, int(transfer_max_results)), max(0, int(max_results)))
@@ -586,6 +611,8 @@ def retrieve_on_error(
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
     )
+    if unresolved_gaps:
+        transfer_ranked = _prioritize_gap_matches(transfer_ranked)
     if effective_transfer_policy == TRANSFER_POLICY_AUTO:
         transfer_ranked = [
             match for match in transfer_ranked

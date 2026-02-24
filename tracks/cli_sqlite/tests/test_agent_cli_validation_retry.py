@@ -33,6 +33,12 @@ class _FakeResponse:
         self.content = [_FakeBlock(block) for block in content]
 
 
+class _FakeRetrievalMatch:
+    def __init__(self, *, lesson_id: str, rule_text: str, lane: str = "strict") -> None:
+        self.lesson = SimpleNamespace(lesson_id=lesson_id, rule_text=rule_text)
+        self.lane = lane
+
+
 class _FakeMessages:
     def __init__(self, responses: list[_FakeResponse]) -> None:
         self._responses = responses
@@ -428,4 +434,64 @@ def test_contract_gap_checker_triggers_at_step_cap(
     assert result.metrics["contract_gap_retry_triggered"] == 1
     assert result.metrics["contract_gap_unresolved_count_prestop"] >= 1
     assert result.metrics["eval_passed"] is True
+    assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
+
+
+def test_contract_gap_retry_counts_gap_lesson_activations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _FakeResponse([{"type": "text", "text": "done"}]),
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    sessions_root, adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-gap-activation-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    monkeypatch.setattr(
+        agent_cli,
+        "retrieve_on_error",
+        lambda **kwargs: (
+            [
+                _FakeRetrievalMatch(
+                    lesson_id="lsn_gap_1",
+                    rule_text="When contract gap remains, run one corrective write then verify output.",
+                    lane="strict",
+                )
+            ],
+            [],
+        ),
+    )
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=606,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=True,
+        contract_gap_retry_steps=1,
+    )
+
+    assert result.metrics["contract_gap_retry_attempts"] == 1
+    assert result.metrics["v2_lesson_activations"] >= 1
+    assert result.metrics["lesson_activations"] >= 1
     assert adapter.execute_calls == [{"sql": "SELECT 1;"}]

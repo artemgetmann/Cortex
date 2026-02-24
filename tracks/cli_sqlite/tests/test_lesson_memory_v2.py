@@ -516,6 +516,56 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertTrue(matches)
             self.assertEqual(matches[0].lesson.lesson_id, structured.lesson_id)
 
+    def test_unresolved_gap_prioritizes_gap_matched_lesson_even_if_generic_score_is_higher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            structured = _record(
+                session_id=1971,
+                rule_text="If transfer summary file check fails, rewrite transfer_summary.txt with exact required lines.",
+                fingerprints=("fp_other",),
+                tags=("required_file",),
+                reliability=0.2,
+                domain="shell",
+                task_id="shell_git_transfer_hotfix",
+                reason_code="missing_required_file_content_pattern",
+                gap_type="required_file_content_pattern",
+                gap_signature=(
+                    "missing_required_file_content_pattern|required_file_content_pattern|"
+                    "target_repo/transfer_summary.txt::(?m)^TRANSFER_BRANCH\\s+main$"
+                ),
+            )
+            generic = _record(
+                session_id=1972,
+                rule_text="General shell hygiene tip with strong historical reliability.",
+                fingerprints=("fp_exact",),
+                tags=("generic",),
+                reliability=0.98,
+                domain="shell",
+                task_id="shell_git_transfer_hotfix",
+            )
+            upsert_lesson_records(path, [structured, generic])
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="summary content mismatch",
+                fingerprint="fp_exact",
+                domain="shell",
+                task_id="shell_git_transfer_hotfix",
+                query_tags=("required_file",),
+                max_results=1,
+                unresolved_gaps=[
+                    {
+                        "reason_code": "missing_required_file_content_pattern",
+                        "gap_type": "required_file_content_pattern",
+                        "gap_signature": (
+                            "missing_required_file_content_pattern|required_file_content_pattern|"
+                            "target_repo/transfer_summary.txt::(?m)^TRANSFER_BRANCH\\s+main$"
+                        ),
+                    }
+                ],
+            )
+            self.assertTrue(matches)
+            self.assertEqual(matches[0].lesson.lesson_id, structured.lesson_id)
+
 
 class PromotionV2Tests(unittest.TestCase):
     def test_compute_utility_weights(self) -> None:

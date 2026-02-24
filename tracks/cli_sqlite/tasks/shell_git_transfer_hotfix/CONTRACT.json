@@ -35,6 +35,22 @@
       "target_repo/hotfix.txt",
       "target_repo/transfer_summary.txt"
     ],
+    "required_file_content_patterns": [
+      {
+        "path": "target_repo/hotfix.txt",
+        "patterns": [
+          "(?is)Retry\\s+backoff\\s+tune:",
+          "(?is)Increase\\s+initial\\s+delay\\s+to\\s+250ms\\."
+        ]
+      },
+      {
+        "path": "target_repo/transfer_summary.txt",
+        "patterns": [
+          "(?m)^TRANSFER_BRANCH\\s+main$",
+          "(?m)^TRANSFER_PATCHES\\s+1$"
+        ]
+      }
+    ],
     "required_queries": [],
     "max_error_count": 0
   },
@@ -43,6 +59,7 @@
     "missing_required_event_pattern",
     "matched_forbidden_event_pattern",
     "missing_required_file",
+    "missing_required_file_content_pattern",
     "too_many_errors"
   ]
 }
