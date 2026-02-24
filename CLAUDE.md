@@ -168,8 +168,9 @@ The OpenClaw AGI bot must run in an isolated profile so the existing `~/.opencla
 
 Rules:
 - Existing bot profile: `~/.openclaw` (do not modify for AGI bridge work).
-- AGI bot profile: `~/.openclaw-agi`.
-- AGI config path: `~/.openclaw-agi/openclaw.json`.
+- AGI bot profile (default): `~/.cloudcode-telegrambot-cortex-agi`.
+- AGI config path (default): `~/.cloudcode-telegrambot-cortex-agi/openclaw.json`.
+- Legacy AGI profile `~/.openclaw-agi` is still supported for backward compatibility.
 - AGI workspace (inside Cortex for visibility): `integrations/openclaw-agi/workspace`.
 - Bridge script: `integrations/openclaw-agi/workspace/bin/cortex_cli_bridge.sh`.
 - Dispatcher script (chat/task router): `integrations/openclaw-agi/workspace/bin/cortex_openclaw_dispatch.sh`.
@@ -196,6 +197,27 @@ Task-mode protocol (for live chat):
 - `/run ... learn=off` => execute task without writing lessons (safe live smoke test).
 - `/learn-status` => summarize recent learning signals.
 - Anything else => chat mode (no lesson writes).
+
+## Standalone Telegram AGI Frontend (Preferred for Fast Iteration)
+
+For live testing without touching OpenClaw or the existing `claude-code-telegram-bot` repo, use:
+
+- `integrations/cortex-telegram-agi-bot`
+- `scripts/cortex_tg_agi_start.sh`
+- `scripts/cortex_tg_agi_install_launchagent.sh`
+- `scripts/cortex_tg_agi_uninstall_launchagent.sh`
+
+Design:
+- Telegram bot is frontend only.
+- Cortex (`tracks/cli_sqlite`) is the brain.
+- Task-mode is routed to Cortex via dispatcher:
+  - `integrations/openclaw_agi_dispatch.py`
+
+Modes:
+- `/run ...` => Cortex learning loop.
+- `/learnstatus` (or `/learn-status`) => learning metrics summary.
+- normal chat => regular assistant response.
+- optional auto-detect asks confirmation before routing task-like messages.
 
 ## Environment variables
 
