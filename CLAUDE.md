@@ -197,24 +197,6 @@ Task-mode protocol (for live chat):
 - `/learn-status` => summarize recent learning signals.
 - Anything else => chat mode (no lesson writes).
 
-## Direct Telegram Cortex Bridge (No OpenClaw)
-
-If you want Telegram testing without OpenClaw, run the direct bridge:
-
-- Bridge process: `integrations/telegram_cortex_gateway.py`
-- Start wrapper: `scripts/telegram_cortex_bot_start.sh`
-- Docs: `integrations/telegram-cortex-bot/README.md`
-
-Why:
-- Telegram is transport only.
-- Cortex remains the single learning brain (`tracks/cli_sqlite` + `integrations/openclaw_agi_dispatch.py`).
-- Improvements in Cortex immediately affect Telegram behavior (no double maintenance).
-
-Rules:
-- Do not run two processes with the same `TELEGRAM_BOT_TOKEN` at once.
-- Always set `TELEGRAM_ALLOWED_USERS`.
-- Use `/run ... learn=off` when you need a live smoke test without mutating lessons.
-
 ## Environment variables
 
 | Variable | Default | Purpose |
