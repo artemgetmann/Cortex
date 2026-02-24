@@ -28,6 +28,11 @@ cat >"$TARGET" <<EOF
   </array>
   <key>WorkingDirectory</key>
   <string>${ROOT_DIR}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.bun/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
