@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import time
 from collections import Counter, defaultdict
@@ -43,6 +44,7 @@ from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
+    CANDIDATE_POLICY_ANCHORED,
     DEFAULT_TRANSFER_MAX_RESULTS,
     DEFAULT_TRANSFER_SCORE_COEFFICIENT,
     TRANSFER_POLICY_ALWAYS,
@@ -112,12 +114,17 @@ ARCHITECTURE_MODES = ("full", "simplified")
 DEFAULT_ARCHITECTURE_MODE = "full"
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
+DEFAULT_RUNTIME_CANDIDATE_POLICY = CANDIDATE_POLICY_ANCHORED
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
 DEFAULT_CONTRACT_GAP_RETRY = True
 DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
 DEFAULT_STRUCTURED_LESSONS_REQUIRED = True
+DEFAULT_VERIFIER_STACK_ENABLED = False
+DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
+DEFAULT_CLARIFY_ON_LOW_CONFIDENCE = True
+DEFAULT_MAX_LOW_CONFIDENCE_PROBES = 4
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
@@ -250,6 +257,20 @@ def _format_contract_gap_retry_prompt(
             lines.append(
                 "   - correction rule: align database state so query_sql output exactly matches expected_rows."
             )
+        elif reason == "matched_forbidden_pattern":
+            lines.append(
+                "   - correction rule: do not emit any SQL matching this forbidden pattern."
+            )
+            lines.append(
+                "   - correction rule: use non-destructive alternatives only (INSERT/UPDATE/SELECT)."
+            )
+        elif reason == "too_many_errors":
+            lines.append(
+                "   - correction rule: keep next attempt deterministic with one mutating block max, then verify via SELECT queries."
+            )
+            lines.append(
+                "   - correction rule: if verification still fails, stop and report remaining mismatch instead of guessing."
+            )
     validator_rows = [str(row).strip() for row in (validator_evidence or []) if str(row).strip()]
     if validator_rows:
         lines.append("Deterministic validator evidence:")
@@ -283,13 +304,183 @@ def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
             f"{query_suffix}{expected_suffix}"
         )
     if reason == "too_many_errors":
+        budget_detail = detail or "error budget exhausted"
         return (
-            "When reason_code=too_many_errors, switch to one deterministic SQL block, "
-            "then verify with required queries before stopping."
+            "When reason_code=too_many_errors, treat it as a strict error-budget breach "
+            f"({budget_detail}). On next attempt use one deterministic mutating SQL block at most, "
+            "then run required SELECT verification queries and stop."
+        )
+    if reason == "matched_forbidden_pattern":
+        pattern_text = detail or str(gap.get("gap_signature", "")).strip() or "forbidden_sql_pattern"
+        return (
+            "When reason_code=matched_forbidden_pattern, never emit SQL matching "
+            f"{pattern_text}. Use non-destructive alternatives only (INSERT/UPDATE/SELECT) "
+            "and verify required queries before stop."
         )
     if detail:
         return f"When reason_code={reason}, resolve gap_type={gap_type} by fixing: {detail}."
     return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."
+
+
+def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
+    """
+    Parse explicit `Print exactly ... verification line(s)` requirements from task text.
+
+    This parser is intentionally strict and deterministic: we only extract
+    backtick-wrapped bullet lines directly under the marker section.
+    """
+    if not str(task_text).strip():
+        return []
+    marker = re.compile(r"print\s+exactly\s+(?:this|these)(?:\s+\d+)?\s+verification\s+line", re.IGNORECASE)
+    lines = str(task_text).splitlines()
+    capture = False
+    collected: list[str] = []
+    for raw_line in lines:
+        line = str(raw_line)
+        stripped = line.strip()
+        if marker.search(line):
+            inline_matches = re.findall(r"`([^`]+)`", line)
+            for match in inline_matches:
+                value = str(match).strip()
+                if value:
+                    collected.append(value)
+            capture = True
+            continue
+        if not capture:
+            continue
+        if stripped.startswith("Constraints:") or stripped.startswith("Goal:"):
+            break
+        if not stripped:
+            # Keep scanning through single blank lines in case the marker uses
+            # a compact markdown style with spacing before bullets.
+            continue
+        bullet_match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+`([^`]+)`\s*$", line)
+        if bullet_match:
+            value = str(bullet_match.group(1)).strip()
+            if value:
+                collected.append(value)
+            if len(collected) >= max(1, int(max_lines)):
+                break
+            continue
+        # If capture started and we hit non-bullet prose, stop deterministically.
+        if collected:
+            break
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for row in collected:
+        if row in seen:
+            continue
+        seen.add(row)
+        deduped.append(row)
+    return deduped[: max(1, int(max_lines))]
+
+
+def _collect_event_text_blobs(events: list[dict[str, Any]]) -> str:
+    """Collect textual event outputs/errors for deterministic probe checks."""
+    chunks: list[str] = []
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        output = row.get("output")
+        error = row.get("error")
+        if isinstance(output, str) and output.strip():
+            chunks.append(output)
+        if isinstance(error, str) and error.strip():
+            chunks.append(error)
+    return "\n".join(chunks)
+
+
+def _normalize_expected_rows(expected_rows: Any) -> list[list[str]]:
+    """Normalize expected rows into deterministic string matrix."""
+    normalized: list[list[str]] = []
+    if not isinstance(expected_rows, list):
+        return normalized
+    for row in expected_rows:
+        if not isinstance(row, list):
+            continue
+        normalized.append([str(cell) for cell in row])
+    return normalized
+
+
+def _run_sqlite_gap_query_probe(*, db_path: Path, gap: dict[str, Any]) -> dict[str, Any]:
+    """
+    Probe unresolved sqlite required_query gaps with direct deterministic SQL.
+
+    This avoids extra model calls and validates exact expected rows.
+    """
+    query_id = str(gap.get("query_id", "")).strip() or "required_query"
+    query_sql = str(gap.get("query_sql", "")).strip()
+    expected_rows = _normalize_expected_rows(gap.get("expected_rows", []))
+    if not query_sql:
+        return {
+            "probe_id": f"sqlite_required_query:{query_id}",
+            "applicable": False,
+            "passed": False,
+            "detail": "missing_query_sql",
+            "evidence": {},
+        }
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.execute(query_sql)
+            actual = [[str(cell) for cell in row] for row in cursor.fetchall()]
+    except Exception as exc:
+        return {
+            "probe_id": f"sqlite_required_query:{query_id}",
+            "applicable": True,
+            "passed": False,
+            "detail": f"query_error:{type(exc).__name__}:{exc}",
+            "evidence": {
+                "query_id": query_id,
+                "query_sql": query_sql,
+            },
+        }
+    passed = actual == expected_rows
+    return {
+        "probe_id": f"sqlite_required_query:{query_id}",
+        "applicable": True,
+        "passed": bool(passed),
+        "detail": "matched" if passed else "required_query_mismatch",
+        "evidence": {
+            "query_id": query_id,
+            "query_sql": query_sql,
+            "expected_rows": expected_rows,
+            "actual_rows": actual,
+        },
+    }
+
+
+def _build_low_confidence_clarifying_question(
+    *,
+    task_id: str,
+    missing_verification_lines: list[str],
+    unresolved_gaps: list[dict[str, Any]],
+) -> str:
+    """
+    Build a deterministic clarification request when probes are inconclusive.
+
+    No model generation is used here; output is template-based and stable.
+    """
+    if missing_verification_lines:
+        quoted = ", ".join(f"`{line}`" for line in missing_verification_lines[:3])
+        return (
+            f"Low-confidence verification for task `{task_id}` is inconclusive. "
+            f"Please confirm the exact expected verification line(s): {quoted}."
+        )
+    if unresolved_gaps:
+        gap = unresolved_gaps[0]
+        reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
+        gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
+        detail = str(gap.get("detail", "")).strip()
+        detail_suffix = f" detail={detail}" if detail else ""
+        return (
+            f"Low-confidence verification for task `{task_id}` needs one deterministic success signal. "
+            f"Current unresolved gap: reason_code={reason} gap_type={gap_type}{detail_suffix}. "
+            "Please provide exact expected output (line/file/query rows)."
+        )
+    return (
+        f"Low-confidence verification for task `{task_id}` is inconclusive. "
+        "Please provide one deterministic success signal: exact stdout line, file path+content, or SQL query rows."
+    )
 
 
 def _build_sqlite_validator_guidance_from_contract(
@@ -1025,6 +1216,7 @@ def prepare_cli_prompt_preview(
         domain=domain,
         task_text=task_text,
         max_results=8,
+        candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
     )
     v2_matches = _select_high_signal_prerun_matches(
         matches=v2_matches,
@@ -1150,6 +1342,10 @@ def run_cli_agent(
     contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
     contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
     structured_lessons_required: bool = DEFAULT_STRUCTURED_LESSONS_REQUIRED,
+    verifier_stack_enabled: bool = DEFAULT_VERIFIER_STACK_ENABLED,
+    low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+    clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
+    max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
@@ -1164,6 +1360,8 @@ def run_cli_agent(
     doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
     doc_budget_tokens = max(128, int(doc_budget_tokens))
     contract_gap_retry_steps = max(0, min(1, int(contract_gap_retry_steps)))
+    low_confidence_threshold = _clamp(float(low_confidence_threshold), 0.0, 1.0)
+    max_low_confidence_probes = max(1, int(max_low_confidence_probes))
     llm_backend = _normalize_llm_backend(llm_backend)
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
@@ -1242,6 +1440,7 @@ def run_cli_agent(
         domain=domain,
         task_text=task_text,
         max_results=8,
+        candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
     )
     prerun_v2_matches = _select_high_signal_prerun_matches(
         matches=prerun_v2_matches,
@@ -1390,6 +1589,17 @@ def run_cli_agent(
         "judge_diagnostic": bool(judge_diagnostic),
         "contract_gap_retry_enabled": bool(contract_gap_retry),
         "contract_gap_retry_steps_budget": int(contract_gap_retry_steps),
+        "verifier_stack_enabled": bool(verifier_stack_enabled),
+        "verifier_low_confidence_threshold": round(float(low_confidence_threshold), 3),
+        "verifier_clarify_on_low_confidence": bool(clarify_on_low_confidence),
+        "verifier_max_low_confidence_probes": int(max_low_confidence_probes),
+        "verifier_confidence_base": None,
+        "verifier_low_confidence_triggered": False,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_results": [],
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": False,
+        "verifier_clarifying_question": "",
         "contract_gap_retry_attempts": 0,
         "contract_gap_retry_triggered": 0,
         "contract_gap_unresolved_count_prestop": 0,
@@ -1603,6 +1813,7 @@ def run_cli_agent(
             transfer_max_results=transfer_retrieval_max_results,
             transfer_score_weight=transfer_retrieval_score_weight,
             unresolved_gaps=unresolved_gaps,
+            candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
         )
         gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
         if gap_matches:
@@ -1959,6 +2170,7 @@ def run_cli_agent(
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
                     unresolved_gaps=latest_unresolved_gaps,
+                    candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
@@ -2170,6 +2382,139 @@ def run_cli_agent(
             metrics["eval_score"] = judge_result.score
             metrics["eval_reasons"] = judge_result.reasons
             eval_result = judge_result.to_dict()
+
+    # Deterministic low-confidence verifier stack.
+    # This path is runtime-enforced (not prompt-based) and can override
+    # judge-only outcomes when no contract exists.
+    confidence_base = float(metrics.get("eval_score", 0.0) or 0.0)
+    if not has_contract and metrics.get("judge_score") is not None:
+        try:
+            confidence_base = float(metrics.get("judge_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence_base = float(metrics.get("eval_score", 0.0) or 0.0)
+    confidence_base = _clamp(confidence_base, 0.0, 1.0)
+    metrics["verifier_confidence_base"] = round(confidence_base, 4)
+    low_confidence_triggered = bool(verifier_stack_enabled) and confidence_base < float(low_confidence_threshold)
+    metrics["verifier_low_confidence_triggered"] = bool(low_confidence_triggered)
+
+    if low_confidence_triggered:
+        probe_rows: list[dict[str, Any]] = []
+        missing_verification_lines: list[str] = []
+
+        required_verification_lines = _extract_verification_lines(task_text)
+        if required_verification_lines and len(probe_rows) < max_low_confidence_probes:
+            event_text = _collect_event_text_blobs(events)
+            missing_verification_lines = [
+                row for row in required_verification_lines
+                if row not in event_text
+            ]
+            probe_rows.append(
+                {
+                    "probe_id": "verification_lines",
+                    "applicable": True,
+                    "passed": len(missing_verification_lines) == 0,
+                    "detail": "matched" if not missing_verification_lines else "verification_line_missing",
+                    "evidence": {
+                        "required_lines": required_verification_lines,
+                        "missing_lines": missing_verification_lines,
+                    },
+                }
+            )
+
+        if has_contract and len(probe_rows) < max_low_confidence_probes:
+            no_unresolved_gaps = len(final_unresolved_gaps) == 0
+            probe_rows.append(
+                {
+                    "probe_id": "contract_gap_count",
+                    "applicable": True,
+                    "passed": bool(no_unresolved_gaps),
+                    "detail": "matched" if no_unresolved_gaps else "unresolved_contract_gaps",
+                    "evidence": {
+                        "unresolved_gap_count": len(final_unresolved_gaps),
+                    },
+                }
+            )
+
+        if domain == "sqlite":
+            query_gaps = [
+                row for row in final_unresolved_gaps
+                if str(row.get("reason_code", "")).strip() == "required_query_mismatch"
+                and str(row.get("query_sql", "")).strip()
+            ]
+            for gap in query_gaps:
+                if len(probe_rows) >= max_low_confidence_probes:
+                    break
+                probe_rows.append(
+                    _run_sqlite_gap_query_probe(
+                        db_path=workspace.work_dir / "task.db",
+                        gap=gap,
+                    )
+                )
+
+        applicable = [row for row in probe_rows if bool(row.get("applicable", False))]
+        if not applicable:
+            probe_status = "inconclusive"
+        elif any(not bool(row.get("passed", False)) for row in applicable):
+            probe_status = "fail"
+        elif all(bool(row.get("passed", False)) for row in applicable):
+            probe_status = "pass"
+        else:
+            probe_status = "inconclusive"
+
+        metrics["verifier_probe_status"] = probe_status
+        metrics["verifier_probe_results"] = probe_rows
+        metrics["verifier_probe_failures"] = sum(
+            1 for row in applicable if not bool(row.get("passed", False))
+        )
+
+        override_applied = False
+        failed_probe_reasons = sorted(
+            {
+                str(row.get("detail", "")).strip()
+                for row in applicable
+                if not bool(row.get("passed", False)) and str(row.get("detail", "")).strip()
+            }
+        )
+        if probe_status == "fail" and not has_contract:
+            merged_reasons = set(metrics.get("eval_reasons", []) or [])
+            for reason in failed_probe_reasons:
+                merged_reasons.add(f"deterministic_probe_failed:{reason}")
+            metrics["eval_passed"] = False
+            metrics["eval_score"] = round(min(float(metrics.get("eval_score", 0.0) or 0.0), 0.34), 3)
+            metrics["eval_reasons"] = sorted(merged_reasons)
+            if isinstance(eval_result, dict):
+                eval_result["passed"] = False
+                eval_result["score"] = float(metrics["eval_score"])
+                eval_result["reasons"] = list(metrics["eval_reasons"])
+            override_applied = True
+        elif probe_status == "pass" and not has_contract:
+            metrics["eval_score"] = round(max(float(metrics.get("eval_score", 0.0) or 0.0), float(low_confidence_threshold)), 3)
+            if isinstance(eval_result, dict):
+                eval_result["score"] = float(metrics["eval_score"])
+            override_applied = True
+        metrics["verifier_override_applied"] = bool(override_applied)
+
+        if probe_status == "inconclusive" and bool(clarify_on_low_confidence):
+            clarifying_question = _build_low_confidence_clarifying_question(
+                task_id=task_id,
+                missing_verification_lines=missing_verification_lines,
+                unresolved_gaps=final_unresolved_gaps,
+            )
+            metrics["verifier_clarifying_question"] = clarifying_question
+            write_event(
+                paths.events_path,
+                {
+                    "step": int(metrics.get("steps", 0) or 0) + 1,
+                    "tool": "verifier_clarify",
+                    "tool_input": {
+                        "confidence_base": confidence_base,
+                        "threshold": low_confidence_threshold,
+                    },
+                    "ok": True,
+                    "error": None,
+                    "output": clarifying_question,
+                },
+            )
 
     critic_no_updates = False
 
@@ -2648,6 +2993,17 @@ def run_cli_agent(
             "reasons": list(metrics.get("judge_reasons", [])),
             "doc_grounding": list(metrics.get("judge_doc_grounding", [])),
             "critique": str(metrics.get("judge_critique", "")),
+        },
+        "verifier_stack": {
+            "enabled": bool(metrics.get("verifier_stack_enabled", False)),
+            "confidence_base": metrics.get("verifier_confidence_base"),
+            "low_confidence_threshold": metrics.get("verifier_low_confidence_threshold"),
+            "low_confidence_triggered": bool(metrics.get("verifier_low_confidence_triggered", False)),
+            "probe_status": str(metrics.get("verifier_probe_status", "not_run")),
+            "probe_failures": int(metrics.get("verifier_probe_failures", 0) or 0),
+            "override_applied": bool(metrics.get("verifier_override_applied", False)),
+            "clarifying_question": str(metrics.get("verifier_clarifying_question", "")),
+            "probe_results": list(metrics.get("verifier_probe_results", [])),
         },
         "metrics_summary": {
             "eval_passed": bool(metrics.get("eval_passed", False)),

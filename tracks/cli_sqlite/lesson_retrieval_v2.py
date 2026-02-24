@@ -9,6 +9,9 @@ from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, load_lesson_records
 
 LANE_STRICT = "strict"
 LANE_TRANSFER = "transfer"
+CANDIDATE_POLICY_ALL = "all"
+CANDIDATE_POLICY_ANCHORED = "anchored"
+CANDIDATE_POLICY_PROMOTED_ONLY = "promoted_only"
 TRANSFER_POLICY_OFF = "off"
 TRANSFER_POLICY_AUTO = "auto"
 TRANSFER_POLICY_ALWAYS = "always"
@@ -19,6 +22,8 @@ DEFAULT_STRICT_WEAK_ANCHOR_THRESHOLD = 0.30
 DEFAULT_TRANSFER_MIN_SCORE = 0.20
 DEFAULT_TRANSFER_ANCHOR_THRESHOLD = 0.25
 DEFAULT_GAP_PRIORITY_MIN_MATCH = 0.35
+DEFAULT_CANDIDATE_MIN_SCORE = 0.25
+DEFAULT_CANDIDATE_ANCHOR_THRESHOLD = 0.25
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -169,6 +174,51 @@ def _is_transfer_candidate_strong_enough(
 
 def _is_active(record: LessonRecord) -> bool:
     return record.status not in {"suppressed", "archived"}
+
+
+def _normalize_candidate_policy(candidate_policy: str | None) -> str:
+    normalized = str(candidate_policy or "").strip().lower()
+    if normalized in {
+        CANDIDATE_POLICY_ALL,
+        CANDIDATE_POLICY_ANCHORED,
+        CANDIDATE_POLICY_PROMOTED_ONLY,
+    }:
+        return normalized
+    return CANDIDATE_POLICY_ALL
+
+
+def _candidate_has_anchor(
+    score: RetrievalScore,
+    *,
+    anchor_threshold: float = DEFAULT_CANDIDATE_ANCHOR_THRESHOLD,
+) -> bool:
+    return (
+        float(score.fingerprint_match) >= 0.7
+        or float(score.tag_overlap) >= float(anchor_threshold)
+        or float(score.text_similarity) >= float(anchor_threshold)
+        or float(score.gap_match) >= float(anchor_threshold)
+    )
+
+
+def _candidate_allowed(
+    *,
+    lesson: LessonRecord,
+    score: RetrievalScore,
+    candidate_policy: str,
+    min_score: float = DEFAULT_CANDIDATE_MIN_SCORE,
+) -> bool:
+    status = str(getattr(lesson, "status", "")).strip().lower()
+    if status != "candidate":
+        return True
+    if candidate_policy == CANDIDATE_POLICY_ALL:
+        return True
+    if candidate_policy == CANDIDATE_POLICY_PROMOTED_ONLY:
+        return False
+    # Anchored mode keeps candidates available while suppressing low-signal
+    # generic advice that can derail execution.
+    if float(score.score) < float(min_score):
+        return False
+    return _candidate_has_anchor(score)
 
 
 def _gap_match_bonus(
@@ -419,9 +469,13 @@ def _rank_lessons(
     query_task_id: str = "",
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
+    candidate_policy: str = CANDIDATE_POLICY_ALL,
 ) -> list[RetrievalMatch]:
     """Compute ranked retrieval rows before selection guards are applied."""
+    normalized_candidate_policy = _normalize_candidate_policy(candidate_policy)
     active = [record for record in records if _is_active(record)]
+    if normalized_candidate_policy == CANDIDATE_POLICY_PROMOTED_ONLY:
+        active = [record for record in active if str(record.status).strip().lower() == "promoted"]
     query_tag_set = {str(tag).strip() for tag in query_tags if str(tag).strip()}
     weight = max(0.0, float(score_multiplier))
     ranked: list[RetrievalMatch] = []
@@ -450,6 +504,12 @@ def _rank_lessons(
                 recency=score.recency,
                 gap_match=score.gap_match,
             )
+        if not _candidate_allowed(
+            lesson=lesson,
+            score=score,
+            candidate_policy=normalized_candidate_policy,
+        ):
+            continue
         ranked.append(RetrievalMatch(lesson=lesson, score=score, lane=lane))
 
     ranked.sort(
@@ -475,6 +535,7 @@ def retrieve_lessons(
     config: RetrievalConfig | None = None,
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
+    candidate_policy: str = CANDIDATE_POLICY_ALL,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     ranked = _rank_lessons(
         records=records,
@@ -486,6 +547,7 @@ def retrieve_lessons(
         query_task_id=query_task_id,
         lane=lane,
         score_multiplier=score_multiplier,
+        candidate_policy=candidate_policy,
     )
     effective_config = config or RetrievalConfig()
     return _select_with_guards(ranked=ranked, config=effective_config)
@@ -500,6 +562,7 @@ def retrieve_pre_run(
     recent_fingerprints: Sequence[str] = (),
     query_tags: Sequence[str] = (),
     max_results: int = 8,
+    candidate_policy: str = CANDIDATE_POLICY_ALL,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """Pre-run retrieval using intent context and recent fingerprints."""
     records = load_lesson_records(path)
@@ -514,6 +577,7 @@ def retrieve_pre_run(
         query_domain=domain,
         query_task_id=task_id,
         config=RetrievalConfig(max_results=max_results),
+        candidate_policy=candidate_policy,
     )
 
 
@@ -532,6 +596,7 @@ def retrieve_on_error(
     transfer_max_results: int = DEFAULT_TRANSFER_MAX_RESULTS,
     transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
     unresolved_gaps: Sequence[dict[str, Any]] = (),
+    candidate_policy: str = CANDIDATE_POLICY_ALL,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """
     On-error retrieval prioritizing exact fingerprint matches.
@@ -587,6 +652,7 @@ def retrieve_on_error(
         query_domain=normalized_domain,
         query_task_id=normalized_task,
         lane=LANE_STRICT,
+        candidate_policy=candidate_policy,
     )
     if unresolved_gaps:
         strict_ranked = _prioritize_gap_matches(strict_ranked)
@@ -610,6 +676,7 @@ def retrieve_on_error(
         query_task_id=normalized_task,
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
+        candidate_policy=candidate_policy,
     )
     if unresolved_gaps:
         transfer_ranked = _prioritize_gap_matches(transfer_ranked)
@@ -649,6 +716,9 @@ __all__ = [
     "TRANSFER_POLICY_AUTO",
     "TRANSFER_POLICY_ALWAYS",
     "TRANSFER_POLICY_OFF",
+    "CANDIDATE_POLICY_ALL",
+    "CANDIDATE_POLICY_ANCHORED",
+    "CANDIDATE_POLICY_PROMOTED_ONLY",
     "DEFAULT_TRANSFER_MAX_RESULTS",
     "DEFAULT_TRANSFER_SCORE_COEFFICIENT",
     "LANE_STRICT",
