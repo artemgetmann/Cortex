@@ -219,6 +219,31 @@ class EvalTests(unittest.TestCase):
                 self.assertTrue(str(row.get("gap_type", "")).strip())
                 self.assertTrue(str(row.get("gap_signature", "")).strip())
 
+    def test_unresolved_contract_gaps_include_required_query_context(self) -> None:
+        payload = {
+            "evidence": {
+                "required_queries": [
+                    {
+                        "id": "reject_count",
+                        "sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+                        "matched": False,
+                        "error": None,
+                        "expected_rows": [["1"]],
+                        "actual_rows": [["2"]],
+                    }
+                ]
+            }
+        }
+        gaps = unresolved_contract_gaps(payload)
+        self.assertEqual(len(gaps), 1)
+        gap = gaps[0]
+        self.assertEqual(gap.get("reason_code"), "required_query_mismatch")
+        self.assertEqual(gap.get("query_id"), "reject_count")
+        self.assertIn("expected=", str(gap.get("detail", "")))
+        self.assertIn("actual=", str(gap.get("detail", "")))
+        self.assertEqual(gap.get("expected_rows"), [["1"]])
+        self.assertEqual(gap.get("actual_rows"), [["2"]])
+
     def test_eval_contract_checks_required_file_content_patterns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

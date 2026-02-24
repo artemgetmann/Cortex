@@ -233,6 +233,22 @@ def _format_contract_gap_retry_prompt(
         detail = str(gap.get("detail", "")).strip()
         suffix = f" detail={detail}" if detail else ""
         lines.append(f"{index}. reason_code={reason} gap_type={gap_type}{suffix}")
+        if reason == "required_query_mismatch":
+            query_id = str(gap.get("query_id", "")).strip()
+            query_sql = str(gap.get("query_sql", "")).strip()
+            expected_rows = gap.get("expected_rows", [])
+            actual_rows = gap.get("actual_rows", [])
+            if query_id:
+                lines.append(f"   - query_id={query_id}")
+            if query_sql:
+                lines.append(f"   - query_sql={query_sql}")
+            if isinstance(expected_rows, list):
+                lines.append(f"   - expected_rows={json.dumps(expected_rows, ensure_ascii=True)}")
+            if isinstance(actual_rows, list):
+                lines.append(f"   - actual_rows={json.dumps(actual_rows, ensure_ascii=True)}")
+            lines.append(
+                "   - correction rule: align database state so query_sql output exactly matches expected_rows."
+            )
     extra = [str(row).strip() for row in (injected_hints or []) if str(row).strip()]
     if extra:
         lines.append("Prior lessons matching these gaps:")
@@ -246,6 +262,25 @@ def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
     reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
     gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
     detail = str(gap.get("detail", "")).strip()
+    if reason == "required_query_mismatch":
+        query_id = str(gap.get("query_id", "")).strip() or "required_query"
+        query_sql = str(gap.get("query_sql", "")).strip()
+        expected_rows = gap.get("expected_rows", [])
+        query_suffix = f" query_sql={query_sql}" if query_sql else ""
+        expected_suffix = (
+            f" expected_rows={json.dumps(expected_rows, ensure_ascii=True)}"
+            if isinstance(expected_rows, list)
+            else ""
+        )
+        return (
+            f"When reason_code={reason}, reconcile data so {query_id} matches exactly."
+            f"{query_suffix}{expected_suffix}"
+        )
+    if reason == "too_many_errors":
+        return (
+            "When reason_code=too_many_errors, switch to one deterministic SQL block, "
+            "then verify with required queries before stopping."
+        )
     if detail:
         return f"When reason_code={reason}, resolve gap_type={gap_type} by fixing: {detail}."
     return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."

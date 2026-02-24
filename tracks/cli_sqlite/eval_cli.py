@@ -144,14 +144,29 @@ def unresolved_contract_gaps(evaluation: CliEvaluation | dict[str, Any]) -> list
             if bool(query.get("matched", False)):
                 continue
             query_id = str(query.get("id", "required_query")).strip() or "required_query"
-            query_error = str(query.get("error", "")).strip()
-            detail = query_id if not query_error else f"{query_id}: {query_error}"
+            raw_query_error = query.get("error", "")
+            query_error = "" if raw_query_error is None else str(raw_query_error).strip()
+            expected_rows = query.get("expected_rows", [])
+            actual_rows = query.get("actual_rows", [])
+            query_sql = str(query.get("sql", "")).strip()
+            if query_error:
+                detail = f"{query_id}: {query_error}"
+            else:
+                # Include compact expected/actual summary so retry prompts can
+                # repair the exact mismatch instead of generic SQL rewrites.
+                expected_text = json.dumps(expected_rows, ensure_ascii=True)
+                actual_text = json.dumps(actual_rows, ensure_ascii=True)
+                detail = f"{query_id}: expected={expected_text} actual={actual_text}"
             gaps.append(
                 {
                     "reason_code": "required_query_mismatch",
                     "gap_type": "required_query",
                     "detail": detail,
                     "gap_signature": f"required_query_mismatch|required_query|{query_id}",
+                    "query_id": query_id,
+                    "query_sql": query_sql,
+                    "expected_rows": expected_rows if isinstance(expected_rows, list) else [],
+                    "actual_rows": actual_rows if isinstance(actual_rows, list) else [],
                 }
             )
 
