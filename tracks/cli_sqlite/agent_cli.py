@@ -37,7 +37,7 @@ from tracks.cli_sqlite.docs_pipeline import (
     normalize_doc_retrieval_mode,
     write_doc_artifacts,
 )
-from tracks.cli_sqlite.eval_cli import evaluate_cli_session, unresolved_contract_gaps
+from tracks.cli_sqlite.eval_cli import evaluate_cli_session, load_contract, unresolved_contract_gaps
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
@@ -220,6 +220,7 @@ def _format_contract_gap_retry_prompt(
     *,
     unresolved_gaps: list[dict[str, Any]],
     injected_hints: list[str] | None = None,
+    validator_evidence: list[str] | None = None,
     max_items: int = 5,
 ) -> str:
     lines = [
@@ -249,6 +250,11 @@ def _format_contract_gap_retry_prompt(
             lines.append(
                 "   - correction rule: align database state so query_sql output exactly matches expected_rows."
             )
+    validator_rows = [str(row).strip() for row in (validator_evidence or []) if str(row).strip()]
+    if validator_rows:
+        lines.append("Deterministic validator evidence:")
+        for row in validator_rows[:4]:
+            lines.append(f"- {row}")
     extra = [str(row).strip() for row in (injected_hints or []) if str(row).strip()]
     if extra:
         lines.append("Prior lessons matching these gaps:")
@@ -284,6 +290,50 @@ def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
     if detail:
         return f"When reason_code={reason}, resolve gap_type={gap_type} by fixing: {detail}."
     return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."
+
+
+def _build_sqlite_validator_guidance_from_contract(
+    *,
+    contract: dict[str, Any],
+    max_queries: int = 4,
+) -> str:
+    """
+    Render deterministic validator steps from CONTRACT required queries.
+
+    This keeps validation protocol machine-driven (contract source of truth)
+    instead of relying on ad-hoc prompt prose per task.
+    """
+    if not isinstance(contract, dict):
+        return ""
+    signals = contract.get("signals", {})
+    if not isinstance(signals, dict):
+        return ""
+    required_queries = signals.get("required_queries", [])
+    if not isinstance(required_queries, list) or not required_queries:
+        return ""
+    lines = [
+        "Deterministic validator protocol (from CONTRACT):",
+        "- Before final stop, run these validator queries with run_sqlite and verify expected rows exactly.",
+    ]
+    added = 0
+    for row in required_queries:
+        if not isinstance(row, dict):
+            continue
+        query_id = str(row.get("id", "")).strip() or f"query_{added + 1}"
+        query_sql = str(row.get("sql", "")).strip()
+        expected_rows = row.get("expected_rows", [])
+        if not query_sql:
+            continue
+        lines.append(f"- validator[{query_id}] sql={query_sql}")
+        if isinstance(expected_rows, list):
+            lines.append(f"  expected_rows={json.dumps(expected_rows, ensure_ascii=True)}")
+        added += 1
+        if added >= max(1, int(max_queries)):
+            break
+    if added <= 0:
+        return ""
+    lines.append("- If any validator mismatches, correct data and rerun validators before stopping.")
+    return "\n".join(lines)
 
 
 def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -> bool:
@@ -987,6 +1037,18 @@ def prepare_cli_prompt_preview(
     if v2_block:
         lessons_text = f"{lessons_text}\n\n{v2_block}".strip()
     domain_fragment = adapter.system_prompt_fragment()
+    runtime_contract: dict[str, Any] | None = None
+    if domain == "sqlite":
+        try:
+            runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
+        except Exception:
+            runtime_contract = None
+    validator_guidance = _build_sqlite_validator_guidance_from_contract(
+        contract=runtime_contract or {},
+        max_queries=4,
+    ) if domain == "sqlite" else ""
+    if validator_guidance:
+        domain_fragment = f"{domain_fragment}\n{validator_guidance}\n"
     if bootstrap:
         domain_fragment = re.sub(
             r"- Before starting.*?do not guess or invent skill_ref names\.\n",
@@ -1217,6 +1279,18 @@ def run_cli_agent(
     docs_read_error_entries = [dict(row) for row in docs_bundle.load_errors]
 
     domain_fragment = adapter.system_prompt_fragment()
+    runtime_contract: dict[str, Any] | None = None
+    if domain == "sqlite":
+        try:
+            runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
+        except Exception:
+            runtime_contract = None
+    validator_guidance = _build_sqlite_validator_guidance_from_contract(
+        contract=runtime_contract or {},
+        max_queries=4,
+    ) if domain == "sqlite" else ""
+    if validator_guidance:
+        domain_fragment = f"{domain_fragment}\n{validator_guidance}\n"
     if bootstrap:
         # Strip skill-reading instructions to avoid wasting steps on read_skill
         # with invented refs (no skill docs exist in bootstrap mode)
@@ -1320,6 +1394,9 @@ def run_cli_agent(
         "contract_gap_retry_triggered": 0,
         "contract_gap_unresolved_count_prestop": 0,
         "contract_gap_unresolved_count_final": 0,
+        "contract_validator_runs": 0,
+        "contract_validator_last_status": "none",
+        "contract_validator_query_ids": [],
         "docs_raw_count": len(docs_bundle.raw_docs),
         "docs_selected_chunks_count": len(docs_bundle.selected_chunks),
         "docs_selected_source_ids": docs_selected_source_ids,
@@ -1464,6 +1541,54 @@ def run_cli_agent(
             for row in unresolved_gaps
             if str(row.get("gap_type", "")).strip()
         ]
+        validator_evidence: list[str] = []
+        # Deterministic sqlite validator run (machine-executed) before retry.
+        # This provides concrete state evidence to the agent, not just prose.
+        if domain == "sqlite":
+            required_queries = prestop_eval.get("evidence", {}).get("required_queries", [])
+            if isinstance(required_queries, list):
+                mismatched_queries = [
+                    row for row in required_queries
+                    if isinstance(row, dict) and not bool(row.get("matched", False))
+                ]
+                query_sqls = [
+                    str(row.get("sql", "")).strip()
+                    for row in mismatched_queries
+                    if str(row.get("sql", "")).strip()
+                ]
+                query_ids = [
+                    str(row.get("id", "")).strip()
+                    for row in mismatched_queries
+                    if str(row.get("id", "")).strip()
+                ]
+                if query_sqls:
+                    validator_sql = ";\n".join(query_sqls)
+                    if not validator_sql.endswith(";"):
+                        validator_sql += ";"
+                    validator_result = adapter.execute(
+                        adapter.executor_tool_name,
+                        {"sql": validator_sql},
+                        workspace,
+                    )
+                    metrics["contract_validator_runs"] = int(metrics.get("contract_validator_runs", 0) or 0) + 1
+                    metrics["contract_validator_query_ids"] = query_ids
+                    metrics["contract_validator_last_status"] = "ok" if not validator_result.is_error() else "error"
+                    write_event(
+                        paths.events_path,
+                        {
+                            "step": current_step,
+                            "tool": "contract_validator",
+                            "tool_input": {"query_ids": query_ids, "sql": validator_sql},
+                            "ok": not validator_result.is_error(),
+                            "error": validator_result.error,
+                            "output": validator_result.output,
+                        },
+                    )
+                    if validator_result.output:
+                        validator_evidence.append(_clip_text(str(validator_result.output), max_chars=900))
+                    if validator_result.error:
+                        validator_evidence.append(f"validator_error={_clip_text(str(validator_result.error), max_chars=400)}")
+
         gap_matches, _ = retrieve_on_error(
             path=LESSONS_V2_PATH,
             error_text=gap_query,
@@ -1510,6 +1635,7 @@ def run_cli_agent(
         retry_prompt = _format_contract_gap_retry_prompt(
             unresolved_gaps=unresolved_gaps,
             injected_hints=gap_hints,
+            validator_evidence=validator_evidence,
         )
         messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
         write_event(
