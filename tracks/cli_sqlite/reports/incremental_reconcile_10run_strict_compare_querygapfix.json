@@ -1,0 +1,688 @@
+{
+  "lessons_on": {
+    "sessions": [
+      {
+        "session_id": 146100,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[[\"CKP-APR-01\", \"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "CKP-APR-01",
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146101,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146102,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": []
+          }
+        ]
+      },
+      {
+        "session_id": 146103,
+        "passed": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 8.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146104,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146105,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146106,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146107,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146108,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146109,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      }
+    ],
+    "pass_rate": 0.5,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 4,
+    "mean_lesson_activations": 2.6,
+    "mean_retrieval_help_ratio": 0.5,
+    "activation_delta": 0.0,
+    "retrieval_help_ratio_delta": 0.0,
+    "gap_reason_counts": {
+      "required_query_mismatch": 7,
+      "too_many_errors": 4,
+      "matched_forbidden_pattern": 3
+    },
+    "gap_type_counts": {
+      "required_query": 7,
+      "error_budget": 4,
+      "forbidden_sql_pattern": 3
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger",
+        "count": 3
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+        "count": 3
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+        "count": 3
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        "count": 3
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|reject_count",
+        "count": 1
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+        "count": 1
+      }
+    ]
+  },
+  "lessons_off": {
+    "sessions": [
+      {
+        "session_id": 146200,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146201,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146202,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146203,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session_id": 146204,
+        "passed": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "detail": "(?is)delete\\s+from\\s+ledger",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"2\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "2"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146205,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session_id": 146206,
+        "passed": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[[\"CKP-APR-01\", \"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "CKP-APR-01",
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146207,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session_id": 146208,
+        "passed": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[[\"CKP-APR-01\", \"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "CKP-APR-01",
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session_id": 146209,
+        "passed": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      }
+    ],
+    "pass_rate": 0.3,
+    "last5_pass_rate": 0.0,
+    "median_steps_to_success": 4,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "activation_delta": 0.0,
+    "retrieval_help_ratio_delta": 0.0,
+    "gap_reason_counts": {
+      "required_query_mismatch": 7,
+      "too_many_errors": 5,
+      "missing_required_pattern": 2,
+      "matched_forbidden_pattern": 1
+    },
+    "gap_type_counts": {
+      "required_query": 7,
+      "error_budget": 5,
+      "required_sql_pattern": 2,
+      "forbidden_sql_pattern": 1
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        "count": 4
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|reject_count",
+        "count": 3
+      },
+      {
+        "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+        "count": 2
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+        "count": 2
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+        "count": 2
+      },
+      {
+        "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger",
+        "count": 1
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+        "count": 1
+      }
+    ]
+  },
+  "delta": {
+    "pass_rate": 0.2,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 0,
+    "mean_lesson_activations": 2.6,
+    "mean_retrieval_help_ratio": 0.5
+  }
+}
