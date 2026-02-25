@@ -9,7 +9,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tracks.cli_sqlite.agent_cli import _is_skill_gate_satisfied, _required_skill_refs_for_domain
+from tracks.cli_sqlite.agent_cli import (
+    _canonicalize_hotfix_transfer_eval_events,
+    _is_skill_gate_satisfied,
+    _required_skill_refs_for_domain,
+    _run_shell_hotfix_transfer_closure_check,
+)
+from tracks.cli_sqlite.domain_adapter import DomainWorkspace
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session, unresolved_contract_gaps
 from tracks.cli_sqlite.executor import prepare_task_workspace, run_sqlite
 from tracks.cli_sqlite.learning_cli import (
@@ -1059,6 +1065,206 @@ class SofterPromotionTests(unittest.TestCase):
         self.assertFalse(
             _scores_improving(non_monotonic, min_runs=3, min_delta=0.1, max_regressions=0),
         )
+
+
+class ShellHotfixClosureCheckTests(unittest.TestCase):
+    def test_base_hotfix_closure_check_passes_with_expected_files_and_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            source_repo = work_dir / "source_repo"
+            target_repo = work_dir / "target_repo"
+            source_repo.mkdir(parents=True, exist_ok=True)
+            target_repo.mkdir(parents=True, exist_ok=True)
+
+            subprocess.run(["git", "init", str(source_repo)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(source_repo), "checkout", "-B", "main"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(source_repo), "config", "user.name", "Cortex"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(source_repo), "config", "user.email", "cortex@example.com"],
+                check=True,
+                capture_output=True,
+            )
+            (source_repo / "hotfix.txt").write_text("Retry backoff tune:\nIncrease initial delay to 250ms.\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source_repo), "add", "hotfix.txt"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(source_repo), "commit", "-m", "hotfix: add retry backoff note"],
+                check=True,
+                capture_output=True,
+            )
+            patch_bytes = subprocess.check_output(
+                ["git", "-C", str(source_repo), "format-patch", "-1", "HEAD", "--stdout"]
+            )
+            (work_dir / "hotfix.patch").write_bytes(patch_bytes)
+
+            subprocess.run(["git", "init", str(target_repo)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "checkout", "-B", "main"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "config", "user.name", "Cortex"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(target_repo), "config", "user.email", "cortex@example.com"],
+                check=True,
+                capture_output=True,
+            )
+            (target_repo / "README.md").write_text("baseline\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(target_repo), "add", "README.md"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "commit", "-m", "chore: baseline"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "am", "../hotfix.patch"], check=True, capture_output=True)
+            (target_repo / "transfer_summary.txt").write_text(
+                "TRANSFER_BRANCH main\nTRANSFER_PATCHES 1\n",
+                encoding="utf-8",
+            )
+
+            workspace = DomainWorkspace(
+                task_id="shell_git_transfer_hotfix",
+                task_dir=work_dir,
+                work_dir=work_dir,
+                fixture_paths={},
+            )
+            closure = _run_shell_hotfix_transfer_closure_check(
+                workspace=workspace,
+                task_id="shell_git_transfer_hotfix",
+            )
+            self.assertTrue(closure["applicable"])
+            self.assertTrue(closure["passed"])
+            self.assertEqual(closure["missing_gaps"], [])
+
+    def test_base_hotfix_closure_check_detects_missing_summary_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            target_repo = work_dir / "target_repo"
+            target_repo.mkdir(parents=True, exist_ok=True)
+            (work_dir / "hotfix.patch").write_text("placeholder\n", encoding="utf-8")
+            (target_repo / "hotfix.txt").write_text("Retry backoff tune:\nIncrease initial delay to 250ms.\n", encoding="utf-8")
+            (target_repo / "transfer_summary.txt").write_text("TRANSFER_BRANCH main\n", encoding="utf-8")
+
+            subprocess.run(["git", "init", str(target_repo)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "checkout", "-B", "main"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(target_repo), "config", "user.name", "Cortex"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(target_repo), "config", "user.email", "cortex@example.com"],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(["git", "-C", str(target_repo), "add", "hotfix.txt", "transfer_summary.txt"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(target_repo), "commit", "-m", "hotfix: add retry backoff note"],
+                check=True,
+                capture_output=True,
+            )
+
+            workspace = DomainWorkspace(
+                task_id="shell_git_transfer_hotfix",
+                task_dir=work_dir,
+                work_dir=work_dir,
+                fixture_paths={},
+            )
+            closure = _run_shell_hotfix_transfer_closure_check(
+                workspace=workspace,
+                task_id="shell_git_transfer_hotfix",
+            )
+            self.assertTrue(closure["applicable"])
+            self.assertFalse(closure["passed"])
+            details = [str(row.get("detail", "")) for row in closure["missing_gaps"] if isinstance(row, dict)]
+            self.assertTrue(any("TRANSFER_PATCHES 1" in row for row in details))
+
+
+class ShellHotfixEventPatternRegressionTests(unittest.TestCase):
+    @staticmethod
+    def _seed_hotfix_eval_workspace(work_dir: Path) -> Path:
+        # Keep this fixture deterministic: evaluator only needs paths/content,
+        # not real git history, for required_event_pattern checks.
+        source_repo = work_dir / "source_repo"
+        target_repo = work_dir / "target_repo"
+        (source_repo / ".git").mkdir(parents=True, exist_ok=True)
+        (target_repo / ".git").mkdir(parents=True, exist_ok=True)
+        (work_dir / "hotfix.patch").write_text("patch-bytes-placeholder\n", encoding="utf-8")
+        (target_repo / "hotfix.txt").write_text(
+            "Retry backoff tune:\nIncrease initial delay to 250ms.\n",
+            encoding="utf-8",
+        )
+        (target_repo / "transfer_summary.txt").write_text(
+            "TRANSFER_BRANCH main\nTRANSFER_PATCHES 1\n",
+            encoding="utf-8",
+        )
+        db_path = work_dir / "task.db"
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS marker(id INTEGER)")
+            conn.commit()
+        return db_path
+
+    @staticmethod
+    def _hotfix_events(*, git_am_command: str) -> list[dict[str, object]]:
+        command = "\n".join(
+            [
+                "git init source_repo",
+                "git init target_repo",
+                "git format-patch -1 HEAD --stdout > hotfix.patch",
+                git_am_command,
+                "echo 'hotfix: add retry backoff note'",
+                "echo 'GIT_TRANSFER_OK target=target_repo branch=main patches=1 file=hotfix.txt'",
+            ]
+        )
+        return [{"tool": "run_bash", "tool_input": {"command": command}, "ok": True}]
+
+    def test_eval_shell_hotfix_accepts_equivalent_git_am_with_trailing_flags(self) -> None:
+        tasks_root = Path(__file__).resolve().parents[1] / "tasks"
+        variants = [
+            "git am ../hotfix.patch --3way",
+            "git am ../hotfix.patch --keep-cr",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._seed_hotfix_eval_workspace(Path(tmp))
+            for git_am_command in variants:
+                result = evaluate_cli_session(
+                    task="shell git transfer hotfix",
+                    task_id="shell_git_transfer_hotfix",
+                    events=self._hotfix_events(git_am_command=git_am_command),
+                    db_path=db_path,
+                    tasks_root=tasks_root,
+                )
+                self.assertTrue(result.passed, msg=f"{git_am_command} should pass, reasons={result.reasons}")
+
+    def test_eval_shell_hotfix_still_rejects_non_git_am_apply_path(self) -> None:
+        tasks_root = Path(__file__).resolve().parents[1] / "tasks"
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._seed_hotfix_eval_workspace(Path(tmp))
+            result = evaluate_cli_session(
+                task="shell git transfer hotfix",
+                task_id="shell_git_transfer_hotfix",
+                events=self._hotfix_events(git_am_command="git apply ../hotfix.patch --index"),
+                db_path=db_path,
+                tasks_root=tasks_root,
+            )
+            self.assertFalse(result.passed)
+            self.assertIn("missing_required_event_pattern", result.reasons)
+
+    def test_canonicalize_hotfix_events_adds_alias_for_git_dash_c_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            (work_dir / "hotfix.patch").write_text("placeholder\n", encoding="utf-8")
+            workspace = DomainWorkspace(
+                task_id="shell_git_transfer_hotfix",
+                task_dir=work_dir,
+                work_dir=work_dir,
+                fixture_paths={},
+            )
+            events = [
+                {
+                    "step": 2,
+                    "tool": "run_bash",
+                    "tool_input": {"command": "git -C target_repo am ../hotfix.patch --3way"},
+                    "ok": True,
+                }
+            ]
+            canonicalized = _canonicalize_hotfix_transfer_eval_events(
+                events=events,
+                workspace=workspace,
+                task_id="shell_git_transfer_hotfix",
+            )
+            self.assertEqual(len(canonicalized), 2)
+            self.assertEqual(
+                canonicalized[-1].get("tool_input", {}).get("command"),
+                "git am ../hotfix.patch",
+            )
 
 
 if __name__ == "__main__":

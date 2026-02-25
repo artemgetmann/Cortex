@@ -128,6 +128,12 @@ DEFAULT_MAX_LOW_CONFIDENCE_PROBES = 4
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
+HOTFIX_TRANSFER_TASK_IDS: frozenset[str] = frozenset(
+    {
+        "shell_git_transfer_hotfix",
+        "shell_git_transfer_hotfix_hard",
+    }
+)
 
 DEPENDENCY_SETUP_TAGS: frozenset[str] = frozenset(
     {
@@ -711,6 +717,96 @@ def _collect_event_text_blobs(events: list[dict[str, Any]]) -> str:
     return "\n".join(chunks)
 
 
+def _is_equivalent_hotfix_git_am_command(*, command: str, patch_file: str) -> bool:
+    """
+    Detect equivalent `git am` variants for hotfix transfer contract matching.
+
+    We intentionally allow common equivalent forms that can break strict regex
+    matching in CONTRACT required_event_patterns:
+    - `git -C target_repo am ../<patch>`
+    - `git am --3way ../<patch>`
+    - quoted patch path variants (`'../<patch>'`, `"../<patch>"`)
+    """
+    text = str(command or "")
+    patch = str(patch_file or "").strip()
+    if not text.strip() or not patch:
+        return False
+    if not re.search(r"(?i)\bgit\b", text) or not re.search(r"(?i)\bam\b", text):
+        return False
+    am_calls = re.finditer(
+        r"(?is)\bgit\b(?:\s+-C\s+[^\s;&|]+)?\s+am\b(?P<tail>[^\n;&|]*)",
+        text,
+    )
+    for match in am_calls:
+        tail = str(match.group("tail") or "")
+        if re.search(
+            rf"(?is)(?:^|[\s\"'])(?:\./)?(?:\.\./)?{re.escape(patch)}(?:[\s\"']|$)",
+            tail,
+        ):
+            return True
+    return False
+
+
+def _canonicalize_hotfix_transfer_eval_events(
+    *,
+    events: list[dict[str, Any]],
+    workspace: DomainWorkspace,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Canonicalize hotfix transfer git-am event variants before contract matching.
+
+    Scope is intentionally narrow and backward-compatible:
+    - only applies to shell hotfix transfer task ids
+    - keeps original events intact, optionally appending one synthetic alias
+    - never touches persisted events on disk
+    """
+    if not _is_shell_hotfix_transfer_task(task_id):
+        return events
+
+    expected = _load_hotfix_transfer_expectations(workspace=workspace, task_id=task_id)
+    patch_file = str(expected.get("patch_file", "")).strip()
+    if not patch_file:
+        return events
+
+    canonical_command = f"git am ../{patch_file}"
+    canonical_pattern = re.compile(
+        rf"(?is)\bgit\s+am\s+\.\./{re.escape(patch_file)}(?:\s|$|[\"'])"
+    )
+
+    # Fast path: canonical command already present in raw events.
+    for row in events:
+        if not isinstance(row, dict) or str(row.get("tool", "")).strip() != "run_bash":
+            continue
+        tool_input = row.get("tool_input", {})
+        if not isinstance(tool_input, dict):
+            continue
+        command = str(tool_input.get("command", "") or "")
+        if canonical_pattern.search(command):
+            return events
+
+    # Append one synthetic alias event when we detect an equivalent variant.
+    for row in events:
+        if not isinstance(row, dict) or str(row.get("tool", "")).strip() != "run_bash":
+            continue
+        tool_input = row.get("tool_input", {})
+        if not isinstance(tool_input, dict):
+            continue
+        command = str(tool_input.get("command", "") or "")
+        if not _is_equivalent_hotfix_git_am_command(command=command, patch_file=patch_file):
+            continue
+        synthetic_event = {
+            "step": row.get("step"),
+            "tool": "run_bash",
+            "tool_input": {"command": canonical_command},
+            "ok": True,
+            "output": "",
+            "error": None,
+        }
+        return [*events, synthetic_event]
+    return events
+
+
 def _normalize_expected_rows(expected_rows: Any) -> list[list[str]]:
     """Normalize expected rows into deterministic string matrix."""
     normalized: list[list[str]] = []
@@ -846,6 +942,214 @@ def _build_sqlite_validator_guidance_from_contract(
         return ""
     lines.append("- If any validator mismatches, correct data and rerun validators before stopping.")
     return "\n".join(lines)
+
+
+def _build_gap_row(*, reason_code: str, gap_type: str, detail: str) -> dict[str, Any]:
+    text = str(detail).strip()
+    return {
+        "reason_code": reason_code,
+        "gap_type": gap_type,
+        "detail": text,
+        "gap_signature": f"{reason_code}|{gap_type}|{text}",
+    }
+
+
+def _is_shell_hotfix_transfer_task(task_id: str) -> bool:
+    return str(task_id).strip() in HOTFIX_TRANSFER_TASK_IDS
+
+
+def _load_hotfix_transfer_expectations(*, workspace: DomainWorkspace, task_id: str) -> dict[str, Any]:
+    """
+    Resolve deterministic closure-check expectations for hotfix transfer tasks.
+
+    For the hard task, runtime variants come from `variant_spec.json`. For the
+    base task, fixed defaults are used.
+    """
+    expectations: dict[str, Any] = {
+        "patch_file": "hotfix.patch",
+        "hotfix_file": "hotfix.txt",
+        "commit_message": "hotfix: add retry backoff note",
+        "summary_lines": [
+            "TRANSFER_BRANCH main",
+            "TRANSFER_PATCHES 1",
+        ],
+    }
+    if str(task_id).strip() != "shell_git_transfer_hotfix_hard":
+        return expectations
+    variant_path = workspace.work_dir / "variant_spec.json"
+    if not variant_path.exists():
+        return expectations
+    try:
+        variant_payload = json.loads(variant_path.read_text(encoding="utf-8"))
+    except Exception:
+        return expectations
+    if not isinstance(variant_payload, dict):
+        return expectations
+    patch_file = str(variant_payload.get("patch_file", "")).strip()
+    hotfix_file = str(variant_payload.get("hotfix_file", "")).strip()
+    commit_message = str(variant_payload.get("commit_message", "")).strip()
+    summary_lines = variant_payload.get("summary_lines", [])
+    if patch_file:
+        expectations["patch_file"] = patch_file
+    if hotfix_file:
+        expectations["hotfix_file"] = hotfix_file
+    if commit_message:
+        expectations["commit_message"] = commit_message
+    if isinstance(summary_lines, list):
+        clean_summary = [str(row).strip() for row in summary_lines if str(row).strip()]
+        if clean_summary:
+            expectations["summary_lines"] = clean_summary
+    return expectations
+
+
+def _run_shell_hotfix_transfer_closure_check(*, workspace: DomainWorkspace, task_id: str) -> dict[str, Any]:
+    """
+    Run deterministic pre-stop closure checks for shell hotfix transfer tasks.
+
+    This validates two closure conditions before allowing stop:
+    - patch actually landed in `target_repo` history
+    - transfer summary file contains required lines
+    """
+    if not _is_shell_hotfix_transfer_task(task_id):
+        return {
+            "applicable": False,
+            "passed": True,
+            "evidence": [],
+            "missing_gaps": [],
+        }
+    expected = _load_hotfix_transfer_expectations(workspace=workspace, task_id=task_id)
+    patch_file = str(expected.get("patch_file", "")).strip()
+    hotfix_file = str(expected.get("hotfix_file", "")).strip()
+    commit_message = str(expected.get("commit_message", "")).strip()
+    summary_lines = [str(row).strip() for row in (expected.get("summary_lines", []) or []) if str(row).strip()]
+    patch_path = workspace.work_dir / patch_file
+    target_repo = workspace.work_dir / "target_repo"
+    hotfix_path = target_repo / hotfix_file
+    summary_path = target_repo / "transfer_summary.txt"
+
+    evidence: list[str] = [
+        f"closure_check task_id={task_id}",
+        f"closure_expect patch_file={patch_file}",
+        f"closure_expect hotfix_file={hotfix_file}",
+        f"closure_expect summary_lines={json.dumps(summary_lines, ensure_ascii=True)}",
+    ]
+    missing_gaps: list[dict[str, Any]] = []
+
+    if patch_file and not patch_path.exists():
+        missing_gaps.append(
+            _build_gap_row(
+                reason_code="missing_required_file",
+                gap_type="required_file",
+                detail=patch_file,
+            )
+        )
+    if hotfix_file and not hotfix_path.exists():
+        missing_gaps.append(
+            _build_gap_row(
+                reason_code="missing_required_file",
+                gap_type="required_file",
+                detail=f"target_repo/{hotfix_file}",
+            )
+        )
+
+    if not summary_path.exists():
+        missing_gaps.append(
+            _build_gap_row(
+                reason_code="missing_required_file",
+                gap_type="required_file",
+                detail="target_repo/transfer_summary.txt",
+            )
+        )
+    else:
+        summary_text = summary_path.read_text(encoding="utf-8", errors="replace")
+        for line in summary_lines:
+            if line not in summary_text:
+                missing_gaps.append(
+                    _build_gap_row(
+                        reason_code="missing_required_file_content_pattern",
+                        gap_type="required_file_content_pattern",
+                        detail=f"target_repo/transfer_summary.txt::{line}",
+                    )
+                )
+
+    # Ensure the target history contains the expected patch commit subject.
+    # This catches "file copied manually" paths that bypass actual patch apply.
+    if commit_message and target_repo.exists():
+        try:
+            log_result = subprocess.run(
+                ["git", "-C", str(target_repo), "log", "--format=%s", "-n", "20"],
+                capture_output=True,
+                text=True,
+                timeout=6.0,
+                check=False,
+            )
+            if log_result.returncode != 0:
+                missing_gaps.append(
+                    _build_gap_row(
+                        reason_code="missing_required_event_pattern",
+                        gap_type="required_event_pattern",
+                        detail=f"git_log_failed:{(log_result.stderr or log_result.stdout or '').strip()}",
+                    )
+                )
+            else:
+                subjects = [row.strip() for row in (log_result.stdout or "").splitlines() if row.strip()]
+                if commit_message not in subjects:
+                    missing_gaps.append(
+                        _build_gap_row(
+                            reason_code="missing_required_event_pattern",
+                            gap_type="required_event_pattern",
+                            detail=commit_message,
+                        )
+                    )
+        except Exception as exc:
+            missing_gaps.append(
+                _build_gap_row(
+                    reason_code="missing_required_event_pattern",
+                    gap_type="required_event_pattern",
+                    detail=f"git_log_exception:{type(exc).__name__}:{exc}",
+                )
+            )
+
+    # Ensure the expected hotfix file is present in HEAD tree (committed state).
+    if hotfix_file and target_repo.exists():
+        show_result = subprocess.run(
+            ["git", "-C", str(target_repo), "show", f"HEAD:{hotfix_file}"],
+            capture_output=True,
+            text=True,
+            timeout=6.0,
+            check=False,
+        )
+        if show_result.returncode != 0:
+            missing_gaps.append(
+                _build_gap_row(
+                    reason_code="missing_required_file",
+                    gap_type="required_file",
+                    detail=f"target_repo/{hotfix_file}",
+                )
+            )
+
+    deduped: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
+    for gap in missing_gaps:
+        signature = str(gap.get("gap_signature", "")).strip()
+        if not signature or signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        deduped.append(gap)
+    missing_gaps = deduped
+    if missing_gaps:
+        evidence.extend(
+            [f"closure_missing {row.get('reason_code')}::{row.get('gap_type')}::{row.get('detail')}" for row in missing_gaps]
+        )
+    else:
+        evidence.append("closure_check passed")
+    return {
+        "applicable": True,
+        "passed": len(missing_gaps) == 0,
+        "evidence": evidence,
+        "missing_gaps": missing_gaps,
+        "expected": expected,
+    }
 
 
 def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -> bool:
@@ -1942,6 +2246,10 @@ def run_cli_agent(
         "contract_gap_retry_triggered": 0,
         "contract_gap_unresolved_count_prestop": 0,
         "contract_gap_unresolved_count_final": 0,
+        "contract_closure_checks": 0,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "not_run",
+        "contract_closure_check_last_missing": [],
         "contract_validator_runs": 0,
         "contract_validator_last_status": "none",
         "contract_validator_query_ids": [],
@@ -2044,14 +2352,73 @@ def run_cli_agent(
 
         # Evaluate unresolved contract gaps from actual run artifacts and use
         # the deterministic result to drive one targeted retry prompt.
+        prestop_events = _canonicalize_hotfix_transfer_eval_events(
+            events=read_events(paths.events_path),
+            workspace=workspace,
+            task_id=task_id,
+        )
         prestop_eval = evaluate_cli_session(
             task=task_text,
             task_id=task_id,
-            events=read_events(paths.events_path),
+            events=prestop_events,
             db_path=workspace.work_dir / "task.db",
             tasks_root=TASKS_ROOT,
         ).to_dict()
         unresolved_gaps = unresolved_contract_gaps(prestop_eval)
+        validator_evidence: list[str] = []
+
+        closure_check = _run_shell_hotfix_transfer_closure_check(
+            workspace=workspace,
+            task_id=task_id,
+        )
+        if bool(closure_check.get("applicable", False)):
+            metrics["contract_closure_checks"] = int(metrics.get("contract_closure_checks", 0) or 0) + 1
+            closure_missing = closure_check.get("missing_gaps", [])
+            if isinstance(closure_missing, list) and closure_missing:
+                metrics["contract_closure_check_failures"] = (
+                    int(metrics.get("contract_closure_check_failures", 0) or 0) + 1
+                )
+                existing_signatures = {
+                    str(row.get("gap_signature", "")).strip()
+                    for row in unresolved_gaps
+                    if isinstance(row, dict)
+                }
+                for row in closure_missing:
+                    if not isinstance(row, dict):
+                        continue
+                    signature = str(row.get("gap_signature", "")).strip()
+                    if signature and signature not in existing_signatures:
+                        unresolved_gaps.append(row)
+                        existing_signatures.add(signature)
+            last_missing = [
+                str(row.get("detail", "")).strip()
+                for row in (closure_missing if isinstance(closure_missing, list) else [])
+                if isinstance(row, dict) and str(row.get("detail", "")).strip()
+            ]
+            metrics["contract_closure_check_last_missing"] = last_missing
+            metrics["contract_closure_check_last_status"] = (
+                "pass" if bool(closure_check.get("passed", False)) else "fail"
+            )
+            evidence_rows = closure_check.get("evidence", [])
+            if isinstance(evidence_rows, list):
+                validator_evidence.extend(
+                    [str(row).strip() for row in evidence_rows if str(row).strip()]
+                )
+            write_event(
+                paths.events_path,
+                {
+                    "step": current_step,
+                    "tool": "contract_closure_check",
+                    "tool_input": {
+                        "task_id": task_id,
+                        "attempt": contract_gap_retries_used + 1,
+                    },
+                    "ok": bool(closure_check.get("passed", False)),
+                    "error": None if bool(closure_check.get("passed", False)) else "closure_gaps_detected",
+                    "output": json.dumps(closure_check, ensure_ascii=True),
+                },
+            )
+
         latest_unresolved_gaps = unresolved_gaps
         metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
         prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
@@ -2062,6 +2429,7 @@ def run_cli_agent(
                     "attempt": contract_gap_retries_used + 1,
                     "trigger": trigger,
                     "eval_result": prestop_eval,
+                    "closure_check": closure_check,
                     "unresolved_gaps": unresolved_gaps,
                 },
                 ensure_ascii=True,
@@ -2089,7 +2457,6 @@ def run_cli_agent(
             for row in unresolved_gaps
             if str(row.get("gap_type", "")).strip()
         ]
-        validator_evidence: list[str] = []
         # Deterministic sqlite validator run (machine-executed) before retry.
         # This provides concrete state evidence to the agent, not just prose.
         if domain == "sqlite":
@@ -2646,11 +3013,16 @@ def run_cli_agent(
 
     # Deterministic eval (CONTRACT.json) — works for domains that have contracts
     if has_contract:
+        eval_events = _canonicalize_hotfix_transfer_eval_events(
+            events=events,
+            workspace=workspace,
+            task_id=task_id,
+        )
         # SQLite-style deterministic eval
         eval_result = evaluate_cli_session(
             task=task_text,
             task_id=task_id,
-            events=events,
+            events=eval_events,
             db_path=workspace.work_dir / "task.db",
             tasks_root=TASKS_ROOT,
         ).to_dict()
@@ -2870,9 +3242,16 @@ def run_cli_agent(
                 eval_result["reasons"] = list(metrics["eval_reasons"])
             override_applied = True
         elif probe_status == "pass" and not has_contract:
+            # Deterministic verifier probes are stronger than judge-only signal
+            # for no-contract tasks. If all applicable probes pass, treat the
+            # run as passed even when judge rationale is pessimistic.
+            metrics["eval_passed"] = True
             metrics["eval_score"] = round(max(float(metrics.get("eval_score", 0.0) or 0.0), float(low_confidence_threshold)), 3)
+            metrics["eval_reasons"] = ["deterministic_probe_passed"]
             if isinstance(eval_result, dict):
+                eval_result["passed"] = True
                 eval_result["score"] = float(metrics["eval_score"])
+                eval_result["reasons"] = list(metrics["eval_reasons"])
             override_applied = True
         metrics["verifier_override_applied"] = bool(override_applied)
 
@@ -3357,6 +3736,10 @@ def run_cli_agent(
             "steps_budget": int(contract_gap_retry_steps),
             "attempts": int(metrics.get("contract_gap_retry_attempts", 0) or 0),
             "triggered": int(metrics.get("contract_gap_retry_triggered", 0) or 0),
+            "closure_checks": int(metrics.get("contract_closure_checks", 0) or 0),
+            "closure_check_failures": int(metrics.get("contract_closure_check_failures", 0) or 0),
+            "closure_check_last_status": str(metrics.get("contract_closure_check_last_status", "not_run")),
+            "closure_check_last_missing": list(metrics.get("contract_closure_check_last_missing", [])),
             "prestop_artifacts": list(metrics.get("contract_gap_prestop_artifacts", [])),
             "postretry_artifact": metrics.get("contract_gap_postretry_artifact"),
             "unresolved_count_prestop": int(metrics.get("contract_gap_unresolved_count_prestop", 0) or 0),
