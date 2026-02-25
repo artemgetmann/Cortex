@@ -48,6 +48,7 @@ tracks/cli_sqlite/learning/*.bak*
 tracks/cli_sqlite/learning/memory_events.jsonl
 tracks/cli_sqlite/sessions/session-*/
 tracks/cli_sqlite/sessions/session-*/memory_events.jsonl
+tracks/cli_sqlite/sessions/run_service_state.json
 tracks/cli_sqlite/tasks/openclaw_dynamic_*/
 
 # OpenClaw AGI integration runtime artifacts (workspace is intentionally inside repo).

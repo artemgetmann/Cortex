@@ -11,6 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tracks.cli_sqlite import run_service
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TRACK_DIR = ROOT_DIR / "tracks" / "cli_sqlite"
@@ -41,6 +47,7 @@ KNOWN_TASK_DOMAIN: dict[str, str] = {
 
 RUN_PREFIXES = ("/run", "run ")
 STATUS_PREFIXES = ("/learn-status", "/status", "learn status")
+CANCEL_PREFIXES = ("/cancel", "/cancel-run", "cancel run")
 CHAT_PREFIXES = ("/chat",)
 
 
@@ -51,6 +58,7 @@ class DispatchPlan:
     domain: str | None = None
     task_id: str | None = None
     task_text: str | None = None
+    run_id: str | None = None
     max_steps: int = 6
     model_executor: str = "claude-haiku-4-5"
     llm_backend: str = "anthropic"
@@ -172,7 +180,22 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
     lowered = normalized.lower()
 
     if any(lowered.startswith(prefix) for prefix in STATUS_PREFIXES):
-        return DispatchPlan(mode="status", chat_scope=chat_scope, reason="status_prefix")
+        payload = _strip_prefix(normalized, STATUS_PREFIXES)
+        controls, payload_tail = _parse_keyvals(payload)
+        run_id = controls.get("run_id", "").strip()
+        if not run_id:
+            token = payload_tail.split(" ", 1)[0].strip() if payload_tail else ""
+            run_id = token if token.startswith("run_") else ""
+        return DispatchPlan(mode="status", chat_scope=chat_scope, run_id=run_id or None, reason="status_prefix")
+
+    if any(lowered.startswith(prefix) for prefix in CANCEL_PREFIXES):
+        payload = _strip_prefix(normalized, CANCEL_PREFIXES)
+        controls, payload_tail = _parse_keyvals(payload)
+        run_id = controls.get("run_id", "").strip()
+        if not run_id and payload_tail:
+            token = payload_tail.split(" ", 1)[0].strip()
+            run_id = token if token.startswith("run_") else ""
+        return DispatchPlan(mode="cancel", chat_scope=chat_scope, run_id=run_id or None, reason="cancel_prefix")
 
     if any(lowered.startswith(prefix) for prefix in CHAT_PREFIXES):
         return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="chat_prefix")
@@ -210,6 +233,7 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
 
     model_executor = controls.get("model", "").strip() or "claude-haiku-4-5"
     llm_backend = controls.get("backend", "").strip() or "anthropic"
+    run_id = controls.get("run_id", "").strip() or None
     learn_value = controls.get("learn", controls.get("persist", "")).strip().lower()
     posttask_learn = not (learn_value in {"off", "false", "0", "no"})
     return DispatchPlan(
@@ -218,17 +242,13 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         domain=domain,
         task_id=task_id,
         task_text=task_text,
+        run_id=run_id,
         max_steps=max_steps,
         model_executor=model_executor,
         llm_backend=llm_backend,
         posttask_learn=posttask_learn,
         reason="run_prefix",
     )
-
-
-def _next_session_id() -> int:
-    # Epoch-second ids are deterministic enough for sequential mobile-triggered runs.
-    return int(time.time())
 
 
 def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
@@ -245,7 +265,10 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
             chat_scope=plan.chat_scope,
         )
 
-    session_id = _next_session_id()
+    # Reserve IDs before execution so transport layers can immediately track
+    # this run with deterministic identifiers.
+    run_id = plan.run_id or run_service.generate_run_id()
+    session_id = run_service.allocate_session_id()
     cmd = [
         "python3",
         str(RUNNER),
@@ -269,6 +292,8 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         plan.llm_backend,
         "--model-executor",
         plan.model_executor,
+        "--run-id",
+        run_id,
     ]
     if not plan.posttask_learn:
         # Allow safe live testing without mutating shared lesson stores.
@@ -282,6 +307,7 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
             "task_id": plan.task_id,
             "domain": plan.domain,
             "session_id": session_id,
+            "run_id": run_id,
         }
 
     proc = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True)
@@ -295,8 +321,10 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
             metrics = {}
 
     ok = proc.returncode == 0
+    run_row = run_service.get_run(run_id)
     return {
         "ok": ok,
+        "run_id": run_id,
         "task_id": plan.task_id,
         "domain": plan.domain,
         "session_id": session_id,
@@ -305,10 +333,11 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         "stdout_tail": "\n".join((proc.stdout or "").splitlines()[-16:]),
         "stderr_tail": "\n".join((proc.stderr or "").splitlines()[-16:]),
         "metrics": metrics,
+        "run_status": run_row.status if run_row else None,
     }
 
 
-def _status_payload(*, chat_scope: str) -> dict[str, Any]:
+def _status_payload(*, chat_scope: str, run_id: str | None = None) -> dict[str, Any]:
     lesson_count = 0
     scoped_count = 0
     if LESSONS_V2_PATH.exists():
@@ -342,10 +371,16 @@ def _status_payload(*, chat_scope: str) -> dict[str, Any]:
         recent_metrics = payload
         break
 
+    active_runs = [row.to_dict() for row in run_service.list_active()]
+    run_row = run_service.get_run(run_id) if run_id else None
+
     return {
         "ok": True,
         "mode": "status",
         "chat_scope": chat_scope,
+        "run_id": run_id,
+        "run": run_row.to_dict() if run_row else None,
+        "active_runs": active_runs,
         "lessons_total": lesson_count,
         "lessons_scoped": scoped_count,
         "latest_session": {
@@ -366,9 +401,23 @@ def _chat_payload() -> dict[str, Any]:
         "reply": (
             "Chat mode. No learning run executed.\n"
             "Use /run <task> to trigger Cortex learning loop.\n"
-            "Use /learn-status to inspect learning signals."
+            "Use /learn-status for learning metrics and /status run_id=<id> for run status."
         ),
     }
+
+
+def _cancel_payload(*, run_id: str | None) -> tuple[dict[str, Any], int]:
+    rid = str(run_id or "").strip()
+    if not rid:
+        return {
+            "ok": False,
+            "mode": "cancel",
+            "error": "Missing run_id. Usage: /cancel run_id=<run_id>",
+        }, 1
+    row = run_service.cancel_run(rid, reason="transport_requested")
+    if row is None:
+        return {"ok": False, "mode": "cancel", "run_id": rid, "error": "run_id not found"}, 1
+    return {"ok": True, "mode": "cancel", "run_id": rid, "run": row.to_dict()}, 0
 
 
 def main() -> int:
@@ -386,8 +435,12 @@ def main() -> int:
         print(json.dumps(_chat_payload(), ensure_ascii=True, indent=2))
         return 0
     if plan.mode == "status":
-        print(json.dumps(_status_payload(chat_scope=chat_scope), ensure_ascii=True, indent=2))
+        print(json.dumps(_status_payload(chat_scope=chat_scope, run_id=plan.run_id), ensure_ascii=True, indent=2))
         return 0
+    if plan.mode == "cancel":
+        payload, rc = _cancel_payload(run_id=plan.run_id)
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return rc
 
     result = _run_task(plan, dry_run=bool(args.dry_run))
     print(json.dumps({"mode": "run", "plan": plan.__dict__, "result": result}, ensure_ascii=True, indent=2))

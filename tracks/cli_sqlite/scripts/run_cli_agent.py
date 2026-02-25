@@ -32,6 +32,11 @@ from tracks.cli_sqlite.agent_cli import (
     LEARNING_MODES,
     run_cli_agent,
 )
+from tracks.cli_sqlite import run_service
+
+
+class _RunCancelled(RuntimeError):
+    """Raised when an external transport requests cancellation mid-run."""
 
 
 def main() -> int:
@@ -39,6 +44,11 @@ def main() -> int:
     ap.add_argument("--task-id", required=True)
     ap.add_argument("--task", default="")
     ap.add_argument("--session", required=True, type=int)
+    ap.add_argument(
+        "--run-id",
+        default="",
+        help="Optional externally supplied run id. If omitted, run service generates one.",
+    )
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--domain", default="sqlite", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"],
                      help="Domain adapter to use (default: sqlite)")
@@ -192,50 +202,118 @@ def main() -> int:
             cfg = SimpleNamespace(anthropic_api_key="")
         else:
             raise
-    result = run_cli_agent(
-        cfg=cfg,
+
+    run_record = run_service.start_run(
         task_id=args.task_id,
-        task=args.task or None,
-        session_id=args.session,
-        max_steps=args.max_steps,
         domain=args.domain,
-        learning_mode=args.learning_mode,
-        architecture_mode=args.architecture_mode,
-        model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
-        model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
-        model_judge=args.model_judge.strip() if args.model_judge else None,
-        posttask_mode=args.posttask_mode,
-        posttask_learn=not args.no_posttask_learn,
-        memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
-        verbose=args.verbose,
-        auto_escalate_critic=bool(args.auto_escalate_critic),
-        escalation_score_threshold=args.escalation_score_threshold,
-        escalation_consecutive_runs=max(1, args.escalation_consecutive_runs),
-        require_skill_read=bool(args.require_skill_read) and not args.bootstrap,
-        opaque_tools=bool(args.opaque_tools),
-        bootstrap=bool(args.bootstrap),
-        cryptic_errors=bool(args.cryptic_errors),
-        semi_helpful_errors=bool(args.semi_helpful_errors),
-        mixed_errors=bool(args.mixed_errors),
-        enable_transfer_retrieval=bool(args.enable_transfer_retrieval),
-        transfer_retrieval_max_results=max(0, int(args.transfer_retrieval_max_results)),
-        transfer_retrieval_score_weight=max(0.0, float(args.transfer_retrieval_score_weight)),
-        documentation=[str(item).strip() for item in args.documentation if str(item).strip()],
-        doc_mode=args.doc_mode,
-        doc_budget_tokens=max(128, int(args.doc_budget_tokens)),
-        doc_retrieval=args.doc_retrieval,
-        doc_retriever_model=str(args.doc_retriever_model).strip() or None,
-        judge_docs=args.judge_docs == "on",
-        executor_docs=args.executor_docs == "on",
-        judge_diagnostic=bool(args.judge_diagnostic),
-        contract_gap_retry=bool(args.contract_gap_retry),
-        contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
-        structured_lessons_required=bool(args.structured_lessons_required),
-        verifier_stack_enabled=bool(args.verifier_stack),
-        low_confidence_threshold=max(0.0, min(1.0, float(args.low_confidence_threshold))),
-        clarify_on_low_confidence=bool(args.clarify_on_low_confidence),
-        max_low_confidence_probes=max(1, int(args.max_low_confidence_probes)),
-        llm_backend=args.llm_backend,
+        session_id=args.session,
+        run_id=str(args.run_id).strip() or None,
+        metadata={
+            "source": "run_cli_agent.py",
+            "max_steps": int(args.max_steps),
+            "llm_backend": str(args.llm_backend),
+        },
+    )
+
+    def _on_step(step: int, tool: str, ok: bool, error: str | None) -> None:
+        # Heartbeats keep run status observable for transports polling by run_id.
+        run_service.mark_heartbeat(run_record.run_id, last_step=step)
+        if run_service.is_cancel_requested(run_record.run_id):
+            raise _RunCancelled(
+                f"Run {run_record.run_id} cancelled at step {step} while executing {tool} (ok={ok}): {error or ''}"
+            )
+
+    if run_service.is_cancel_requested(run_record.run_id):
+        run_service.update_run(
+            run_record.run_id,
+            status=run_service.STATUS_CANCELLED,
+            cancel_requested=True,
+            error=f"Run {run_record.run_id} cancelled before execution started.",
+        )
+        print(json_dump({"run_id": run_record.run_id, "cancelled": True, "session_id": args.session}))
+        return 1
+
+    try:
+        result = run_cli_agent(
+            cfg=cfg,
+            task_id=args.task_id,
+            task=args.task or None,
+            session_id=args.session,
+            max_steps=args.max_steps,
+            domain=args.domain,
+            learning_mode=args.learning_mode,
+            architecture_mode=args.architecture_mode,
+            model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
+            model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
+            model_judge=args.model_judge.strip() if args.model_judge else None,
+            posttask_mode=args.posttask_mode,
+            posttask_learn=not args.no_posttask_learn,
+            memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
+            verbose=args.verbose,
+            auto_escalate_critic=bool(args.auto_escalate_critic),
+            escalation_score_threshold=args.escalation_score_threshold,
+            escalation_consecutive_runs=max(1, args.escalation_consecutive_runs),
+            require_skill_read=bool(args.require_skill_read) and not args.bootstrap,
+            opaque_tools=bool(args.opaque_tools),
+            bootstrap=bool(args.bootstrap),
+            cryptic_errors=bool(args.cryptic_errors),
+            semi_helpful_errors=bool(args.semi_helpful_errors),
+            mixed_errors=bool(args.mixed_errors),
+            enable_transfer_retrieval=bool(args.enable_transfer_retrieval),
+            transfer_retrieval_max_results=max(0, int(args.transfer_retrieval_max_results)),
+            transfer_retrieval_score_weight=max(0.0, float(args.transfer_retrieval_score_weight)),
+            documentation=[str(item).strip() for item in args.documentation if str(item).strip()],
+            doc_mode=args.doc_mode,
+            doc_budget_tokens=max(128, int(args.doc_budget_tokens)),
+            doc_retrieval=args.doc_retrieval,
+            doc_retriever_model=str(args.doc_retriever_model).strip() or None,
+            judge_docs=args.judge_docs == "on",
+            executor_docs=args.executor_docs == "on",
+            judge_diagnostic=bool(args.judge_diagnostic),
+            contract_gap_retry=bool(args.contract_gap_retry),
+            contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
+            structured_lessons_required=bool(args.structured_lessons_required),
+            verifier_stack_enabled=bool(args.verifier_stack),
+            low_confidence_threshold=max(0.0, min(1.0, float(args.low_confidence_threshold))),
+            clarify_on_low_confidence=bool(args.clarify_on_low_confidence),
+            max_low_confidence_probes=max(1, int(args.max_low_confidence_probes)),
+            llm_backend=args.llm_backend,
+            on_step=_on_step,
+        )
+    except _RunCancelled as exc:
+        run_service.update_run(
+            run_record.run_id,
+            status=run_service.STATUS_CANCELLED,
+            cancel_requested=True,
+            error=str(exc),
+            result={"cancelled": True, "session_id": args.session},
+        )
+        print(json_dump({"run_id": run_record.run_id, "cancelled": True, "session_id": args.session}))
+        return 1
+    except Exception as exc:
+        run_service.update_run(
+            run_record.run_id,
+            status=run_service.STATUS_FAILED,
+            error=str(exc),
+            result={"session_id": args.session},
+        )
+        raise
+
+    result.metrics["run_id"] = run_record.run_id
+    if run_service.is_cancel_requested(run_record.run_id):
+        run_service.update_run(
+            run_record.run_id,
+            status=run_service.STATUS_CANCELLED,
+            cancel_requested=True,
+            result={"session_id": args.session, "metrics": result.metrics},
+        )
+        print(json_dump(result.metrics))
+        return 1
+
+    run_service.update_run(
+        run_record.run_id,
+        status=run_service.STATUS_COMPLETED,
+        result={"session_id": args.session, "metrics": result.metrics},
     )
     print(json_dump(result.metrics))
     return 0

@@ -69,6 +69,13 @@ from tracks.cli_sqlite.learning_cli import (
     store_lessons,
 )
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
+from tracks.cli_sqlite.run_observability import (
+    append_lifecycle_event,
+    append_run_ledger_entry,
+    build_run_id,
+    format_utc_timestamp,
+    normalize_error_summary,
+)
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
     apply_skill_updates,
@@ -1974,6 +1981,202 @@ def run_cli_agent(
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
+    normalized_learning_mode = _normalize_learning_mode(learning_mode)
+    run_started_ts = time.time()
+    run_started_at = format_utc_timestamp(run_started_ts)
+    run_id = build_run_id(session_id=session_id, started_at_ts=run_started_ts)
+
+    def _emit_lifecycle(event: str, *, step: int | None = None, trigger: str | None = None) -> None:
+        try:
+            append_lifecycle_event(
+                sessions_root=SESSIONS_ROOT,
+                run_id=run_id,
+                session_id=session_id,
+                task_id=task_id,
+                domain=domain,
+                learn_mode=normalized_learning_mode,
+                event=event,
+                step=step,
+                trigger=trigger,
+            )
+        except Exception:
+            # Telemetry must never change runtime behavior.
+            return
+
+    def _append_ledger(status: str, *, error_summary: str) -> str:
+        ended_at = format_utc_timestamp(time.time())
+        try:
+            append_run_ledger_entry(
+                sessions_root=SESSIONS_ROOT,
+                run_id=run_id,
+                session_id=session_id,
+                task_id=task_id,
+                domain=domain,
+                learn_mode=normalized_learning_mode,
+                started_at=run_started_at,
+                ended_at=ended_at,
+                status=status,
+                error_summary=error_summary,
+            )
+        except Exception:
+            return ended_at
+        return ended_at
+
+    _emit_lifecycle("queued")
+    _emit_lifecycle("started")
+    try:
+        result = _run_cli_agent_impl(
+            cfg=cfg,
+            task_id=task_id,
+            task=task,
+            session_id=session_id,
+            max_steps=max_steps,
+            model_executor=model_executor,
+            model_critic=model_critic,
+            model_judge=model_judge,
+            domain=domain,
+            learning_mode=learning_mode,
+            architecture_mode=architecture_mode,
+            bootstrap=bootstrap,
+            posttask_mode=posttask_mode,
+            posttask_learn=posttask_learn,
+            memory_v2_demo_mode=memory_v2_demo_mode,
+            verbose=verbose,
+            auto_escalate_critic=auto_escalate_critic,
+            escalation_score_threshold=escalation_score_threshold,
+            escalation_consecutive_runs=escalation_consecutive_runs,
+            promotion_min_runs=promotion_min_runs,
+            promotion_min_delta=promotion_min_delta,
+            promotion_max_regressions=promotion_max_regressions,
+            require_skill_read=require_skill_read,
+            opaque_tools=opaque_tools,
+            cryptic_errors=cryptic_errors,
+            semi_helpful_errors=semi_helpful_errors,
+            mixed_errors=mixed_errors,
+            enable_transfer_retrieval=enable_transfer_retrieval,
+            transfer_retrieval_max_results=transfer_retrieval_max_results,
+            transfer_retrieval_score_weight=transfer_retrieval_score_weight,
+            documentation=documentation,
+            doc_mode=doc_mode,
+            doc_budget_tokens=doc_budget_tokens,
+            doc_retrieval=doc_retrieval,
+            doc_retriever_model=doc_retriever_model,
+            judge_docs=judge_docs,
+            executor_docs=executor_docs,
+            judge_diagnostic=judge_diagnostic,
+            contract_gap_retry=contract_gap_retry,
+            contract_gap_retry_steps=contract_gap_retry_steps,
+            structured_lessons_required=structured_lessons_required,
+            verifier_stack_enabled=verifier_stack_enabled,
+            low_confidence_threshold=low_confidence_threshold,
+            clarify_on_low_confidence=clarify_on_low_confidence,
+            max_low_confidence_probes=max_low_confidence_probes,
+            llm_backend=llm_backend,
+            on_step=on_step,
+            run_id=run_id,
+            run_started_at=run_started_at,
+            on_lifecycle_event=lambda event, payload: _emit_lifecycle(
+                event,
+                step=(
+                    int(payload.get("step"))
+                    if isinstance(payload, dict) and payload.get("step") is not None
+                    else None
+                ),
+                trigger=(
+                    str(payload.get("trigger"))
+                    if isinstance(payload, dict) and payload.get("trigger")
+                    else None
+                ),
+            ),
+        )
+    except KeyboardInterrupt as exc:
+        summary = normalize_error_summary(str(exc) or "keyboard_interrupt")
+        _emit_lifecycle("canceled")
+        _append_ledger("canceled", error_summary=summary)
+        raise
+    except (TimeoutError, subprocess.TimeoutExpired) as exc:
+        summary = normalize_error_summary(str(exc) or type(exc).__name__)
+        _emit_lifecycle("timed_out")
+        _append_ledger("timed_out", error_summary=summary)
+        raise
+    except Exception as exc:
+        summary = normalize_error_summary(str(exc) or type(exc).__name__)
+        _emit_lifecycle("failed")
+        _append_ledger("failed", error_summary=summary)
+        raise
+
+    completion_summary = ""
+    if not bool(result.metrics.get("eval_passed", False)):
+        reasons = result.metrics.get("eval_reasons", [])
+        if isinstance(reasons, list) and reasons:
+            completion_summary = normalize_error_summary("eval_failed: " + "; ".join(str(reason) for reason in reasons[:3]))
+        else:
+            completion_summary = "eval_failed"
+    _emit_lifecycle("completed")
+    run_ended_at = _append_ledger("completed", error_summary=completion_summary)
+
+    result.metrics["run_id"] = run_id
+    result.metrics["run_started_at"] = run_started_at
+    result.metrics["run_ended_at"] = run_ended_at
+    result.metrics["run_status"] = "completed"
+    result.metrics["run_error_summary"] = completion_summary
+    write_metrics(SESSIONS_ROOT / f"session-{session_id:03d}" / "metrics.json", result.metrics)
+    return result
+
+
+def _run_cli_agent_impl(
+    *,
+    cfg: CortexConfig,
+    task_id: str,
+    task: str | None,
+    session_id: int,
+    max_steps: int = 12,
+    model_executor: str = DEFAULT_EXECUTOR_MODEL,
+    model_critic: str = DEFAULT_CRITIC_MODEL,
+    model_judge: str | None = None,
+    domain: str = "sqlite",
+    learning_mode: str = DEFAULT_LEARNING_MODE,
+    architecture_mode: str = DEFAULT_ARCHITECTURE_MODE,
+    bootstrap: bool = False,
+    posttask_mode: str = "candidate",
+    posttask_learn: bool = True,
+    memory_v2_demo_mode: bool = False,
+    verbose: bool = False,
+    auto_escalate_critic: bool = True,
+    escalation_score_threshold: float = 0.75,
+    escalation_consecutive_runs: int = 2,
+    promotion_min_runs: int = 3,
+    promotion_min_delta: float = 0.2,
+    promotion_max_regressions: int = 1,
+    require_skill_read: bool = True,
+    opaque_tools: bool = False,
+    cryptic_errors: bool = False,
+    semi_helpful_errors: bool = False,
+    mixed_errors: bool = False,
+    enable_transfer_retrieval: bool = False,
+    transfer_retrieval_max_results: int = DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
+    transfer_retrieval_score_weight: float = DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
+    documentation: list[str] | None = None,
+    doc_mode: str = DEFAULT_DOC_MODE,
+    doc_budget_tokens: int = DEFAULT_DOC_BUDGET_TOKENS,
+    doc_retrieval: str = DEFAULT_DOC_RETRIEVAL_MODE,
+    doc_retriever_model: str | None = None,
+    judge_docs: bool = False,
+    executor_docs: bool = False,
+    judge_diagnostic: bool = False,
+    contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
+    contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    structured_lessons_required: bool = DEFAULT_STRUCTURED_LESSONS_REQUIRED,
+    verifier_stack_enabled: bool = DEFAULT_VERIFIER_STACK_ENABLED,
+    low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+    clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
+    max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+    llm_backend: str = DEFAULT_LLM_BACKEND,
+    on_step: Callable[[int, str, bool, str | None], Any] | None = None,
+    run_id: str | None = None,
+    run_started_at: str | None = None,
+    on_lifecycle_event: Callable[[str, dict[str, Any]], None] | None = None,
+) -> CliRunResult:
     learning_mode = _normalize_learning_mode(learning_mode)
     architecture_mode = _normalize_architecture_mode(architecture_mode)
     # Local retrieval provider is intentionally lightweight and deterministic.
@@ -2177,6 +2380,11 @@ def run_cli_agent(
         effective_judge_model = model_judge or default_judge_model(model_executor)
 
     metrics: dict[str, Any] = {
+        "run_id": str(run_id or ""),
+        "run_started_at": str(run_started_at or ""),
+        "run_ended_at": None,
+        "run_status": "started",
+        "run_error_summary": "",
         "session_id": session_id,
         "task_id": task_id,
         "task": task_text,
@@ -2569,6 +2777,17 @@ def run_cli_agent(
                 "output": "retry_prompt_injected",
             },
         )
+        if on_lifecycle_event is not None:
+            try:
+                on_lifecycle_event(
+                    "contract_gap_retry",
+                    {
+                        "step": current_step,
+                        "trigger": trigger,
+                    },
+                )
+            except Exception:
+                pass
         if verbose:
             print(
                 (
@@ -2584,6 +2803,11 @@ def run_cli_agent(
     validation_retry_capped_this_step = False
     while step <= max_steps:
         metrics["steps"] = step
+        if on_lifecycle_event is not None:
+            try:
+                on_lifecycle_event("step", {"step": step})
+            except Exception:
+                pass
         if reflection_pending:
             # Force a brief self-diagnosis before the next tool call. This is
             # domain-agnostic and helps break repeated failure loops.
