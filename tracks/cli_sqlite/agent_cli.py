@@ -70,11 +70,17 @@ from tracks.cli_sqlite.learning_cli import (
 )
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.run_observability import (
+    append_self_edit_gate_event,
     append_lifecycle_event,
     append_run_ledger_entry,
     build_run_id,
     format_utc_timestamp,
     normalize_error_summary,
+)
+from tracks.cli_sqlite.self_edit_gate import (
+    apply_guarded_self_edit_updates,
+    build_self_edit_manifest_entries,
+    self_edit_allowed_refs,
 )
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
@@ -132,6 +138,7 @@ DEFAULT_VERIFIER_STACK_ENABLED = False
 DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
 DEFAULT_CLARIFY_ON_LOW_CONFIDENCE = True
 DEFAULT_MAX_LOW_CONFIDENCE_PROBES = 4
+DEFAULT_SELF_EDIT_MODE = False
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
@@ -2400,6 +2407,7 @@ def run_cli_agent(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+    self_edit_mode: bool = DEFAULT_SELF_EDIT_MODE,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
@@ -2493,6 +2501,7 @@ def run_cli_agent(
             low_confidence_threshold=low_confidence_threshold,
             clarify_on_low_confidence=clarify_on_low_confidence,
             max_low_confidence_probes=max_low_confidence_probes,
+            self_edit_mode=self_edit_mode,
             llm_backend=llm_backend,
             on_step=on_step,
             run_id=run_id,
@@ -2593,6 +2602,7 @@ def _run_cli_agent_impl(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+    self_edit_mode: bool = DEFAULT_SELF_EDIT_MODE,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
     run_id: str | None = None,
@@ -2664,6 +2674,9 @@ def _run_cli_agent_impl(
 
     # Build full manifest always (needed for posttask learning even in bootstrap)
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
+    self_edit_manifest_entries = build_self_edit_manifest_entries(track_root=TRACK_ROOT) if bool(self_edit_mode) else []
+    self_edit_mode_active = bool(self_edit_mode) and bool(self_edit_manifest_entries)
+    self_edit_refs = {entry.skill_ref for entry in self_edit_manifest_entries}
 
     if bootstrap:
         # Bootstrap mode: no skill docs, agent must learn from scratch via lessons
@@ -2915,6 +2928,10 @@ def _run_cli_agent_impl(
         "lessons_generated": 0,
         "v2_lessons_generated": 0,
         "posttask_patch_attempted": False,
+        "self_edit_mode": bool(self_edit_mode_active),
+        "self_edit_targets": sorted(self_edit_refs),
+        "self_edit_forced_direct_mode": False,
+        "self_edit_gate_events": 0,
         "posttask_skill_patching_skipped_by_mode": False,
         "posttask_skill_patching_skip_reason": None,
         "posttask_candidates_queued": 0,
@@ -4018,7 +4035,15 @@ def _run_cli_agent_impl(
             for row in events[-20:]
         ]
         routed_refs = [entry.skill_ref for entry in routed_entries]
-        skill_snapshots, skill_digests = _load_skill_snapshots(entries=skill_manifest_entries, routed_refs=routed_refs)
+        patch_manifest_entries = skill_manifest_entries
+        patch_snapshot_refs = routed_refs
+        if bool(self_edit_mode_active) and self_edit_manifest_entries:
+            patch_manifest_entries = list(self_edit_manifest_entries)
+            patch_snapshot_refs = [entry.skill_ref for entry in patch_manifest_entries]
+        skill_snapshots, skill_digests = _load_skill_snapshots(
+            entries=patch_manifest_entries,
+            routed_refs=patch_snapshot_refs,
+        )
         domain_keywords = adapter.quality_keywords()
         critic_context = ""
         critic_context_sources: list[str] = []
@@ -4330,9 +4355,72 @@ def _run_cli_agent_impl(
 
             critic_no_updates = len(proposed_updates) == 0
             required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
-            allowed_refs = {update.skill_ref for update in proposed_updates}
+            if bool(self_edit_mode_active):
+                allowed_refs = self_edit_allowed_refs()
+            else:
+                allowed_refs = {update.skill_ref for update in proposed_updates}
 
-            if posttask_mode == "direct":
+            if bool(self_edit_mode_active):
+                proposal_status = "proposed" if proposed_updates else "rejected"
+                proposal_reason = None if proposed_updates else "no_updates"
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="proposal",
+                    status=proposal_status,
+                    reason=proposal_reason,
+                    metadata={
+                        "confidence": float(confidence),
+                        "update_count": int(len(proposed_updates)),
+                    },
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+
+            effective_posttask_mode = posttask_mode
+            if bool(self_edit_mode_active) and posttask_mode != "direct":
+                effective_posttask_mode = "direct"
+                metrics["self_edit_forced_direct_mode"] = True
+
+            if bool(self_edit_mode_active):
+                patch_result = apply_guarded_self_edit_updates(
+                    entries=patch_manifest_entries,
+                    updates=proposed_updates,
+                    confidence=confidence,
+                    track_root=TRACK_ROOT,
+                    required_skill_digests=required_digests,
+                    allowed_skill_refs=allowed_refs,
+                )
+                metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+                patch_rejections = patch_result.get("rejection_counts", {})
+                if isinstance(patch_rejections, dict):
+                    for reason, count in patch_rejections.items():
+                        reason_key = str(reason)
+                        metrics["posttask_rejection_counts"][reason_key] = int(
+                            metrics["posttask_rejection_counts"].get(reason_key, 0)
+                        ) + int(count)
+                patch_status = "accepted" if int(patch_result.get("applied", 0) or 0) > 0 else "rejected"
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="patch",
+                    status=patch_status,
+                    reason=str(patch_result.get("skipped_reason", "")).strip() or None,
+                    rollback_reason="verification_failed" if bool(patch_result.get("rolled_back", False)) else None,
+                    metadata={
+                        "applied": int(patch_result.get("applied", 0) or 0),
+                        "updated_skill_refs": list(patch_result.get("updated_skill_refs", [])),
+                    },
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+            elif effective_posttask_mode == "direct":
                 patch_result = apply_skill_updates(
                     entries=skill_manifest_entries,
                     updates=proposed_updates,
@@ -4375,7 +4463,7 @@ def _run_cli_agent_impl(
                 {
                     "step": int(metrics["steps"]) + 1,
                     "tool": "posttask_hook",
-                    "tool_input": {"mode": posttask_mode, "critic_model": critic_model_for_run},
+                    "tool_input": {"mode": effective_posttask_mode, "critic_model": critic_model_for_run},
                     "ok": True,
                     "error": None,
                     "output": json.dumps(
@@ -4389,18 +4477,38 @@ def _run_cli_agent_impl(
                 },
             )
 
-            promotion_result = auto_promote_queued_candidates(
-                entries=skill_manifest_entries,
-                queue_path=QUEUE_PATH,
-                promoted_path=PROMOTED_PATH,
-                sessions_root=SESSIONS_ROOT,
-                task_id=task_id,
-                skills_root=SKILLS_ROOT,
-                manifest_path=MANIFEST_PATH,
-                min_runs=promotion_min_runs,
-                min_delta=promotion_min_delta,
-                max_regressions=promotion_max_regressions,
-            )
+            if bool(self_edit_mode_active):
+                promotion_result = {
+                    "attempted": False,
+                    "applied": 0,
+                    "reason": "self_edit_direct_mode",
+                }
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="promotion",
+                    status="rejected",
+                    reason="self_edit_direct_mode",
+                    metadata={"posttask_mode": str(posttask_mode)},
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+            else:
+                promotion_result = auto_promote_queued_candidates(
+                    entries=skill_manifest_entries,
+                    queue_path=QUEUE_PATH,
+                    promoted_path=PROMOTED_PATH,
+                    sessions_root=SESSIONS_ROOT,
+                    task_id=task_id,
+                    skills_root=SKILLS_ROOT,
+                    manifest_path=MANIFEST_PATH,
+                    min_runs=promotion_min_runs,
+                    min_delta=promotion_min_delta,
+                    max_regressions=promotion_max_regressions,
+                )
             metrics["auto_promotion_applied"] = int(promotion_result.get("applied", 0))
             metrics["auto_promotion_reason"] = promotion_result.get("reason")
             write_event(

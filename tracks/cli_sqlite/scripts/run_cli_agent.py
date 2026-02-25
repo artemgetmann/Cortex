@@ -25,6 +25,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
+    DEFAULT_SELF_EDIT_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
@@ -64,6 +65,12 @@ def main() -> int:
     ap.add_argument("--require-skill-read", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="candidate")
     ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument(
+        "--self-edit-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SELF_EDIT_MODE,
+        help="Enable guarded orchestration self-edit gate (whitelisted files + verification checks).",
+    )
     ap.add_argument(
         "--memory-v2-demo-mode",
         action="store_true",
@@ -212,6 +219,7 @@ def main() -> int:
             "source": "run_cli_agent.py",
             "max_steps": int(args.max_steps),
             "llm_backend": str(args.llm_backend),
+            "self_edit_mode": bool(args.self_edit_mode),
         },
     )
 
@@ -248,6 +256,7 @@ def main() -> int:
             model_judge=args.model_judge.strip() if args.model_judge else None,
             posttask_mode=args.posttask_mode,
             posttask_learn=not args.no_posttask_learn,
+            self_edit_mode=bool(args.self_edit_mode),
             memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
             verbose=args.verbose,
             auto_escalate_critic=bool(args.auto_escalate_critic),

@@ -29,6 +29,7 @@ DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "strict"
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
+DEFAULT_SELF_EDIT_MODE = bool(getattr(agent_cli, "DEFAULT_SELF_EDIT_MODE", False))
 
 run_cli_agent = agent_cli.run_cli_agent
 LESSONS_PATH = Path(getattr(agent_cli, "LESSONS_PATH", DEFAULT_LESSONS_PATH))
@@ -465,6 +466,12 @@ def main() -> int:
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
+    ap.add_argument(
+        "--self-edit-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SELF_EDIT_MODE,
+        help="Enable guarded orchestration self-edit gate during benchmark runs.",
+    )
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
@@ -597,6 +604,7 @@ def main() -> int:
                 bootstrap=False,
                 posttask_mode=args.posttask_mode,
                 posttask_learn=bool(arm["lessons_enabled"]),
+                self_edit_mode=bool(args.self_edit_mode),
                 memory_v2_demo_mode=False,
                 verbose=bool(args.verbose),
                 auto_escalate_critic=auto_escalate_critic,
@@ -664,6 +672,7 @@ def main() -> int:
             "model_critic": model_critic,
             "model_judge": model_judge,
             "posttask_mode": args.posttask_mode,
+            "self_edit_mode": bool(args.self_edit_mode),
             "doc_budget_tokens": int(args.doc_budget_tokens),
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from tracks.cli_sqlite.run_observability import (
     append_lifecycle_event,
     append_run_ledger_entry,
+    append_self_edit_gate_event,
     read_jsonl_rows,
     run_ledger_path,
     run_lifecycle_path,
@@ -77,3 +78,43 @@ def test_lifecycle_append_schema(tmp_path) -> None:
     assert rows[1]["event"] == "contract_gap_retry"
     assert rows[1]["trigger"] == "step_cap"
     assert rows[1]["session_id"] == 702
+
+
+def test_self_edit_gate_event_writes_expected_fields(tmp_path) -> None:
+    sessions_root = tmp_path / "sessions"
+    append_self_edit_gate_event(
+        sessions_root=sessions_root,
+        run_id="run-703-1000",
+        session_id=703,
+        task_id="aggregate_report",
+        domain="sqlite",
+        learn_mode="strict",
+        stage="patch",
+        status="accepted",
+        reason="ok",
+        metadata={"applied": 1},
+    )
+    rows = read_jsonl_rows(run_lifecycle_path(sessions_root=sessions_root))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["event"] == "self_edit_gate"
+    assert row["stage"] == "patch"
+    assert row["status"] == "accepted"
+    assert row["reason"] == "ok"
+    assert row["metadata"]["applied"] == 1
+
+
+def test_self_edit_gate_event_rejects_unknown_status(tmp_path) -> None:
+    sessions_root = tmp_path / "sessions"
+    append_self_edit_gate_event(
+        sessions_root=sessions_root,
+        run_id="run-704-1000",
+        session_id=704,
+        task_id="aggregate_report",
+        domain="sqlite",
+        learn_mode="strict",
+        stage="patch",
+        status="bogus",
+    )
+    rows = read_jsonl_rows(run_lifecycle_path(sessions_root=sessions_root))
+    assert rows == []

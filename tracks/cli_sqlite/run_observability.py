@@ -23,6 +23,10 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     }
 )
 
+SELF_EDIT_GATE_EVENT_NAME = "self_edit_gate"
+SELF_EDIT_GATE_STAGES: frozenset[str] = frozenset({"proposal", "patch", "promotion"})
+SELF_EDIT_GATE_STATUSES: frozenset[str] = frozenset({"proposed", "accepted", "rejected"})
+
 
 def build_run_id(*, session_id: int, started_at_ts: float) -> str:
     millis = int(float(started_at_ts) * 1000.0)
@@ -114,6 +118,46 @@ def append_lifecycle_event(
         row["step"] = int(step)
     if trigger:
         row["trigger"] = str(trigger)
+    append_jsonl(run_lifecycle_path(sessions_root=sessions_root), row)
+
+
+def append_self_edit_gate_event(
+    *,
+    sessions_root: Path,
+    run_id: str,
+    session_id: int,
+    task_id: str,
+    domain: str,
+    learn_mode: str,
+    stage: str,
+    status: str,
+    reason: str | None = None,
+    rollback_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    stage_name = str(stage).strip().lower()
+    status_name = str(status).strip().lower()
+    if stage_name not in SELF_EDIT_GATE_STAGES:
+        return
+    if status_name not in SELF_EDIT_GATE_STATUSES:
+        return
+    row: dict[str, Any] = {
+        "ts": time.time(),
+        "run_id": str(run_id),
+        "session_id": int(session_id),
+        "task_id": str(task_id),
+        "domain": str(domain),
+        "learn_mode": str(learn_mode),
+        "event": SELF_EDIT_GATE_EVENT_NAME,
+        "stage": stage_name,
+        "status": status_name,
+    }
+    if reason:
+        row["reason"] = str(reason)
+    if rollback_reason:
+        row["rollback_reason"] = str(rollback_reason)
+    if isinstance(metadata, dict) and metadata:
+        row["metadata"] = dict(metadata)
     append_jsonl(run_lifecycle_path(sessions_root=sessions_root), row)
 
 

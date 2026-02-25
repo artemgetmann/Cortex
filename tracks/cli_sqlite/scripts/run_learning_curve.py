@@ -27,6 +27,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_DOC_RETRIEVAL_MODE,
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_LEARNING_MODE,
+    DEFAULT_SELF_EDIT_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     LEARNING_MODES,
     run_cli_agent,
@@ -64,6 +65,12 @@ def main() -> int:
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--no-posttask-learn", action="store_true")
+    ap.add_argument(
+        "--self-edit-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SELF_EDIT_MODE,
+        help="Enable guarded orchestration self-edit gate during runs.",
+    )
     ap.add_argument("--documentation", action="append", default=[])
     ap.add_argument("--doc-mode", default=DEFAULT_DOC_MODE, choices=["none", "lossy", "full"])
     ap.add_argument("--doc-budget-tokens", type=int, default=DEFAULT_DOC_BUDGET_TOKENS)
@@ -154,6 +161,7 @@ def main() -> int:
             model_judge=args.model_judge.strip() if args.model_judge else (args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL),
             posttask_mode=args.posttask_mode,
             posttask_learn=not bool(args.no_posttask_learn),
+            self_edit_mode=bool(args.self_edit_mode),
             verbose=args.verbose,
             auto_escalate_critic=False,
             escalation_score_threshold=0.75,
