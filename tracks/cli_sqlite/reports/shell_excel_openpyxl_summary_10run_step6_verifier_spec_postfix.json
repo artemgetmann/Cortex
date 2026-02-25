@@ -1,0 +1,228 @@
+{
+  "task_id": "shell_excel_openpyxl_summary",
+  "domain": "shell",
+  "backend": "anthropic",
+  "max_steps": 6,
+  "runtime_policy": "no_contract_probe_pass_sets_eval_passed_true",
+  "off": {
+    "session_ids": [
+      96810,
+      96811,
+      96812,
+      96813,
+      96814
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 0.4,
+      "mean_eval_score": 0.7,
+      "low_confidence_triggered": 0,
+      "probe_status": {
+        "not_run": 5
+      },
+      "override_applied": 0,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96810,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "judge_score": 0.0,
+        "eval_reasons": [
+          "judge_response_unparseable"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96811,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "sales_report.xlsx created successfully with 6,282 bytes (event step 5, final state)",
+          "RawData sheet contains all 10 data rows plus header, verified in step 6: headers ('region','product','amount','quantity') followed by all 10 fixture rows",
+          "RegionSummary sheet contains correct 3 region rows with headers ('region','total_amount','avg_quantity','txn_count'), sorted by total_amount desc: North(4200), South(3200), East(2750) as shown in step 6",
+          "ProductSummary sheet contains correct 3 product rows with headers ('product','total_amount'), sorted by total_amount desc: Alpha(5100), Beta(2800), Gamma(2250) as shown in step 6",
+          "report_manifest.json created with all required keys and correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150.0, top_region='North', top_product='Alpha' (event step 5)",
+          "All 3 required verification lines printed exactly as specified in step 4 output: 'REPORT_OK path=...raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,South,East', 'PRODUCT_ORDER Alpha,Beta,Gamma'"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96812,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "Step 4: Agent successfully executed Python script that created sales_report.xlsx with all required sheets (RawData, RegionSummary, ProductSummary)",
+          "Step 4: Script printed all three required verification lines exactly as specified: 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,South,East', 'PRODUCT_ORDER Alpha,Beta,Gamma'",
+          "Step 5: Confirmed both required files exist (sales_report.xlsx and report_manifest.json) with correct content - manifest contains all six required keys with correct values",
+          "Step 6: Verification shows RawData sheet contains all 10 data rows plus header from fixture.csv",
+          "Step 6: RegionSummary sheet shows correct aggregations sorted by total_amount desc: North (4200), South (3200), East (2750) with avg_quantity and txn_count calculated correctly",
+          "Step 6: ProductSummary sheet shows correct totals sorted by total_amount desc: Alpha (5100), Beta (2800), Gamma (2250)"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96813,
+        "eval_passed": false,
+        "eval_score": 0.75,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "sales_report.xlsx created successfully with correct sheets: RawData (11 rows including header), RegionSummary (4 rows including header), ProductSummary (4 rows including header)",
+          "RawData sheet contains all 10 data rows from fixture.csv with correct headers (region, product, amount, quantity) as verified in step 6 output",
+          "RegionSummary sheet has correct schema (region, total_amount, avg_quantity, txn_count) and correct sorting by total_amount descending: North (4200), South (3200), East (2750) as shown in step 6",
+          "ProductSummary sheet has correct schema (product, total_amount) and correct sorting by total_amount descending: Alpha (5100), Beta (2800), Gamma (2250) as shown in step 6",
+          "report_manifest.json created with all required keys and correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha (verified in step 5)",
+          "CRITICAL FAILURE: Task requires printing exactly 3 verification lines (REPORT_OK, REGION_ORDER, PRODUCT_ORDER) but the event log shows no such output. Step 6 only printed the sheet contents, not the required verification format"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96814,
+        "eval_passed": false,
+        "eval_score": 0.75,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "Task requirement #6 mandates exactly 3 verification lines to be printed, but the agent only printed 1 complete line and did not print the required REGION_ORDER and PRODUCT_ORDER lines",
+          "Step 4 output shows only partial verification: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96814/sales_report.xlsx raw_rows=10' - missing all other parameters (region_rows, product_rows, grand_total, top_region, top_product)",
+          "The complete verification line should be: 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha'",
+          "Missing verification line: 'REGION_ORDER North,South,East' (confirmed by step 6 showing RegionSummary in correct order: North=4200, South=3200, East=2750)",
+          "Missing verification line: 'PRODUCT_ORDER Alpha,Beta,Gamma' (confirmed by step 6 showing ProductSummary in correct order: Alpha=5100, Beta=2800, Gamma=2250)",
+          "The sales_report.xlsx file was created correctly with all required sheets: RawData (11 rows including header), RegionSummary (4 rows including header), ProductSummary (4 rows including header)"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      }
+    ]
+  },
+  "on": {
+    "session_ids": [
+      96850,
+      96851,
+      96852,
+      96853,
+      96854
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 1.0,
+      "mean_eval_score": 0.88,
+      "low_confidence_triggered": 3,
+      "probe_status": {
+        "pass": 3,
+        "not_run": 2
+      },
+      "override_applied": 3,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96850,
+        "eval_passed": true,
+        "eval_score": 0.8,
+        "judge_score": 0.5,
+        "eval_reasons": [
+          "deterministic_probe_passed"
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96851,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "Step 4: Successfully created sales_report.xlsx with all required sheets (RawData, RegionSummary, ProductSummary) as confirmed by file size 6278 bytes in final state",
+          "Step 4: Printed all 3 exact verification lines: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96851/sales_report.xlsx raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,S",
+          "Step 5: Created report_manifest.json (136 bytes) with all exact required keys: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha",
+          "Step 6: RawData sheet contains header row plus 10 data rows (rows 2-11) from fixture.csv with correct values: North/Alpha/1200/5, South/Beta/800/3, etc.",
+          "Step 6: RegionSummary sheet shows correct aggregations sorted by total_amount desc: North (4200, 4.5 avg, 4 txn), South (3200, 4.67 avg, 3 txn), East (2750, 4.33 avg, 3 txn)",
+          "Step 6: ProductSummary sheet shows correct totals sorted by total_amount desc: Alpha (5100), Beta (2800), Gamma (2250)"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96852,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "VERIFICATION: Step 4 output shows all three required verification lines printed exactly as specified: 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,South,East', and 'PRODUCT_ORDER Alp",
+          "FILE CREATION: Final state confirms 'sales_report.xlsx' (6278 bytes) and 'report_manifest.json' (136 bytes) exist in the workspace",
+          "EXCEL STRUCTURE: Final state shows sales_report.xlsx contains exactly 3 sheets with correct names: 'RawData', 'RegionSummary', 'ProductSummary'",
+          "ROW COUNTS: Worksheet row counts match requirements - RawData has 11 rows (10 data + 1 header), RegionSummary has 4 rows (3 data + 1 header), ProductSummary has 4 rows (3 data + 1 header)",
+          "RAWDATA VERIFICATION: Step 3 output shows RawData sheet contains correct headers ('region', 'product', 'amount', 'quantity') and first data row matches fixture.csv ('North', 'Alpha', 1200, 5)",
+          "MANIFEST VERIFICATION: Step 3 output confirms report_manifest.json contains all required keys with correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96853,
+        "eval_passed": true,
+        "eval_score": 0.8,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "deterministic_probe_passed"
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96854,
+        "eval_passed": true,
+        "eval_score": 0.8,
+        "judge_score": 0.5,
+        "eval_reasons": [
+          "deterministic_probe_passed"
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      }
+    ]
+  },
+  "delta": {
+    "pass_rate": 0.6,
+    "mean_eval_score": 0.18
+  }
+}

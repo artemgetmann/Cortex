@@ -638,6 +638,92 @@ def test_low_confidence_verifier_uses_verification_json_required_file_probe(
     )
 
 
+def test_low_confidence_verifier_can_override_non_contract_eval_on_passed_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    task_dir = agent_cli.TASKS_ROOT / "demo_task"
+    task_dir.joinpath("VERIFICATION.json").write_text(
+        json.dumps(
+            {
+                # events.jsonl exists once at least one tool event is emitted.
+                "required_files": ["events.jsonl"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Usage:
+        def model_dump(self) -> dict[str, Any]:
+            return {}
+
+    class _Block:
+        def model_dump(self) -> dict[str, Any]:
+            return {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "run_sqlite",
+                "input": {"sql": "SELECT 1;"},
+            }
+
+    class _Response:
+        def __init__(self) -> None:
+            self.usage = _Usage()
+            self.content = [_Block()]
+
+    class _Messages:
+        def create(self, **_: Any) -> _Response:
+            return _Response()
+
+    class _Client:
+        def __init__(self, **_: Any) -> None:
+            self.messages = _Messages()
+
+    monkeypatch.setattr(agent_cli.anthropic, "Anthropic", _Client)
+
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=False,
+            score=0.2,
+            reasons=["weak_signal"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task="demo task without explicit verification lines",
+        session_id=108,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        judge_diagnostic=True,
+        verifier_stack_enabled=True,
+        low_confidence_threshold=0.7,
+        clarify_on_low_confidence=True,
+        max_low_confidence_probes=4,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["verifier_low_confidence_triggered"] is True
+    assert result.metrics["verifier_probe_status"] == "pass"
+    assert result.metrics["verifier_override_applied"] is True
+    assert result.metrics["eval_passed"] is True
+    assert result.metrics["eval_reasons"] == ["deterministic_probe_passed"]
+    assert float(result.metrics["eval_score"]) >= 0.7
+
+
 def test_run_cli_agent_writes_prompt_artifacts_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     sessions_root = _configure_agent_cli_env(monkeypatch, tmp_path)
     cfg = SimpleNamespace(anthropic_api_key="test-key")
