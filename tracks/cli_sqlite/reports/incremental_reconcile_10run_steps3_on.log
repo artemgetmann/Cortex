@@ -1,0 +1,137 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 132000, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.67  steps=3  errors=2  lessons_in=0  lessons_out=0  (34.6s)
+
+--- Run 2/10 (session 132001, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]'
+[step 003] contract gaps detected (4), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=0  lessons_out=4  (46.5s)
+
+--- Run 3/10 (session 132002, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=2  lessons_out=2  (34.9s)
+
+--- Run 4/10 (session 132003, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st\n- WRONG: SELECT DISTINCT ON (event_id) ... -> CORRECT: INSERT OR IGNORE INTO ledger ... VALUES with inline rows. WHY: DISTINCT ON is PostgreSQL syntax; SQLite does not support it. Use INSERT OR IGNORE with PRIMARY KEY constraint to achieve deduplication by event_id automatically.'
+[step 003] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=3  errors=1  lessons_in=4  lessons_out=3  (29.9s)
+
+--- Run 5/10 (session 132004, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st\n- Fixture tables are read-only. Do not CREATE or mutate fixture_* tables via CREATE TEMPORARY TABLE or INSERT INTO fixture_seed. Instead, hardcode fixture data directly in INSERT OR IGNORE statements or read from fixture via SELECT and JOIN into write-permitted tables.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 4: UNIQUE constraint failed: ledger.event_id (19)\nRuntime error near line 14: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)\n\n--- HINT from prior sessions ---\n- WRONG: SELECT DISTINCT ON (event_id) ... -> CORRECT: INSERT OR IGNORE INTO ledger ... VALUES with inline rows. WHY: DISTINCT ON is PostgreSQL syntax; SQLite does not support it. Use INSERT OR IGNORE with PRIMARY KEY constraint to achieve deduplication by event_id automatically.\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st'
+  [FAIL] score=0.83  steps=3  errors=2  lessons_in=6  lessons_out=0  (38.6s)
+
+--- Run 6/10 (session 132005, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st\n- Fixture tables are read-only. Do not CREATE or mutate fixture_* tables via CREATE TEMPORARY TABLE or INSERT INTO fixture_seed. Instead, hardcode fixture data directly in INSERT OR IGNORE statements or read from fixture via SELECT and JOIN into write-permitted tables.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=6  lessons_out=4  (33.3s)
+
+--- Run 7/10 (session 132006, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 18: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id) event_id, cate\n                                      error here ---^\n\n--- HINT from prior sessions ---\n- WRONG: SELECT DISTINCT ON (event_id) ... -> CORRECT: INSERT OR IGNORE INTO ledger ... VALUES with inline rows. WHY: DISTINCT ON is PostgreSQL syntax; SQLite does not support it. Use INSERT OR IGNORE with PRIMARY KEY constraint to achieve deduplication by event_id automatically.\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]'
+  [FAIL] score=0.75  steps=3  errors=1  lessons_in=8  lessons_out=0  (39.3s)
+
+--- Run 8/10 (session 132007, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st\n- Fixture tables are read-only. Do not CREATE or mutate fixture_* tables via CREATE TEMPORARY TABLE or INSERT INTO fixture_seed. Instead, hardcode fixture data directly in INSERT OR IGNORE statements or read from fixture via SELECT and JOIN into write-permitted tables.'
+[step 003] contract gaps detected (4), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=3  errors=1  lessons_in=8  lessons_out=4  (32.7s)
+
+--- Run 9/10 (session 132008, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=10  lessons_out=4  (25.4s)
+
+--- Run 10/10 (session 132009, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 4: UNIQUE constraint failed: ledger.event_id (19)\nRuntime error near line 15: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)\n\n--- HINT from prior sessions ---\n- WRONG: SELECT DISTINCT ON (event_id) ... -> CORRECT: INSERT OR IGNORE INTO ledger ... VALUES with inline rows. WHY: DISTINCT ON is PostgreSQL syntax; SQLite does not support it. Use INSERT OR IGNORE with PRIMARY KEY constraint to achieve deduplication by event_id automatically.\n- WRONG: CREATE TEMPORARY TABLE fixture_seed ... INSERT INTO fixture_seed VALUES ... SELECT FROM fixture_seed -> CORRECT: INSERT OR IGNORE INTO ledger VALUES directly with hardcoded fixture data. WHY: fixture tables are read-only; you cannot create mutable copies or intermediate st'
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=12  lessons_out=3  (35.0s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   132000   0.67     N      3     2       0        0  34.6s
+   2   132001   0.92     N      3     1       0        4  46.5s
+   3   132002   0.92     N      3     1       2        2  34.9s
+   4   132003   1.00     Y      3     1       4        3  29.9s
+   5   132004   0.83     N      3     2       6        0  38.6s
+   6   132005   0.92     N      3     1       6        4  33.3s
+   7   132006   0.75     N      3     1       8        0  39.3s
+   8   132007   1.00     Y      3     1       8        4  32.7s
+   9   132008   1.00     Y      3     0      10        4  25.4s
+  10   132009   0.92     N      3     1      12        3  35.0s
+
+Score trajectory: 0.67 -> 0.92 -> 0.92 -> 1.00 -> 0.83 -> 0.92 -> 0.75 -> 1.00 -> 1.00 -> 0.92
+Improvement: 0.67 -> 0.92 (delta=+0.25)
+

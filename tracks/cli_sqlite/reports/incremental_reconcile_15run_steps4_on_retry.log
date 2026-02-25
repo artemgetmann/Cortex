@@ -1,0 +1,198 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=15  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/15 (session 135000, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Parse error near line 5: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id) event_id, cate\n                                      error here ---^'
+  [FAIL] score=0.67  steps=4  errors=2  lessons_in=0  lessons_out=5  (35.1s)
+
+--- Run 2/15 (session 135001, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Parse error near line 25: 1 values for 2 columns\n\n--- HINT from prior sessions ---\n- The reject insertion logic must capture rows where event_id appears more than once in fixture_seed (all occurrences after the first). Current logic tries to filter by mismatched columns, but should simply match event_id count > 1 and skip the first occurrence per event_id.\n- WRONG: SELECT DISTINCT ON (event_id) ... FROM fixture_seed -> CORRECT: Use window functions or NOT IN with row_number() to deduplicate in SQLite. SQLite does not support DISTINCT ON syntax (PostgreSQL extension).'
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]'
+  [FAIL] score=0.92  steps=4  errors=3  lessons_in=2  lessons_out=0  (42.1s)
+
+--- Run 3/15 (session 135002, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 003] tool=run_sqlite ok=False error='Parse error near line 45: 1 values for 2 columns\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=2  lessons_out=0  (39.7s)
+
+--- Run 4/15 (session 135003, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 003] tool=run_sqlite ok=False error='Unsupported sqlite dot-command: .tables\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]'
+  [FAIL] score=0.67  steps=4  errors=3  lessons_in=2  lessons_out=0  (40.4s)
+
+--- Run 5/15 (session 135004, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=2  lessons_out=4  (30.4s)
+
+--- Run 6/15 (session 135005, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=4  lessons_out=4  (26.2s)
+
+--- Run 7/15 (session 135006, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Read fixture_seed as a read-only source table; never mutate fixture_* tables directly. Instead, CREATE TABLE fixture_seed and populate it once during bootstrap, then reference it in subsequent INSERTs using CTEs with window functions.\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=6  lessons_out=4  (29.6s)
+
+--- Run 8/15 (session 135007, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Read fixture_seed as a read-only source table; never mutate fixture_* tables directly. Instead, CREATE TABLE fixture_seed and populate it once during bootstrap, then reference it in subsequent INSERTs using CTEs with window functions.\n- When fixture_* tables are read-only, use CREATE TEMPORARY TABLE to stage fixture data once during bootstrap, then reference it in subsequent CTEs and INSERT statements. Never attempt to mutate fixture_* tables directly.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=8  lessons_out=4  (28.9s)
+
+--- Run 9/15 (session 135008, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=show_fixture ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=10  lessons_out=4  (27.2s)
+
+--- Run 10/15 (session 135009, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When fixture_* tables are read-only, use CREATE TEMPORARY TABLE to stage fixture data once during bootstrap, then reference it in subsequent CTEs and INSERT statements. Never attempt to mutate fixture_* tables directly.\n- Read fixture_seed as a read-only source table; never mutate fixture_* tables directly. Instead, CREATE TABLE fixture_seed and populate it once during bootstrap, then reference it in subsequent INSERTs using CTEs with window functions.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=11  lessons_out=3  (32.9s)
+
+--- Run 11/15 (session 135010, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 11
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=11  lessons_out=4  (26.0s)
+
+--- Run 12/15 (session 135011, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 12
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When fixture_* tables are read-only, use CREATE TEMPORARY TABLE to stage fixture data once during bootstrap, then reference it in subsequent CTEs and INSERT statements. Never attempt to mutate fixture_* tables directly.\n- Read fixture_seed as a read-only source table; never mutate fixture_* tables directly. Instead, CREATE TABLE fixture_seed and populate it once during bootstrap, then reference it in subsequent INSERTs using CTEs with window functions.'
+[step 003] tool=run_sqlite ok=False error='Unsupported sqlite dot-command: .schema\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=12  lessons_out=4  (37.8s)
+
+--- Run 13/15 (session 135012, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 13
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=4  (24.2s)
+
+--- Run 14/15 (session 135013, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 14
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=show_fixture ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=4  (23.2s)
+
+--- Run 15/15 (session 135014, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 15
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Parse error near line 36: near "DO": syntax error\n  rows   WHERE rn = 1 ) ON CONFLICT(checkpoint_tag) DO UPDATE SET row_count = ex\n                                      error here ---^\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]\n- Use INSERT INTO checkpoint_log ... ON CONFLICT(checkpoint_tag) DO UPDATE SET to upsert checkpoint metadata idempotently, enabling replay-safe incremental runs.'
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=required_query_mismatch, reconcile data so checkpoint_row matches exactly. query_sql=SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag; expected_rows=[["CKP-APR-01", "4"]]'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=12  lessons_out=0  (41.7s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   135000   0.67     N      4     2       0        5  35.1s
+   2   135001   0.92     N      4     3       2        0  42.1s
+   3   135002   0.92     N      4     2       2        0  39.7s
+   4   135003   0.67     N      4     3       2        0  40.4s
+   5   135004   1.00     Y      4     1       2        4  30.4s
+   6   135005   1.00     Y      4     0       4        4  26.2s
+   7   135006   1.00     Y      4     1       6        4  29.6s
+   8   135007   1.00     Y      4     1       8        4  28.9s
+   9   135008   1.00     Y      4     0      10        4  27.2s
+  10   135009   1.00     Y      4     1      11        3  32.9s
+  11   135010   1.00     Y      4     0      11        4  26.0s
+  12   135011   0.92     N      4     2      12        4  37.8s
+  13   135012   1.00     Y      4     0      12        4  24.2s
+  14   135013   1.00     Y      4     0      12        4  23.2s
+  15   135014   0.92     N      4     2      12        0  41.7s
+
+Score trajectory: 0.67 -> 0.92 -> 0.92 -> 0.67 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 0.92 -> 1.00 -> 1.00 -> 0.92
+Improvement: 0.67 -> 0.92 (delta=+0.25)
+

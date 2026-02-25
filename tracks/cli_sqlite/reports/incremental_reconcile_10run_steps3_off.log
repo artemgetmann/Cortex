@@ -1,0 +1,138 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 132100, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Parse error near line 17: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id) event_id, cate\n                                      error here ---^'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=0  lessons_out=0  (17.8s)
+
+--- Run 2/10 (session 132101, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error=".read path is not allowlisted: 'bootstrap.sql'"
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=3  errors=1  lessons_in=0  lessons_out=0  (15.1s)
+
+--- Run 3/10 (session 132102, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 5: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id) event_id, cate\n                                      error here ---^'
+  [FAIL] score=0.75  steps=3  errors=2  lessons_in=0  lessons_out=0  (18.1s)
+
+--- Run 4/10 (session 132103, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 5: no such column: ROWID\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY ROWID) as rn   FROM (     SE\n                                      error here ---^\nParse error near line 25: no such column: ROWID\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY ROWID) as rn   FROM (     SE\n                                      error here ---^'
+  [FAIL] score=0.67  steps=3  errors=2  lessons_in=0  lessons_out=0  (19.1s)
+
+--- Run 5/10 (session 132104, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=0  lessons_out=0  (20.4s)
+
+--- Run 6/10 (session 132105, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 5: no such column: rowid\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY rowid) AS rn   FROM (     SE\n                                      error here ---^\nParse error near line 25: no such column: rowid\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY rowid) AS rn   FROM (     SE\n                                      error here ---^'
+  [FAIL] score=0.67  steps=3  errors=2  lessons_in=0  lessons_out=0  (15.6s)
+
+--- Run 7/10 (session 132106, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.67  steps=3  errors=2  lessons_in=0  lessons_out=0  (17.6s)
+
+--- Run 8/10 (session 132107, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 5: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id) event_id, cate\n                                      error here ---^'
+  [FAIL] score=0.58  steps=3  errors=2  lessons_in=0  lessons_out=0  (18.2s)
+
+--- Run 9/10 (session 132108, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Parse error near line 34: no such column: fs.event_id\n  INSERT INTO rejects (event_id, reason) SELECT fs.event_id, 'duplicate_event' F\n                                  error here ---^"
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=3  errors=1  lessons_in=0  lessons_out=0  (19.8s)
+
+--- Run 10/10 (session 132109, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 003] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 28: near "(": syntax error\n  4, \'b1\'),     (\'e4\', \'drums\', 8, \'b1\') ) AS source(event_id, category, amount,\n                                      error here ---^\nParse error near line 41: near "(": syntax error\n  4, \'b1\'),     (\'e4\', \'drums\', 8, \'b1\') ) AS source(event_id, category, amount,\n                                      error here ---^'
+  [FAIL] score=0.67  steps=3  errors=2  lessons_in=0  lessons_out=0  (22.1s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   132100   0.92     N      3     1       0        0  17.8s
+   2   132101   1.00     Y      3     1       0        0  15.1s
+   3   132102   0.75     N      3     2       0        0  18.1s
+   4   132103   0.67     N      3     2       0        0  19.1s
+   5   132104   0.92     N      3     1       0        0  20.4s
+   6   132105   0.67     N      3     2       0        0  15.6s
+   7   132106   0.67     N      3     2       0        0  17.6s
+   8   132107   0.58     N      3     2       0        0  18.2s
+   9   132108   0.92     N      3     1       0        0  19.8s
+  10   132109   0.67     N      3     2       0        0  22.1s
+
+Score trajectory: 0.92 -> 1.00 -> 0.75 -> 0.67 -> 0.92 -> 0.67 -> 0.67 -> 0.58 -> 0.92 -> 0.67
+Improvement: 0.92 -> 0.67 (delta=-0.25)
+

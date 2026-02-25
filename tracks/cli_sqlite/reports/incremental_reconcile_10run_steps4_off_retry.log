@@ -1,0 +1,149 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 134100, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error=".read path is not allowlisted: 'bootstrap.sql'"
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (28.3s)
+
+--- Run 2/10 (session 134101, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.75  steps=4  errors=1  lessons_in=0  lessons_out=0  (20.4s)
+
+--- Run 3/10 (session 134102, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.67  steps=4  errors=2  lessons_in=0  lessons_out=0  (18.8s)
+
+--- Run 4/10 (session 134103, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.0s)
+
+--- Run 5/10 (session 134104, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=False error='Parse error near line 29: near "(": syntax error\n  \', 4, \'b1\'),     (\'e4\', \'drums\', 8, \'b1\')   ) AS t(event_id, category, amount,\n                                      error here ---^\nParse error near line 48: near "(": syntax error\n  \', 4, \'b1\'),     (\'e4\', \'drums\', 8, \'b1\')   ) AS t(event_id, category, amount,\n                                      error here ---^\nParse error near line 67: near "DO": syntax error\n   COUNT(*) FROM ledger ON CONFLICT(checkpoint_tag) DO UPDATE SET row_count = ex\n                                      error here ---^'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=0  lessons_out=0  (30.0s)
+
+--- Run 6/10 (session 134105, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Parse error near line 5: no such column: rowid\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY rowid) AS rn   FROM fixture_\n                                      error here ---^\nParse error near line 37: no such column: rowid\n  ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY rowid) AS rn   FROM fixture_\n                                      error here ---^'
+[step 004] contract gaps detected (4), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (24.4s)
+
+--- Run 7/10 (session 134106, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 11: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.67  steps=4  errors=2  lessons_in=0  lessons_out=0  (20.9s)
+
+--- Run 8/10 (session 134107, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.67  steps=4  errors=2  lessons_in=0  lessons_out=0  (16.8s)
+
+--- Run 9/10 (session 134108, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Unsupported sqlite dot-command: .mode'
+[step 004] contract gaps detected (4), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+  [FAIL] score=0.67  steps=4  errors=3  lessons_in=0  lessons_out=0  (25.0s)
+
+--- Run 10/10 (session 134109, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.0s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   134100   0.83     N      4     2       0        0  28.3s
+   2   134101   0.75     N      4     1       0        0  20.4s
+   3   134102   0.67     N      4     2       0        0  18.8s
+   4   134103   1.00     Y      4     1       0        0  18.0s
+   5   134104   0.92     N      4     2       0        0  30.0s
+   6   134105   0.83     N      4     2       0        0  24.4s
+   7   134106   0.67     N      4     2       0        0  20.9s
+   8   134107   0.67     N      4     2       0        0  16.8s
+   9   134108   0.67     N      4     3       0        0  25.0s
+  10   134109   1.00     Y      4     1       0        0  18.0s
+
+Score trajectory: 0.83 -> 0.75 -> 0.67 -> 1.00 -> 0.92 -> 0.83 -> 0.67 -> 0.67 -> 0.67 -> 1.00
+Improvement: 0.83 -> 1.00 (delta=+0.17)
+

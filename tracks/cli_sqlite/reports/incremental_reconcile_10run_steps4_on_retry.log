@@ -1,0 +1,147 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 134000, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Parse error near line 5: near "ON": syntax error\n  amount, batch_id, checkpoint_tag) SELECT DISTINCT ON (event_id)    event_id, c\n                                      error here ---^'
+[step 004] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=3  (40.0s)
+
+--- Run 2/10 (session 134001, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=2 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=2  lessons_out=5  (34.3s)
+
+--- Run 3/10 (session 134002, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Fixture tables in SQLite task context are read-only. When ingesting fixture data, extract values via `show_fixture` tool and use explicit `VALUES` clauses in `INSERT` statements rather than querying fixture_* tables directly."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=1  lessons_in=4  lessons_out=5  (40.9s)
+
+--- Run 4/10 (session 134003, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (8), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=1  lessons_in=6  lessons_out=0  (42.9s)
+
+--- Run 5/10 (session 134004, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=False error='Unsupported sqlite dot-command: .tables\n\n--- HINT from prior sessions ---\n- Fixture tables in SQLite task context are read-only. When ingesting fixture data, extract values via `show_fixture` tool and use explicit `VALUES` clauses in `INSERT` statements rather than querying fixture_* tables directly.\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=2 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 26: 1 values for 2 columns\n\n--- HINT from prior sessions ---\n- WRONG: DELETE FROM ledger; -> CORRECT: Use DROP TABLE IF EXISTS and recreate, or use transaction rollback. WHY: DELETE statements match forbidden_patterns in evaluation contract and violate immutability constraints for ledger state management.\n- WRONG: SELECT DISTINCT ON (event_id) ... FROM fixture_seed -> CORRECT: SELECT ... FROM fixture_seed WHERE event_id NOT IN (...) GROUP BY event_id. WHY: SQLite does not support DISTINCT ON syntax (PostgreSQL-only). Use GROUP BY with WHERE NOT IN to deduplicate by event_id.'
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=4  errors=3  lessons_in=6  lessons_out=0  (44.4s)
+
+--- Run 6/10 (session 134005, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=6  lessons_out=5  (40.6s)
+
+--- Run 7/10 (session 134006, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Parse error near line 22: 1 values for 2 columns\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=matched_forbidden_pattern, never emit SQL matching (?is)delete\\s+from\\s+ledger. Use non-destructive alternatives only (INSERT/UPDATE/SELECT) and verify required queries before stop.'
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 5: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=2 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.\n- When reason_code=too_many_errors, treat it as a strict error-budget breach (error_count=3 max_error_count=1). On next attempt use one deterministic mutating SQL block at most, then run required SELECT verification queries and stop.'
+  [FAIL] score=0.92  steps=4  errors=3  lessons_in=8  lessons_out=0  (44.5s)
+
+--- Run 8/10 (session 134007, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=8  lessons_out=5  (32.3s)
+
+--- Run 9/10 (session 134008, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='.read path is not allowlisted: \'bootstrap.sql\'\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 003] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=10  lessons_out=0  (39.8s)
+
+--- Run 10/10 (session 134009, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error="Mutating fixture_* tables is forbidden. Read-only access to fixture tables only.\n\n--- HINT from prior sessions ---\n- Checkpoint metadata must record exact row count of inserted unique rows. Use `INSERT INTO checkpoint_log (checkpoint_tag, row_count) VALUES ('CKP-APR-01', 4)` with hardcoded count matching ledger distinct event_id count to ensure determinism.\n- Checkpoint metadata row_count must match the distinct event_id count (4), not the post-insert ledger count (3). Use hardcoded 'CKP-APR-01', 4 after confirming unique event_ids match expected set {e1, e2, e3, e4}."
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=10  lessons_out=5  (32.5s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   134000   0.83     N      4     2       0        3  40.0s
+   2   134001   1.00     Y      4     1       2        5  34.3s
+   3   134002   0.92     N      4     1       4        5  40.9s
+   4   134003   0.92     N      4     1       6        0  42.9s
+   5   134004   0.83     N      4     3       6        0  44.4s
+   6   134005   1.00     Y      4     1       6        5  40.6s
+   7   134006   0.92     N      4     3       8        0  44.5s
+   8   134007   1.00     Y      4     1       8        5  32.3s
+   9   134008   0.92     N      4     2      10        0  39.8s
+  10   134009   1.00     Y      4     1      10        5  32.5s
+
+Score trajectory: 0.83 -> 1.00 -> 0.92 -> 0.92 -> 0.83 -> 1.00 -> 0.92 -> 1.00 -> 0.92 -> 1.00
+Improvement: 0.83 -> 1.00 (delta=+0.17)
+

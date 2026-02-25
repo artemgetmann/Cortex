@@ -1,0 +1,118 @@
+
+============================================================
+  Learning Curve Experiment
+  task=shell_git_transfer_hotfix  domain=shell  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 130200, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=False error="run_bash exited with code 127: Switched to a new branch 'main' Switched to a new branch 'main' /bin/bash: line 97: GIT_TRANSFER_OK: command not found"
+[step 003] tool=run_bash ok=False error="run_bash exited with code 128: fatal: a branch named 'main' already exists"
+[step 004] tool=run_bash ok=False error='run_bash exited with code 1: === Creating repositories === Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130200/source_repo/.git/ Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130200/target_repo/.git/ === Configuring source_repo === === Configuring target_repo === === Creating hotfix.txt in source_repo === On branch main nothing to commit, working tree clean'
+  [PASS] score=1.00  steps=4  errors=3  lessons_in=0  lessons_out=0  (27.2s)
+
+--- Run 2/10 (session 130201, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=False error="run_bash exited with code 127: Switched to a new branch 'main' Switched to a new branch 'main' /bin/bash: line 85: GIT_TRANSFER_OK: command not found"
+[step 003] tool=run_bash ok=False error="run_bash exited with code 128: fatal: a branch named 'main' already exists"
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=2  lessons_in=0  lessons_out=0  (24.7s)
+
+--- Run 3/10 (session 130202, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=False error="run_bash exited with code 127: Switched to a new branch 'main' Switched to a new branch 'main' /bin/bash: line 69: GIT_TRANSFER_OK: command not found"
+[step 003] tool=run_bash ok=False error="run_bash exited with code 128: fatal: a branch named 'main' already exists"
+[step 004] tool=run_bash ok=False error='run_bash exited with code 1: Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130202/source_repo/.git/ Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130202/target_repo/.git/ On branch main nothing to commit, working tree clean'
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=3  lessons_in=0  lessons_out=0  (25.9s)
+
+--- Run 4/10 (session 130203, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=0  lessons_out=0  (15.7s)
+
+--- Run 5/10 (session 130204, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=0  lessons_out=0  (18.5s)
+
+--- Run 6/10 (session 130205, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] contract gaps detected (2), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_bash ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (22.5s)
+
+--- Run 7/10 (session 130206, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=0  lessons_out=0  (17.0s)
+
+--- Run 8/10 (session 130207, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=0  lessons_out=0  (15.0s)
+
+--- Run 9/10 (session 130208, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=False error='run_bash exited with code 127: /bin/bash: line 47: GIT_TRANSFER_OK: command not found'
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (26.8s)
+
+--- Run 10/10 (session 130209, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=0  lessons_out=0  (17.4s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   130200   1.00     Y      4     3       0        0  27.2s
+   2   130201   1.00     Y      4     2       0        0  24.7s
+   3   130202   1.00     Y      4     3       0        0  25.9s
+   4   130203   1.00     Y      3     0       0        0  15.7s
+   5   130204   1.00     Y      3     0       0        0  18.5s
+   6   130205   1.00     Y      4     0       0        0  22.5s
+   7   130206   1.00     Y      3     0       0        0  17.0s
+   8   130207   1.00     Y      3     0       0        0  15.0s
+   9   130208   1.00     Y      4     1       0        0  26.8s
+  10   130209   1.00     Y      3     0       0        0  17.4s
+
+Score trajectory: 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00
+Improvement: 1.00 -> 1.00 (delta=+0.00)
+

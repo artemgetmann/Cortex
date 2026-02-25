@@ -1,0 +1,115 @@
+
+============================================================
+  Learning Curve Experiment
+  task=shell_git_transfer_hotfix  domain=shell  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 130100, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=2  (33.7s)
+
+--- Run 2/10 (session 130101, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=False error="run_bash exited with code 127: Switched to a new branch 'main' Switched to a new branch 'main' /bin/bash: line 102: GIT_TRANSFER_OK: command not found"
+[step 003] tool=run_bash ok=False error="run_bash exited with code 128: fatal: a branch named 'main' already exists\n\n--- HINT from prior sessions ---\n- Commit message exactness is validated by pattern matching. Use heredoc syntax (`cat > file << 'EOF'...EOF`) to ensure precise multi-line content without escaping issues.\n- Verify patch application success by checking target repo log history (`git log --oneline`) and file presence (`ls -la target_repo/hotfix.txt`) before final verification output."
+[step 004] tool=run_bash ok=False error="run_bash exited with code 1: Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130101/source_repo/.git/ Reinitialized existing Git repository in /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-130101/target_repo/.git/ On branch main nothing to commit, working tree clean\n\n--- HINT from prior sessions ---\n- Verify patch application success by checking target repo log history (`git log --oneline`) and file presence (`ls -la target_repo/hotfix.txt`) before final verification output.\n- Commit message exactness is validated by pattern matching. Use heredoc syntax (`cat > file << 'EOF'...EOF`) to ensure precise multi-line content without escaping issues."
+  [PASS] score=1.00  steps=4  errors=3  lessons_in=2  lessons_out=3  (38.1s)
+
+--- Run 3/10 (session 130102, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=4  lessons_out=3  (31.6s)
+
+--- Run 4/10 (session 130103, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=6  lessons_out=1  (30.6s)
+
+--- Run 5/10 (session 130104, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=7  lessons_out=1  (30.5s)
+
+--- Run 6/10 (session 130105, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] contract gaps detected (2), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_bash ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=8  lessons_out=1  (38.3s)
+
+--- Run 7/10 (session 130106, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=9  lessons_out=2  (30.8s)
+
+--- Run 8/10 (session 130107, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] no tool call; model stopped.
+  [PASS] score=1.00  steps=3  errors=0  lessons_in=11  lessons_out=1  (28.5s)
+
+--- Run 9/10 (session 130108, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] contract gaps detected (2), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_bash ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=2  (41.5s)
+
+--- Run 10/10 (session 130109, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] contract gaps detected (1), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_bash ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=2  (36.7s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   130100   1.00     Y      4     0       0        2  33.7s
+   2   130101   1.00     Y      4     3       2        3  38.1s
+   3   130102   1.00     Y      3     0       4        3  31.6s
+   4   130103   1.00     Y      3     0       6        1  30.6s
+   5   130104   1.00     Y      3     0       7        1  30.5s
+   6   130105   1.00     Y      4     0       8        1  38.3s
+   7   130106   1.00     Y      3     0       9        2  30.8s
+   8   130107   1.00     Y      3     0      11        1  28.5s
+   9   130108   1.00     Y      4     0      12        2  41.5s
+  10   130109   1.00     Y      4     0      12        2  36.7s
+
+Score trajectory: 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00
+Improvement: 1.00 -> 1.00 (delta=+0.00)
+

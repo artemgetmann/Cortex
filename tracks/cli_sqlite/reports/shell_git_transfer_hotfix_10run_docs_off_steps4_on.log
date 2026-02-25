@@ -1,0 +1,134 @@
+
+============================================================
+  Learning Curve Experiment
+  task=shell_git_transfer_hotfix  domain=shell  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=none retrieval=off executor_docs=off judge_docs=off posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 133000, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (10), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.71  steps=4  errors=0  lessons_in=0  lessons_out=0  (32.3s)
+
+--- Run 2/10 (session 133001, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=3  (32.9s)
+
+--- Run 3/10 (session 133002, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=2  lessons_out=2  (31.4s)
+
+--- Run 4/10 (session 133003, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.59  steps=4  errors=0  lessons_in=4  lessons_out=0  (32.0s)
+
+--- Run 5/10 (session 133004, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.53  steps=4  errors=0  lessons_in=4  lessons_out=0  (30.3s)
+
+--- Run 6/10 (session 133005, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.53  steps=4  errors=0  lessons_in=4  lessons_out=5  (34.5s)
+
+--- Run 7/10 (session 133006, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.53  steps=4  errors=0  lessons_in=6  lessons_out=0  (33.3s)
+
+--- Run 8/10 (session 133007, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (9), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [FAIL] score=0.53  steps=4  errors=0  lessons_in=6  lessons_out=0  (33.9s)
+
+--- Run 9/10 (session 133008, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=6  lessons_out=2  (31.0s)
+
+--- Run 10/10 (session 133009, task=shell_git_transfer_hotfix, domain=shell) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=show_fixture ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_bash ok=True error=None
+[step 003] tool=run_bash ok=True error=None
+[step 004] tool=run_bash ok=True error=None
+[step 004] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 004] tool=run_bash ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=8  lessons_out=1  (28.4s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   133000   0.71     N      4     0       0        0  32.3s
+   2   133001   1.00     Y      4     0       0        3  32.9s
+   3   133002   1.00     Y      4     0       2        2  31.4s
+   4   133003   0.59     N      4     0       4        0  32.0s
+   5   133004   0.53     N      4     0       4        0  30.3s
+   6   133005   0.53     N      4     0       4        5  34.5s
+   7   133006   0.53     N      4     0       6        0  33.3s
+   8   133007   0.53     N      4     0       6        0  33.9s
+   9   133008   1.00     Y      4     0       6        2  31.0s
+  10   133009   1.00     Y      4     0       8        1  28.4s
+
+Score trajectory: 0.71 -> 1.00 -> 1.00 -> 0.59 -> 0.53 -> 0.53 -> 0.53 -> 0.53 -> 1.00 -> 1.00
+Improvement: 0.71 -> 1.00 (delta=+0.29)
+
