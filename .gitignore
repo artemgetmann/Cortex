@@ -46,6 +46,7 @@ tracks/cli_sqlite/learning/*.jsonl
 tracks/cli_sqlite/learning/*.json
 tracks/cli_sqlite/learning/*.bak*
 tracks/cli_sqlite/learning/memory_events.jsonl
+tracks/cli_sqlite/learning/*.lock
 tracks/cli_sqlite/sessions/session-*/
 tracks/cli_sqlite/sessions/session-*/memory_events.jsonl
 tracks/cli_sqlite/sessions/run_service_state.json
