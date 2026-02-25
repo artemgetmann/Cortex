@@ -18,9 +18,12 @@ For canonical docs index, use `docs/README.md`.
 - `tracks/cli_sqlite/error_capture.py`: universal failure signal capture.
 - `tracks/cli_sqlite/lesson_store_v2.py`: lesson persistence/lifecycle store.
 - `tracks/cli_sqlite/lesson_retrieval_v2.py`: pre-run and on-error retrieval.
+- `tracks/cli_sqlite/semantic_index.py`: deterministic semantic similarity helper (feature-flagged use in retrieval).
 - `tracks/cli_sqlite/lesson_promotion_v2.py`: utility-based promote/suppress logic.
+- `tracks/cli_sqlite/curriculum_planner.py`: fixed/auto task scheduler for learning-curve runs.
 - `tracks/cli_sqlite/scripts/run_cli_agent.py`: single-session runner.
 - `tracks/cli_sqlite/scripts/run_mixed_benchmark.py`: mixed protocol benchmark runner.
+- `tracks/cli_sqlite/scripts/report_run_health.py`: run-health summary with transfer and gap-resolution proxies.
 - `tracks/cli_sqlite/scripts/run_hackathon_demo.sh`: 3-wave demo wrapper.
 
 ## Typical Tasks
@@ -113,6 +116,17 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --output-md tracks/cli_sqlite/reports/realworld_learning_benchmark.md
 ```
 
+Run learning curve with adaptive curriculum planner (task selection from recent failures):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_learning_curve.py \
+  --domain sqlite \
+  --task-id import_aggregate \
+  --curriculum-mode auto \
+  --sessions 10 \
+  --start-session 79001
+```
+
 Run a fast SQLite-only 5-run curve (docs on + lossy + lessons on):
 
 ```bash
@@ -143,6 +157,9 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Each session now includes `docs_artifacts.json`, `learning_artifacts.json`, and `prompt_artifacts.json`.
 - `prompt_artifacts.json` captures exact executor/judge input bundles (system prompt, task payload, docs, skill routing, and judge rationale context).
 - `--learning-mode strict` is the default benchmark mode.
+- `run_learning_curve.py` now supports `--curriculum-mode fixed|auto` (default `fixed` for backward compatibility).
+- Retrieval now supports optional semantic scoring in `lesson_retrieval_v2` (default off; lexical baseline remains unchanged unless enabled).
+- `lesson_store_v2` writes are hardened with sidecar file-locking + atomic replace to avoid concurrent writer clobber.
 - Benchmark default backend is API (`anthropic`) with Haiku 4.5.
 - Critic tuning flags are intentionally hidden in benchmark runners; critic stays locked to executor-equivalent behavior.
 - `--judge-diagnostic` forces judge rationale capture even on contract-pass runs while keeping contract pass/fail authoritative.

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from tracks.cli_sqlite.lesson_store_v2 import LessonRecord, load_lesson_records
+from tracks.cli_sqlite.semantic_index import SemanticIndex
 
 LANE_STRICT = "strict"
 LANE_TRANSFER = "transfer"
@@ -24,6 +25,8 @@ DEFAULT_TRANSFER_ANCHOR_THRESHOLD = 0.25
 DEFAULT_GAP_PRIORITY_MIN_MATCH = 0.35
 DEFAULT_CANDIDATE_MIN_SCORE = 0.25
 DEFAULT_CANDIDATE_ANCHOR_THRESHOLD = 0.25
+DEFAULT_ENABLE_SEMANTIC_SCORING = False
+DEFAULT_SEMANTIC_BLEND_WEIGHT = 0.60
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -84,6 +87,7 @@ class RetrievalScore:
     reliability: float
     recency: float
     gap_match: float
+    semantic_similarity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -272,10 +276,27 @@ def _build_score(
     unresolved_gaps: Sequence[dict[str, Any]] = (),
     query_domain: str = "",
     query_task_id: str = "",
+    semantic_index: SemanticIndex | None = None,
+    enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
+    semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> RetrievalScore:
     fingerprint = _fingerprint_match(query_fingerprint, lesson)
     tags = _tag_overlap(query_tags, set(lesson.tags))
-    similarity = _jaccard(query_text, lesson.rule_text)
+    lexical_similarity = _jaccard(query_text, lesson.rule_text)
+    semantic_similarity = 0.0
+    if bool(enable_semantic_scoring) and semantic_index is not None:
+        # Semantic mode is optional and deterministic. If anything goes wrong,
+        # we keep the lexical baseline path so retrieval remains stable.
+        try:
+            semantic_similarity = _clamp(
+                semantic_index.similarity(query_text, lesson.rule_text),
+                0.0,
+                1.0,
+            )
+        except Exception:
+            semantic_similarity = 0.0
+    blend = _clamp(semantic_blend_weight, 0.0, 1.0) if bool(enable_semantic_scoring) else 0.0
+    similarity = ((1.0 - blend) * lexical_similarity) + (blend * semantic_similarity)
     reliability = _clamp(lesson.reliability, 0.0, 1.0)
     recency = _recency_score(lesson.updated_at)
     gap_match = _gap_match_bonus(
@@ -301,6 +322,7 @@ def _build_score(
         reliability=reliability,
         recency=recency,
         gap_match=gap_match,
+        semantic_similarity=semantic_similarity,
     )
 
 
@@ -470,6 +492,8 @@ def _rank_lessons(
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
+    semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> list[RetrievalMatch]:
     """Compute ranked retrieval rows before selection guards are applied."""
     normalized_candidate_policy = _normalize_candidate_policy(candidate_policy)
@@ -479,6 +503,11 @@ def _rank_lessons(
     query_tag_set = {str(tag).strip() for tag in query_tags if str(tag).strip()}
     weight = max(0.0, float(score_multiplier))
     ranked: list[RetrievalMatch] = []
+    semantic_index: SemanticIndex | None = None
+    if bool(enable_semantic_scoring) and active:
+        # Build once per retrieval call so all candidates share the same
+        # corpus-relative weighting and produce deterministic scores.
+        semantic_index = SemanticIndex.from_texts([lesson.rule_text for lesson in active])
 
     for lesson in active:
         score = _build_score(
@@ -489,6 +518,9 @@ def _rank_lessons(
             unresolved_gaps=unresolved_gaps,
             query_domain=query_domain,
             query_task_id=query_task_id,
+            semantic_index=semantic_index,
+            enable_semantic_scoring=enable_semantic_scoring,
+            semantic_blend_weight=semantic_blend_weight,
         )
         weighted_total = score.score * weight
         if weighted_total <= 0:
@@ -503,6 +535,7 @@ def _rank_lessons(
                 reliability=score.reliability,
                 recency=score.recency,
                 gap_match=score.gap_match,
+                semantic_similarity=score.semantic_similarity,
             )
         if not _candidate_allowed(
             lesson=lesson,
@@ -536,6 +569,8 @@ def retrieve_lessons(
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
+    semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     ranked = _rank_lessons(
         records=records,
@@ -548,6 +583,8 @@ def retrieve_lessons(
         lane=lane,
         score_multiplier=score_multiplier,
         candidate_policy=candidate_policy,
+        enable_semantic_scoring=enable_semantic_scoring,
+        semantic_blend_weight=semantic_blend_weight,
     )
     effective_config = config or RetrievalConfig()
     return _select_with_guards(ranked=ranked, config=effective_config)
@@ -563,6 +600,8 @@ def retrieve_pre_run(
     query_tags: Sequence[str] = (),
     max_results: int = 8,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
+    semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """Pre-run retrieval using intent context and recent fingerprints."""
     records = load_lesson_records(path)
@@ -578,6 +617,8 @@ def retrieve_pre_run(
         query_task_id=task_id,
         config=RetrievalConfig(max_results=max_results),
         candidate_policy=candidate_policy,
+        enable_semantic_scoring=enable_semantic_scoring,
+        semantic_blend_weight=semantic_blend_weight,
     )
 
 
@@ -597,6 +638,8 @@ def retrieve_on_error(
     transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
     unresolved_gaps: Sequence[dict[str, Any]] = (),
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
+    semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
     """
     On-error retrieval prioritizing exact fingerprint matches.
@@ -653,6 +696,8 @@ def retrieve_on_error(
         query_task_id=normalized_task,
         lane=LANE_STRICT,
         candidate_policy=candidate_policy,
+        enable_semantic_scoring=enable_semantic_scoring,
+        semantic_blend_weight=semantic_blend_weight,
     )
     if unresolved_gaps:
         strict_ranked = _prioritize_gap_matches(strict_ranked)
@@ -677,6 +722,8 @@ def retrieve_on_error(
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
         candidate_policy=candidate_policy,
+        enable_semantic_scoring=enable_semantic_scoring,
+        semantic_blend_weight=semantic_blend_weight,
     )
     if unresolved_gaps:
         transfer_ranked = _prioritize_gap_matches(transfer_ranked)
@@ -721,6 +768,8 @@ __all__ = [
     "CANDIDATE_POLICY_PROMOTED_ONLY",
     "DEFAULT_TRANSFER_MAX_RESULTS",
     "DEFAULT_TRANSFER_SCORE_COEFFICIENT",
+    "DEFAULT_ENABLE_SEMANTIC_SCORING",
+    "DEFAULT_SEMANTIC_BLEND_WEIGHT",
     "LANE_STRICT",
     "LANE_TRANSFER",
     "RetrievalConfig",

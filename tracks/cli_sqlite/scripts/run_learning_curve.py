@@ -31,6 +31,12 @@ from tracks.cli_sqlite.agent_cli import (
     LEARNING_MODES,
     run_cli_agent,
 )
+from tracks.cli_sqlite.curriculum_planner import (
+    CURRICULUM_MODES,
+    DEFAULT_CURRICULUM_MODE,
+    create_curriculum_planner,
+    outcome_from_metrics,
+)
 
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 
@@ -39,6 +45,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Run N sessions and plot the learning curve")
     ap.add_argument("--task-id", required=True)
     ap.add_argument("--domain", default="gridtool", choices=["sqlite", "gridtool", "fluxtool", "artic", "shell"])
+    ap.add_argument(
+        "--curriculum-mode",
+        default=DEFAULT_CURRICULUM_MODE,
+        choices=CURRICULUM_MODES,
+        help="Task scheduling policy: fixed preserves current behavior; auto adapts from recent run outcomes.",
+    )
     ap.add_argument("--learning-mode", default=BENCHMARK_DEFAULT_LEARNING_MODE, choices=LEARNING_MODES)
     ap.add_argument("--sessions", type=int, default=5, help="Number of sequential sessions")
     ap.add_argument("--start-session", type=int, default=9001, help="Starting session ID")
@@ -87,6 +99,11 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_config()
+    curriculum_planner = create_curriculum_planner(
+        mode=args.curriculum_mode,
+        task_id=args.task_id,
+        domain=args.domain,
+    )
     results: list[dict] = []
 
     # Clear escalation state for clean experiment
@@ -96,7 +113,10 @@ def main() -> int:
 
     print(f"\n{'='*60}")
     print(f"  Learning Curve Experiment")
-    print(f"  task={args.task_id}  domain={args.domain}  learning_mode={args.learning_mode}  bootstrap={args.bootstrap}")
+    print(
+        f"  task={args.task_id}  domain={args.domain}  curriculum_mode={args.curriculum_mode}  "
+        f"learning_mode={args.learning_mode}  bootstrap={args.bootstrap}"
+    )
     print(
         f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  "
         f"sessions={args.sessions}  executor_model={args.model_executor} judge_model={args.model_judge} "
@@ -112,16 +132,22 @@ def main() -> int:
     for i in range(args.sessions):
         session_id = args.start_session + i
         run_num = i + 1
-        print(f"--- Run {run_num}/{args.sessions} (session {session_id}) ---")
+        schedule = curriculum_planner.propose_next(run_index=run_num)
+        print(
+            f"--- Run {run_num}/{args.sessions} (session {session_id}, "
+            f"task={schedule.task_id}, domain={schedule.domain}) ---"
+        )
+        if args.verbose:
+            print(f"  [curriculum] {schedule.rationale}")
         t0 = time.time()
 
         result = run_cli_agent(
             cfg=cfg,
-            task_id=args.task_id,
+            task_id=schedule.task_id,
             task=None,
             session_id=session_id,
             max_steps=args.max_steps,
-            domain=args.domain,
+            domain=schedule.domain,
             learning_mode=args.learning_mode,
             model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
             model_critic=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
@@ -153,10 +179,21 @@ def main() -> int:
         )
 
         m = result.metrics
+        curriculum_planner.record_outcome(
+            outcome_from_metrics(
+                run_index=run_num,
+                task_id=schedule.task_id,
+                domain=schedule.domain,
+                metrics=m,
+            )
+        )
         elapsed = time.time() - t0
         row = {
             "run": run_num,
             "session_id": session_id,
+            "task_id": schedule.task_id,
+            "domain": schedule.domain,
+            "curriculum_rationale": schedule.rationale,
             "score": m.get("eval_score", 0.0),
             "passed": m.get("eval_passed", False),
             "steps": m.get("steps", 0),

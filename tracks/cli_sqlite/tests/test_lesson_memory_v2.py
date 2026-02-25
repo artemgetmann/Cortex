@@ -8,6 +8,7 @@ from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes,
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
     CANDIDATE_POLICY_ANCHORED,
     CANDIDATE_POLICY_PROMOTED_ONLY,
+    DEFAULT_ENABLE_SEMANTIC_SCORING,
     LANE_STRICT,
     LANE_TRANSFER,
     retrieve_on_error,
@@ -426,6 +427,100 @@ class RetrievalV2Tests(unittest.TestCase):
                 weighted_full[0].score.score * 0.2,
                 places=6,
             )
+
+    def test_semantic_scoring_default_off_matches_legacy_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            row = _record(
+                session_id=1912,
+                rule_text='Always quote CSV paths: IMPORT "fixture.csv".',
+                fingerprints=("fp_quote",),
+                tags=("path_quote",),
+                reliability=0.9,
+                domain="gridtool",
+                task_id="aggregate_report",
+            )
+            upsert_lesson_records(path, [row])
+
+            baseline, _ = retrieve_on_error(
+                path=path,
+                error_text="IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=1,
+                enable_transfer=True,
+                transfer_max_results=1,
+                transfer_score_weight=1.0,
+            )
+            semantic_disabled, _ = retrieve_on_error(
+                path=path,
+                error_text="IMPORT path must be quoted",
+                fingerprint="fp_quote",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("path_quote",),
+                max_results=1,
+                enable_transfer=True,
+                transfer_max_results=1,
+                transfer_score_weight=1.0,
+                enable_semantic_scoring=False,
+                semantic_blend_weight=1.0,
+            )
+            self.assertFalse(DEFAULT_ENABLE_SEMANTIC_SCORING)
+            self.assertTrue(baseline)
+            self.assertTrue(semantic_disabled)
+            self.assertEqual(baseline[0].lesson.lesson_id, semantic_disabled[0].lesson.lesson_id)
+            self.assertAlmostEqual(baseline[0].score.score, semantic_disabled[0].score.score, places=8)
+
+    def test_semantic_scoring_can_promote_paraphrased_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            lexical_biased = _record(
+                session_id=1913,
+                rule_text="If path errors happen, rerun command with clean flags.",
+                fingerprints=("fp_other_a",),
+                tags=("generic",),
+                reliability=0.6,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            paraphrase = _record(
+                session_id=1914,
+                rule_text="LOAD requires double-quoted filename before execution.",
+                fingerprints=("fp_other_b",),
+                tags=("generic",),
+                reliability=0.4,
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+            )
+            upsert_lesson_records(path, [lexical_biased, paraphrase])
+
+            baseline, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR: IMPORT path must be in quotes",
+                fingerprint="fp_not_present",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("generic",),
+                max_results=1,
+            )
+            semantic, _ = retrieve_on_error(
+                path=path,
+                error_text="ERROR: IMPORT path must be in quotes",
+                fingerprint="fp_not_present",
+                domain="fluxtool",
+                task_id="aggregate_report_holdout",
+                query_tags=("generic",),
+                max_results=1,
+                enable_semantic_scoring=True,
+                semantic_blend_weight=1.0,
+            )
+            self.assertTrue(baseline)
+            self.assertTrue(semantic)
+            self.assertEqual(baseline[0].lesson.lesson_id, lexical_biased.lesson_id)
+            self.assertEqual(semantic[0].lesson.lesson_id, paraphrase.lesson_id)
 
     def test_transfer_lane_excludes_suppressed_and_archived(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

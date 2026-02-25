@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 
 LESSON_STATUSES = ("candidate", "promoted", "suppressed", "archived")
@@ -301,6 +305,10 @@ class LessonRecord:
 
 
 def load_lesson_records(path: Path) -> list[LessonRecord]:
+    return _load_lesson_records_unlocked(path)
+
+
+def _load_lesson_records_unlocked(path: Path) -> list[LessonRecord]:
     if not path.exists():
         return []
     records: list[LessonRecord] = []
@@ -318,11 +326,77 @@ def load_lesson_records(path: Path) -> list[LessonRecord]:
     return records
 
 
-def write_lesson_records(path: Path, records: Sequence[LessonRecord]) -> None:
+def _lock_path_for(path: Path) -> Path:
+    # Lock a stable sidecar file instead of the JSONL path itself.
+    # Atomic replace swaps the data-file inode, but the lock file inode stays
+    # stable across writes, so all writers coordinate on the same lock target.
+    return path.with_name(f"{path.name}.lock")
+
+
+@contextmanager
+def _exclusive_store_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record.to_row(), ensure_ascii=True) + "\n")
+    lock_path = _lock_path_for(path)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _fsync_parent_dir(path: Path) -> None:
+    """
+    Best-effort directory sync after atomic replace.
+
+    This narrows a durability edge case where a sudden power loss happens
+    immediately after `os.replace` and before the directory entry is persisted.
+    """
+    dir_fd: int | None = None
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        os.fsync(dir_fd)
+    except OSError:
+        # We treat this as non-fatal hardening: correctness still comes from
+        # atomic replace + lock, while fsync is a durability enhancement.
+        pass
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+
+
+def _atomic_write_rows_unlocked(path: Path, records: Sequence[LessonRecord]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Write to a temp file in the same directory, then atomically replace.
+    # Same-directory placement keeps rename/replace atomic on POSIX filesystems.
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp.", suffix=".jsonl", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record.to_row(), ensure_ascii=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        _fsync_parent_dir(path)
+    except Exception:
+        # If replace fails we leave the original file untouched and clean up temp.
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def write_lesson_records(path: Path, records: Sequence[LessonRecord]) -> None:
+    """
+    Persist a full snapshot with cross-process lock + atomic replace.
+
+    This path is shared by promotion flows, so we harden it directly instead of
+    relying only on callers to coordinate locking.
+    """
+    with _exclusive_store_lock(path):
+        _atomic_write_rows_unlocked(path, records)
 
 
 def _is_conflict_text(a: str, b: str) -> bool:
@@ -408,23 +482,26 @@ def _link_conflicts(records: Sequence[LessonRecord]) -> tuple[list[LessonRecord]
 
 def upsert_lesson_records(path: Path, new_records: Sequence[LessonRecord]) -> dict[str, int]:
     """Insert/merge records with dedup + conflict-link refresh."""
-    existing = load_lesson_records(path)
-    by_identity: dict[tuple[str, tuple[str, ...]], LessonRecord] = {
-        (rec.normalized_rule, rec.trigger_fingerprints): rec for rec in existing
-    }
-    inserted = 0
-    merged = 0
-    for incoming in new_records:
-        key = (incoming.normalized_rule, incoming.trigger_fingerprints)
-        current = by_identity.get(key)
-        if current is None:
-            by_identity[key] = incoming
-            inserted += 1
-        else:
-            by_identity[key] = _merge_records(current, incoming)
-            merged += 1
-    refreshed, conflict_links = _link_conflicts(list(by_identity.values()))
-    write_lesson_records(path, refreshed)
+    with _exclusive_store_lock(path):
+        # Lock scope intentionally wraps load+merge+write so concurrent processes
+        # cannot clobber one another between read and write phases.
+        existing = _load_lesson_records_unlocked(path)
+        by_identity: dict[tuple[str, tuple[str, ...]], LessonRecord] = {
+            (rec.normalized_rule, rec.trigger_fingerprints): rec for rec in existing
+        }
+        inserted = 0
+        merged = 0
+        for incoming in new_records:
+            key = (incoming.normalized_rule, incoming.trigger_fingerprints)
+            current = by_identity.get(key)
+            if current is None:
+                by_identity[key] = incoming
+                inserted += 1
+            else:
+                by_identity[key] = _merge_records(current, incoming)
+                merged += 1
+        refreshed, conflict_links = _link_conflicts(list(by_identity.values()))
+        _atomic_write_rows_unlocked(path, refreshed)
     return {"inserted": inserted, "merged": merged, "conflict_links": conflict_links, "total": len(refreshed)}
 
 
@@ -432,27 +509,28 @@ def archive_lessons(path: Path, *, lesson_ids: Iterable[str], reason: str) -> in
     ids = {str(value).strip() for value in lesson_ids if str(value).strip()}
     if not ids:
         return 0
-    records = load_lesson_records(path)
-    changed = 0
-    now = _utc_now_iso()
-    archived_rows: list[LessonRecord] = []
-    for record in records:
-        if record.lesson_id not in ids:
-            archived_rows.append(record)
-            continue
-        changed += 1
-        archived_rows.append(
-            LessonRecord(
-                **{
-                    **record.__dict__,
-                    "status": "archived",
-                    "archived_reason": str(reason).strip() or "archived",
-                    "updated_at": now,
-                }
+    with _exclusive_store_lock(path):
+        records = _load_lesson_records_unlocked(path)
+        changed = 0
+        now = _utc_now_iso()
+        archived_rows: list[LessonRecord] = []
+        for record in records:
+            if record.lesson_id not in ids:
+                archived_rows.append(record)
+                continue
+            changed += 1
+            archived_rows.append(
+                LessonRecord(
+                    **{
+                        **record.__dict__,
+                        "status": "archived",
+                        "archived_reason": str(reason).strip() or "archived",
+                        "updated_at": now,
+                    }
+                )
             )
-        )
-    if changed:
-        write_lesson_records(path, archived_rows)
+        if changed:
+            _atomic_write_rows_unlocked(path, archived_rows)
     return changed
 
 
@@ -466,6 +544,8 @@ def migrate_legacy_lessons(*, legacy_path: Path, v2_path: Path) -> dict[str, int
     legacy = load_lesson_records(legacy_path)
     if not legacy:
         return {"inserted": 0, "merged": 0, "conflict_links": 0, "total": len(load_lesson_records(v2_path))}
+    # Delegate to upsert so migration shares the same cross-process lock + atomic
+    # write behavior as regular V2 mutations.
     return upsert_lesson_records(v2_path, legacy)
 
 
