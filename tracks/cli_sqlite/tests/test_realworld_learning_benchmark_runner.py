@@ -82,6 +82,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert run_calls
     assert all(bool(call.get("benchmark_deterministic", False)) is False for call in run_calls)
     assert all(bool(call.get("benchmark_promoted_only", False)) is False for call in run_calls)
+    assert all(bool(call.get("benchmark_placebo", False)) is False for call in run_calls)
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert set(payload.keys()) == {
@@ -98,6 +99,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert len(payload["runs"]) == 32
     assert bool(payload["config"]["benchmark_deterministic"]) is False
     assert bool(payload["config"]["benchmark_promoted_only"]) is False
+    assert bool(payload["config"]["benchmark_placebo"]) is False
     docs_off_rows = [row for row in payload["runs"] if not bool(row.get("docs_enabled", True))]
     assert docs_off_rows
     assert all(str(row.get("doc_mode")) == "none" for row in docs_off_rows)

@@ -141,6 +141,7 @@ DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 DEFAULT_RUNTIME_CANDIDATE_POLICY = CANDIDATE_POLICY_ANCHORED
 DEFAULT_BENCHMARK_DETERMINISTIC = False
 DEFAULT_BENCHMARK_PROMOTED_ONLY = False
+DEFAULT_BENCHMARK_PLACEBO = False
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
@@ -1950,7 +1951,29 @@ def _build_system_prompt(
     )
 
 
-def _format_v2_lesson_block(matches: list[Any]) -> tuple[str, list[str]]:
+_PLACEBO_HINT_BANK: tuple[str, ...] = (
+    "Re-read the task goal and verify all required outputs before stopping.",
+    "Use deterministic checks and avoid guessing when a requirement is unclear.",
+    "Confirm filenames, query outputs, and exact required patterns before finalizing.",
+    "Prioritize contract closure over stylistic or optional cleanup steps.",
+    "When errors recur, simplify the plan and verify intermediate outputs explicitly.",
+)
+
+
+def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> str:
+    token = f"{domain}|{task_id}|{lesson_id}".encode("utf-8", "ignore")
+    digest = hashlib.sha256(token).hexdigest()
+    idx = int(digest[:8], 16) % len(_PLACEBO_HINT_BANK)
+    return f"PLACEBO_CONTROL[{digest[:6]}]: {_PLACEBO_HINT_BANK[idx]}"
+
+
+def _format_v2_lesson_block(
+    matches: list[Any],
+    *,
+    use_placebo: bool = False,
+    task_id: str = "",
+    domain: str = "",
+) -> tuple[str, list[str]]:
     if not matches:
         return "", []
     lines = ["Memory V2 lessons (high-signal):"]
@@ -1960,10 +1983,58 @@ def _format_v2_lesson_block(matches: list[Any]) -> tuple[str, list[str]]:
         score = getattr(match, "score", None)
         if lesson is None:
             continue
-        lesson_ids.append(str(getattr(lesson, "lesson_id", "")))
+        lesson_id = str(getattr(lesson, "lesson_id", ""))
+        lesson_ids.append(lesson_id)
         score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
-        lines.append(f"- ({score_value:.2f}) {lesson.rule_text}")
+        rule_text = (
+            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
+            if use_placebo
+            else str(getattr(lesson, "rule_text", ""))
+        )
+        lines.append(f"- ({score_value:.2f}) {rule_text}")
     return "\n".join(lines), [value for value in lesson_ids if value]
+
+
+def _format_legacy_placebo_lesson_block(
+    *,
+    lessons: list[Any],
+    lessons_loaded: int,
+    task_id: str,
+    domain: str,
+) -> str:
+    if lessons_loaded <= 0:
+        return "No prior lessons loaded."
+    lines = [
+        "CRITICAL lessons from previous sessions — control placeholders (content hidden):",
+    ]
+    emitted = 0
+    for lesson in lessons:
+        if emitted >= lessons_loaded:
+            break
+        session_id = int(getattr(lesson, "session_id", 0) or 0)
+        category = str(getattr(lesson, "category", "")).strip().lower() or "insight"
+        lesson_text = str(getattr(lesson, "lesson", "")).strip()
+        seed = f"{session_id}:{category}:{lesson_text[:48]}"
+        lines.append(
+            "- [control] "
+            + _placebo_hint_for_lesson(
+                lesson_id=f"legacy:{seed}",
+                task_id=task_id,
+                domain=domain,
+            )
+        )
+        emitted += 1
+    while emitted < lessons_loaded:
+        lines.append(
+            "- [control] "
+            + _placebo_hint_for_lesson(
+                lesson_id=f"legacy:pad:{emitted}",
+                task_id=task_id,
+                domain=domain,
+            )
+        )
+        emitted += 1
+    return "\n".join(lines)
 
 
 def _select_high_signal_prerun_matches(
@@ -2436,6 +2507,7 @@ def run_cli_agent(
     llm_backend: str = DEFAULT_LLM_BACKEND,
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
+    benchmark_placebo: bool = DEFAULT_BENCHMARK_PLACEBO,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     normalized_learning_mode = _normalize_learning_mode(learning_mode)
@@ -2532,6 +2604,7 @@ def run_cli_agent(
             llm_backend=llm_backend,
             benchmark_deterministic=benchmark_deterministic,
             benchmark_promoted_only=benchmark_promoted_only,
+            benchmark_placebo=benchmark_placebo,
             on_step=on_step,
             run_id=run_id,
             run_started_at=run_started_at,
@@ -2635,6 +2708,7 @@ def _run_cli_agent_impl(
     llm_backend: str = DEFAULT_LLM_BACKEND,
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
+    benchmark_placebo: bool = DEFAULT_BENCHMARK_PLACEBO,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
     run_id: str | None = None,
     run_started_at: str | None = None,
@@ -2656,6 +2730,7 @@ def _run_cli_agent_impl(
     llm_backend = _normalize_llm_backend(llm_backend)
     benchmark_deterministic = bool(benchmark_deterministic)
     benchmark_promoted_only = bool(benchmark_promoted_only)
+    benchmark_placebo = bool(benchmark_placebo)
     runtime_candidate_policy = (
         CANDIDATE_POLICY_PROMOTED_ONLY
         if benchmark_promoted_only
@@ -2763,15 +2838,27 @@ def _run_cli_agent_impl(
         max_results=4,
         min_score=0.55,
     )
-    prerun_v2_block, prerun_v2_ids = _format_v2_lesson_block(prerun_v2_matches)
-    if prerun_v2_block:
-        lessons_text = f"{lessons_text}\n\n{prerun_v2_block}".strip()
+    prerun_v2_block, prerun_v2_ids = _format_v2_lesson_block(
+        prerun_v2_matches,
+        use_placebo=benchmark_placebo,
+        task_id=task_id,
+        domain=domain,
+    )
     # Load lesson objects for error-triggered injection during the run
     loaded_lesson_objects = load_lesson_objects(
         path=LESSONS_PATH,
         task_id=task_id,
         domain_keywords=domain_keywords,
     )
+    if benchmark_placebo and lessons_loaded > 0:
+        lessons_text = _format_legacy_placebo_lesson_block(
+            lessons=loaded_lesson_objects,
+            lessons_loaded=lessons_loaded,
+            task_id=task_id,
+            domain=domain,
+        )
+    if prerun_v2_block:
+        lessons_text = f"{lessons_text}\n\n{prerun_v2_block}".strip()
     docs_bundle: DocumentationBundle = build_documentation_bundle(
         task_text=task_text,
         track_root=TRACK_ROOT,
@@ -2894,14 +2981,22 @@ def _run_cli_agent_impl(
         "lessons_loaded": lessons_loaded,
         "v2_lessons_loaded": len(prerun_v2_ids),
         "v2_prerun_lesson_ids": prerun_v2_ids,
+        "v2_prerun_lesson_activations": len(prerun_v2_ids),
+        "v2_prerun_placebo_applied": bool(benchmark_placebo and prerun_v2_ids),
         "lesson_activations": 0,
         "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0 if benchmark_placebo else len(prerun_v2_ids),
+        "v2_lesson_activations_placebo": len(prerun_v2_ids) if benchmark_placebo else 0,
         "v2_lesson_activations_by_step": {},
+        "v2_lesson_activations_by_step_effective": {},
         "v2_lesson_activations_per_run": 0,
+        "v2_lesson_activations_per_run_effective": 0,
         "v2_lesson_activation_rate": 0.0,
         "v2_lesson_activation_lane_counts": {},
+        "v2_lesson_activation_lane_counts_effective": {},
         "v2_error_events": 0,
         "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0,
         "v2_transfer_retrieval_enabled": transfer_retrieval_policy != TRANSFER_POLICY_OFF,
         "v2_transfer_retrieval_policy": transfer_retrieval_policy,
         "v2_transfer_retrieval_max_results": transfer_retrieval_max_results,
@@ -2965,6 +3060,7 @@ def _run_cli_agent_impl(
         "llm_backend": llm_backend,
         "benchmark_deterministic": bool(benchmark_deterministic),
         "benchmark_promoted_only": bool(benchmark_promoted_only),
+        "benchmark_placebo": bool(benchmark_placebo),
         "runtime_candidate_policy": runtime_candidate_policy,
         "runtime_temperature": runtime_temperature,
         "v2_transfer_lane_activations": 0,
@@ -3062,6 +3158,17 @@ def _run_cli_agent_impl(
     dependency_setup_reflections: set[str] = set()
     hard_failure_count = 0
     lesson_activation_records: list[dict[str, Any]] = []
+    if prerun_v2_ids:
+        lesson_activation_records.append(
+            {
+                "step": 0,
+                "fingerprint": f"prerun:{task_id}:{domain}",
+                "trigger": "pre_run_prompt",
+                "lesson_ids": list(prerun_v2_ids),
+                "lesson_lanes": {lesson_id: "prerun" for lesson_id in prerun_v2_ids},
+                "placebo_applied": bool(benchmark_placebo),
+            }
+        )
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
     repeated_error_signatures: list[str] = []
     promoted_lesson_ids: list[str] = []
@@ -3250,7 +3357,19 @@ def _run_cli_agent_impl(
             unresolved_gaps=unresolved_gaps,
             candidate_policy=runtime_candidate_policy,
         )
-        gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
+        gap_hints: list[str] = []
+        for match in gap_matches:
+            lesson = getattr(match, "lesson", None)
+            if lesson is None:
+                continue
+            lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+            hint_text = (
+                _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
+                if benchmark_placebo
+                else str(getattr(lesson, "rule_text", "")).strip()
+            )
+            if hint_text:
+                gap_hints.append(hint_text)
         if gap_matches:
             gap_lanes: dict[str, str] = {}
             for match in gap_matches:
@@ -3272,12 +3391,18 @@ def _run_cli_agent_impl(
                 {
                     "step": current_step,
                     "fingerprint": gap_fingerprint,
+                    "trigger": "contract_gap_retry",
                     "lesson_ids": list(gap_lanes.keys()),
                     "lesson_lanes": gap_lanes,
+                    "placebo_applied": bool(benchmark_placebo),
                 }
             )
             metrics["lesson_activations"] += len(gap_lanes)
             metrics["v2_lesson_activations"] += len(gap_lanes)
+            if benchmark_placebo:
+                metrics["v2_lesson_activations_placebo"] += len(gap_lanes)
+            else:
+                metrics["v2_lesson_activations_effective"] += len(gap_lanes)
         retry_prompt = _format_contract_gap_retry_prompt(
             unresolved_gaps=unresolved_gaps,
             injected_hints=gap_hints,
@@ -3634,9 +3759,15 @@ def _run_cli_agent_impl(
                     lesson_lanes: dict[str, str] = {}
                     hint_lanes: dict[str, str] = {}
                     for match in v2_matches:
-                        rule_text = str(match.lesson.rule_text)
-                        lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
                         lesson_id = str(match.lesson.lesson_id)
+                        # Placebo control keeps retrieval mechanics constant and
+                        # only swaps lesson content for generic deterministic hints.
+                        rule_text = (
+                            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
+                            if benchmark_placebo
+                            else str(match.lesson.rule_text)
+                        )
+                        lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
                         v2_hints.append(rule_text)
                         injected_lessons.append(
                             {
@@ -3668,8 +3799,10 @@ def _run_cli_agent_impl(
                         {
                             "step": step,
                             "fingerprint": error_fingerprint,
+                            "trigger": "on_error",
                             "lesson_ids": [match.lesson.lesson_id for match in v2_matches],
                             "lesson_lanes": lesson_lanes,
+                            "placebo_applied": bool(benchmark_placebo),
                         }
                     )
                     memory_v2_payload = {
@@ -3680,6 +3813,10 @@ def _run_cli_agent_impl(
                     }
                     metrics["lesson_activations"] += len(v2_hints)
                     metrics["v2_lesson_activations"] += len(v2_hints)
+                    if benchmark_placebo:
+                        metrics["v2_lesson_activations_placebo"] += len(v2_hints)
+                    else:
+                        metrics["v2_lesson_activations_effective"] += len(v2_hints)
 
                 # Legacy fallback keeps older runs usable while v2 memory warms up.
                 legacy_hints: list[str] = []
@@ -3696,6 +3833,15 @@ def _run_cli_agent_impl(
                         legacy_candidates,
                         learning_mode=learning_mode,
                     )
+                    if benchmark_placebo and legacy_hints:
+                        legacy_hints = [
+                            _placebo_hint_for_lesson(
+                                lesson_id=f"legacy_hint:{idx}:{hint[:48]}",
+                                task_id=task_id,
+                                domain=domain,
+                            )
+                            for idx, hint in enumerate(legacy_hints)
+                        ]
                     if legacy_hints:
                         metrics["lesson_activations"] += len(legacy_hints)
 
@@ -4372,8 +4518,12 @@ def _run_cli_agent_impl(
 
         activations_by_lesson: dict[str, dict[str, float]] = defaultdict(lambda: {"error": 0.0, "eff": 0.0, "count": 0.0})
         helped = 0
+        effective_activation_records = 0
         fingerprints_recur_after: set[str] = set()
         for activation in lesson_activation_records:
+            if bool(activation.get("placebo_applied", False)):
+                continue
+            effective_activation_records += 1
             step_idx = int(activation.get("step", 0) or 0)
             fingerprint = str(activation.get("fingerprint", ""))
             repeats_after = sum(
@@ -4435,6 +4585,8 @@ def _run_cli_agent_impl(
                 )
             )
         for lesson_id, count in contradiction_loser_counts.items():
+            if benchmark_placebo:
+                continue
             if count <= 0:
                 continue
             outcomes.append(
@@ -4467,11 +4619,15 @@ def _run_cli_agent_impl(
         metrics["v2_suppressed_ids"] = suppressed_lesson_ids
         metrics["v2_fingerprint_recurrence_after"] = len(fingerprints_recur_after)
         metrics["v2_retrieval_help_ratio"] = round(
-            float(helped) / float(max(1, len(lesson_activation_records))),
+            float(helped) / float(max(1, effective_activation_records)),
             4,
         )
+        metrics["v2_retrieval_help_ratio_effective"] = metrics["v2_retrieval_help_ratio"]
         activation_by_step: dict[str, int] = {}
         activation_lane_counts: Counter[str] = Counter()
+        activation_by_step_effective: dict[str, int] = {}
+        activation_lane_counts_effective: Counter[str] = Counter()
+        activation_records_effective = 0
         for activation in lesson_activation_records:
             step_key = str(int(activation.get("step", 0) or 0))
             lesson_ids = activation.get("lesson_ids", [])
@@ -4483,13 +4639,25 @@ def _run_cli_agent_impl(
                     lane_text = str(lane).strip().lower()
                     if lane_text:
                         activation_lane_counts[lane_text] += 1
+            if bool(activation.get("placebo_applied", False)):
+                continue
+            activation_records_effective += 1
+            activation_by_step_effective[step_key] = activation_by_step_effective.get(step_key, 0) + step_count
+            if isinstance(lane_map, dict):
+                for lane in lane_map.values():
+                    lane_text = str(lane).strip().lower()
+                    if lane_text:
+                        activation_lane_counts_effective[lane_text] += 1
         metrics["v2_lesson_activations_by_step"] = activation_by_step
+        metrics["v2_lesson_activations_by_step_effective"] = activation_by_step_effective
         metrics["v2_lesson_activations_per_run"] = len(lesson_activation_records)
+        metrics["v2_lesson_activations_per_run_effective"] = activation_records_effective
         metrics["v2_lesson_activation_rate"] = round(
             float(metrics.get("v2_lesson_activations", 0) or 0) / float(max(1, int(metrics.get("steps", 0) or 0))),
             4,
         )
         metrics["v2_lesson_activation_lane_counts"] = dict(activation_lane_counts)
+        metrics["v2_lesson_activation_lane_counts_effective"] = dict(activation_lane_counts_effective)
 
         # Simplified architecture stores lessons only and skips post-task skill patches.
         if not patching_enabled:

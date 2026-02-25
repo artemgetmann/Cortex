@@ -59,6 +59,12 @@ python3 -m pytest tests -q
 python3 -m pytest tracks/cli_sqlite/tests -q
 ```
 
+## API Limit Policy (Execution Priority)
+
+- Default benchmark/runtime path is `--llm-backend anthropic` (API) for speed and consistency.
+- If API quota/rate limits are hit during active collaboration, stop and notify the user immediately instead of silently switching to `claude_print`.
+- Only use `claude_print` as fallback when the user explicitly approves it, or when the user explicitly asks for unattended overnight execution.
+
 ## Architecture
 
 ```

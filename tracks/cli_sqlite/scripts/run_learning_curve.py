@@ -23,6 +23,7 @@ from config import load_config
 from tracks.cli_sqlite.domains.shell_adapter import HOTFIX_HARD_TASK_ID, HOTFIX_HARD_VARIANT_OVERRIDE_ENV
 from tracks.cli_sqlite.agent_cli import (
     DEFAULT_BENCHMARK_DETERMINISTIC,
+    DEFAULT_BENCHMARK_PLACEBO,
     DEFAULT_BENCHMARK_PROMOTED_ONLY,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
@@ -128,6 +129,12 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_BENCHMARK_PROMOTED_ONLY,
         help="Restrict retrieval to promoted lessons only (exclude candidates).",
+    )
+    ap.add_argument(
+        "--benchmark-placebo",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PLACEBO,
+        help="Replace injected lesson text with deterministic placebo hints while keeping retrieval mechanics active.",
     )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -242,6 +249,7 @@ def main() -> int:
             llm_backend=args.llm_backend,
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
+            benchmark_placebo=bool(args.benchmark_placebo),
         )
 
         m = result.metrics

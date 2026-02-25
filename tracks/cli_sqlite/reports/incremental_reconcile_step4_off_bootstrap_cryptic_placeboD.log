@@ -1,0 +1,69 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=True
+  cryptic_errors=True  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=none retrieval=off executor_docs=off judge_docs=off posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 133600, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (16.7s)
+  [variant-scoreboard] variant=default score=0.7653 quality=1.0000 speed=0.5290 cost=0.2203
+
+--- Run 2/10 (session 133601, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.9s)
+  [variant-scoreboard] variant=default score=0.7603 quality=1.0000 speed=0.5092 cost=0.2203
+
+--- Run 3/10 (session 133602, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (16.8s)
+  [variant-scoreboard] variant=default score=0.7652 quality=1.0000 speed=0.5285 cost=0.2205
+
+--- Run 4/10 (session 133603, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.1s)
+  [variant-scoreboard] variant=default score=0.7619 quality=1.0000 speed=0.5159 cost=0.2195
+
+--- Run 5/10 (session 133604, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.8s)
+  [variant-scoreboard] variant=default score=0.7590 quality=1.0000 speed=0.5103 cost=0.2094
+
+--- Run 6/10 (session 133605, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.4s)
+  [variant-scoreboard] variant=default score=0.7611 quality=1.0000 speed=0.5136 cost=0.2183
+
+--- Run 7/10 (session 133606, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (16.6s)
+  [variant-scoreboard] variant=default score=0.7655 quality=1.0000 speed=0.5296 cost=0.2205
+
+--- Run 8/10 (session 133607, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (18.8s)
+  [variant-scoreboard] variant=default score=0.7591 quality=1.0000 speed=0.5104 cost=0.2101
+
+--- Run 9/10 (session 133608, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (17.5s)
+  [variant-scoreboard] variant=default score=0.7631 quality=1.0000 speed=0.5219 cost=0.2176
+
+--- Run 10/10 (session 133609, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (17.1s)
+  [variant-scoreboard] variant=default score=0.7643 quality=1.0000 speed=0.5250 cost=0.2203
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   133600   1.00     Y      4     1       0        0  16.7s
+   2   133601   1.00     Y      4     1       0        0  18.9s
+   3   133602   1.00     Y      4     1       0        0  16.8s
+   4   133603   1.00     Y      4     1       0        0  18.1s
+   5   133604   1.00     Y      4     1       0        0  18.8s
+   6   133605   1.00     Y      4     1       0        0  18.4s
+   7   133606   1.00     Y      4     1       0        0  16.6s
+   8   133607   1.00     Y      4     1       0        0  18.8s
+   9   133608   1.00     Y      4     1       0        0  17.5s
+  10   133609   1.00     Y      4     1       0        0  17.1s
+
+Score trajectory: 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00
+Improvement: 1.00 -> 1.00 (delta=+0.00)
+Variant scoreboard rows written: 10
+

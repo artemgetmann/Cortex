@@ -41,6 +41,7 @@ BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
 DEFAULT_BENCHMARK_DETERMINISTIC = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_DETERMINISTIC", False))
 DEFAULT_BENCHMARK_PROMOTED_ONLY = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PROMOTED_ONLY", False))
+DEFAULT_BENCHMARK_PLACEBO = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PLACEBO", False))
 DEFAULT_SELF_EDIT_MODE = bool(getattr(agent_cli, "DEFAULT_SELF_EDIT_MODE", False))
 
 run_cli_agent = agent_cli.run_cli_agent
@@ -178,14 +179,24 @@ def _build_row(
     recurrence_after = _as_float(metrics.get("v2_fingerprint_recurrence_after", 0.0), default=0.0)
     repeated_signatures = metrics.get("repeated_error_signatures", [])
     repeated_signature_count = len(repeated_signatures) if isinstance(repeated_signatures, list) else 0
-    lesson_activations = _as_int(
+    lesson_activations_raw = _as_int(
         metrics.get("v2_lesson_activations", metrics.get("lesson_activations", 0)),
         default=0,
     )
+    lesson_activations = _as_int(
+        metrics.get("v2_lesson_activations_effective", lesson_activations_raw),
+        default=0,
+    )
+    retrieval_help_ratio_raw = _as_float(metrics.get("v2_retrieval_help_ratio", 0.0), default=0.0)
+    retrieval_help_ratio = _as_float(
+        metrics.get("v2_retrieval_help_ratio_effective", retrieval_help_ratio_raw),
+        default=0.0,
+    )
     step_activations_raw = metrics.get("v2_lesson_activations_by_step", {})
+    step_activations_effective_raw = metrics.get("v2_lesson_activations_by_step_effective", step_activations_raw)
     step_activations: dict[str, int] = {}
-    if isinstance(step_activations_raw, dict):
-        for key, value in step_activations_raw.items():
+    if isinstance(step_activations_effective_raw, dict):
+        for key, value in step_activations_effective_raw.items():
             step_key = str(key).strip()
             if not step_key:
                 continue
@@ -208,10 +219,13 @@ def _build_row(
         "lessons_loaded": _as_int(metrics.get("lessons_loaded", 0), default=0),
         "lessons_generated": _as_int(metrics.get("lessons_generated", 0), default=0),
         "lesson_activations": lesson_activations,
+        "lesson_activations_raw": lesson_activations_raw,
         "lesson_activations_by_step": step_activations,
         "promoted_count": _as_int(metrics.get("v2_promoted", 0), default=0),
         "suppressed_count": _as_int(metrics.get("v2_suppressed", 0), default=0),
-        "retrieval_help_ratio": _as_float(metrics.get("v2_retrieval_help_ratio", 0.0), default=0.0),
+        "retrieval_help_ratio": retrieval_help_ratio,
+        "retrieval_help_ratio_raw": retrieval_help_ratio_raw,
+        "benchmark_placebo": bool(metrics.get("benchmark_placebo", False)),
         "judge_invoked": bool(metrics.get("judge_invoked", False)),
         "transfer_retrieval_enabled": bool(metrics.get("v2_transfer_retrieval_enabled", False)),
         "transfer_lane_activations": _as_int(metrics.get("v2_transfer_lane_activations", 0), default=0),
@@ -505,6 +519,12 @@ def main() -> int:
         help="Restrict retrieval to promoted lessons only (exclude candidates).",
     )
     ap.add_argument(
+        "--benchmark-placebo",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PLACEBO,
+        help="Replace injected lesson text with deterministic placebo hints while keeping retrieval mechanics active.",
+    )
+    ap.add_argument(
         "--judge-diagnostic",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -691,6 +711,7 @@ def main() -> int:
                 llm_backend=args.llm_backend,
                 benchmark_deterministic=bool(args.benchmark_deterministic),
                 benchmark_promoted_only=bool(args.benchmark_promoted_only),
+                benchmark_placebo=bool(args.benchmark_placebo),
             )
             metrics = result.metrics if isinstance(result.metrics, dict) else {}
             elapsed_s = time.time() - t0
@@ -805,6 +826,7 @@ def main() -> int:
             "llm_backend": args.llm_backend,
             "benchmark_deterministic": bool(args.benchmark_deterministic),
             "benchmark_promoted_only": bool(args.benchmark_promoted_only),
+            "benchmark_placebo": bool(args.benchmark_placebo),
             "auto_escalate_critic": False,
             "judge_diagnostic": bool(args.judge_diagnostic),
         },

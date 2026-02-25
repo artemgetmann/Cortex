@@ -26,6 +26,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
     DEFAULT_BENCHMARK_DETERMINISTIC,
+    DEFAULT_BENCHMARK_PLACEBO,
     DEFAULT_BENCHMARK_PROMOTED_ONLY,
     DEFAULT_SELF_EDIT_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
@@ -212,6 +213,12 @@ def main() -> int:
         default=DEFAULT_BENCHMARK_PROMOTED_ONLY,
         help="Restrict retrieval to promoted lessons only (exclude candidates).",
     )
+    ap.add_argument(
+        "--benchmark-placebo",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PLACEBO,
+        help="Keep retrieval structure but replace injected lesson text with deterministic generic placebo hints.",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -303,6 +310,7 @@ def main() -> int:
             llm_backend=args.llm_backend,
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
+            benchmark_placebo=bool(args.benchmark_placebo),
             on_step=_on_step,
         )
     except _RunCancelled as exc:
