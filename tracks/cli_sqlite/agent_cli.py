@@ -181,12 +181,379 @@ class CliPromptPreview:
     tools: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class VerificationFilePattern:
+    """Deterministic file-content probe declared in VERIFICATION.json."""
+
+    path: str
+    pattern: str
+
+
+@dataclass(frozen=True)
+class VerificationQueryCheck:
+    """Deterministic sqlite query probe declared in VERIFICATION.json."""
+
+    id: str
+    sql: str
+    expected_rows: tuple[tuple[str, ...], ...]
+    db_path: str = "task.db"
+
+
+@dataclass(frozen=True)
+class VerificationSpec:
+    """Task-local deterministic probes for no-contract domains."""
+
+    source: str
+    exact_output_lines: tuple[str, ...] = ()
+    required_files: tuple[str, ...] = ()
+    file_content_patterns: tuple[VerificationFilePattern, ...] = ()
+    query_checks: tuple[VerificationQueryCheck, ...] = ()
+
+    def check_count(self) -> int:
+        return (
+            len(self.exact_output_lines)
+            + len(self.required_files)
+            + len(self.file_content_patterns)
+            + len(self.query_checks)
+        )
+
+
+@dataclass(frozen=True)
+class DeterministicProbeResult:
+    """Unified probe result shape used for metrics + eval decisions."""
+
+    source: str
+    applicable: bool
+    passed: bool
+    score: float
+    reasons: list[str]
+    evidence: dict[str, Any]
+
+    def to_eval_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "applicable": self.applicable,
+            "passed": self.passed,
+            "score": self.score,
+            "reasons": list(self.reasons),
+            "evidence": dict(self.evidence),
+        }
+
+
 def _load_task_text(tasks_root: Path, task_id: str) -> str:
     """Load task description from task.md file, with fallback."""
     task_md = tasks_root / task_id / "task.md"
     if task_md.exists():
         return task_md.read_text(encoding="utf-8").strip()
     return f"Task: {task_id}. Complete using available tools."
+
+
+def _parse_expected_rows(raw_rows: Any, *, field_name: str, errors: list[str]) -> tuple[tuple[str, ...], ...]:
+    if not isinstance(raw_rows, list):
+        errors.append(f"{field_name}_must_be_list")
+        return ()
+    normalized: list[tuple[str, ...]] = []
+    for row_idx, row in enumerate(raw_rows):
+        if not isinstance(row, list):
+            errors.append(f"{field_name}[{row_idx}]_must_be_list")
+            continue
+        normalized.append(tuple(str(col) for col in row))
+    return tuple(normalized)
+
+
+def _load_verification_spec_from_json(path: Path) -> tuple[VerificationSpec | None, list[str]]:
+    """Load and schema-check VERIFICATION.json for deterministic no-contract probes."""
+    errors: list[str] = []
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, [f"invalid_json:{type(exc).__name__}"]
+    if not isinstance(parsed, dict):
+        return None, ["root_must_be_object"]
+
+    def read_str_list(key: str) -> tuple[str, ...]:
+        raw = parsed.get(key, [])
+        if raw is None:
+            return ()
+        if not isinstance(raw, list):
+            errors.append(f"{key}_must_be_list")
+            return ()
+        values: list[str] = []
+        for idx, item in enumerate(raw):
+            text = str(item).strip() if isinstance(item, str) else ""
+            if not text:
+                errors.append(f"{key}[{idx}]_must_be_non_empty_string")
+                continue
+            values.append(text)
+        return tuple(values)
+
+    exact_output_lines = read_str_list("exact_output_lines")
+    required_files = read_str_list("required_files")
+
+    raw_patterns = parsed.get("file_content_patterns", [])
+    file_content_patterns: list[VerificationFilePattern] = []
+    if raw_patterns is not None:
+        if not isinstance(raw_patterns, list):
+            errors.append("file_content_patterns_must_be_list")
+        else:
+            for idx, row in enumerate(raw_patterns):
+                if not isinstance(row, dict):
+                    errors.append(f"file_content_patterns[{idx}]_must_be_object")
+                    continue
+                path_value = str(row.get("path", "")).strip()
+                pattern_value = str(row.get("pattern", "")).strip()
+                if not path_value:
+                    errors.append(f"file_content_patterns[{idx}].path_required")
+                    continue
+                if not pattern_value:
+                    errors.append(f"file_content_patterns[{idx}].pattern_required")
+                    continue
+                file_content_patterns.append(
+                    VerificationFilePattern(path=path_value, pattern=pattern_value)
+                )
+
+    raw_queries = parsed.get("query_checks", [])
+    query_checks: list[VerificationQueryCheck] = []
+    if raw_queries is not None:
+        if not isinstance(raw_queries, list):
+            errors.append("query_checks_must_be_list")
+        else:
+            for idx, row in enumerate(raw_queries):
+                if not isinstance(row, dict):
+                    errors.append(f"query_checks[{idx}]_must_be_object")
+                    continue
+                query_sql = str(row.get("sql", "")).strip()
+                if not query_sql:
+                    errors.append(f"query_checks[{idx}].sql_required")
+                    continue
+                query_id = str(row.get("id", f"query_{idx}")).strip() or f"query_{idx}"
+                db_path = str(row.get("db_path", "task.db")).strip() or "task.db"
+                expected_rows = _parse_expected_rows(
+                    row.get("expected_rows", []),
+                    field_name=f"query_checks[{idx}].expected_rows",
+                    errors=errors,
+                )
+                query_checks.append(
+                    VerificationQueryCheck(
+                        id=query_id,
+                        sql=query_sql,
+                        expected_rows=expected_rows,
+                        db_path=db_path,
+                    )
+                )
+
+    if errors:
+        return None, errors
+
+    spec = VerificationSpec(
+        source="VERIFICATION.json",
+        exact_output_lines=exact_output_lines,
+        required_files=required_files,
+        file_content_patterns=tuple(file_content_patterns),
+        query_checks=tuple(query_checks),
+    )
+    if spec.check_count() == 0:
+        return None, ["empty_spec"]
+    return spec, []
+
+
+def _infer_verification_spec_from_task_text(task_text: str) -> VerificationSpec | None:
+    """Fallback parser for task.md when no explicit VERIFICATION.json is present."""
+    lines = task_text.splitlines()
+
+    exact_output_lines: list[str] = []
+    if re.search(r"\bprint\s+exactly\b", task_text, flags=re.IGNORECASE):
+        for line in lines:
+            match = re.match(r"^\s*[-*]\s*`([^`]+)`\s*$", line.strip())
+            if match:
+                exact_output_lines.append(match.group(1).strip())
+
+    required_files: list[str] = []
+    required_files.extend(
+        re.findall(
+            r"(?i)\bcreate\b[^`\n]*\bnamed\s+`([^`]+)`",
+            task_text,
+        )
+    )
+    required_files.extend(
+        re.findall(
+            r"(?i)\bwrite\b[^`\n]*`([^`]+)`",
+            task_text,
+        )
+    )
+    unique_required_files = tuple(dict.fromkeys(name.strip() for name in required_files if name.strip()))
+
+    spec = VerificationSpec(
+        source="task.md",
+        exact_output_lines=tuple(dict.fromkeys(text for text in exact_output_lines if text)),
+        required_files=unique_required_files,
+    )
+    if spec.check_count() == 0:
+        return None
+    return spec
+
+
+def _load_verification_spec(task_dir: Path, task_text: str) -> tuple[VerificationSpec | None, list[str]]:
+    spec_path = task_dir / "VERIFICATION.json"
+    if spec_path.exists():
+        return _load_verification_spec_from_json(spec_path)
+    return _infer_verification_spec_from_task_text(task_text), []
+
+
+def _event_text_lines(events: list[dict[str, Any]]) -> tuple[set[str], str]:
+    """Extract normalized event output lines so exact-line probes stay deterministic."""
+    raw_fragments: list[str] = []
+    normalized_lines: set[str] = set()
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        for key in ("output", "error"):
+            value = row.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            raw_fragments.append(value)
+            for line in value.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    normalized_lines.add(stripped)
+            try:
+                payload = json.loads(value)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                stdout = payload.get("stdout")
+                if isinstance(stdout, str):
+                    for line in stdout.splitlines():
+                        stripped = line.strip()
+                        if stripped:
+                            normalized_lines.add(stripped)
+    return normalized_lines, "\n".join(raw_fragments)
+
+
+def _run_sqlite_query(db_path: Path, sql: str) -> tuple[list[list[str]] | None, str | None]:
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            rows = conn.execute(sql).fetchall()
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    return [[str(col) for col in row] for row in rows], None
+
+
+def _run_deterministic_probes(
+    *,
+    spec: VerificationSpec | None,
+    events: list[dict[str, Any]],
+    workspace: DomainWorkspace,
+) -> DeterministicProbeResult:
+    if spec is None or spec.check_count() <= 0:
+        return DeterministicProbeResult(
+            source="none",
+            applicable=False,
+            passed=False,
+            score=0.0,
+            reasons=["no_verification_spec"],
+            evidence={},
+        )
+
+    checks_total = 0
+    checks_passed = 0
+    reasons: list[str] = []
+    evidence: dict[str, Any] = {}
+    output_lines, output_blob = _event_text_lines(events)
+
+    if spec.exact_output_lines:
+        checks_total += len(spec.exact_output_lines)
+        matched: list[str] = []
+        missing: list[str] = []
+        for expected in spec.exact_output_lines:
+            if expected in output_lines:
+                checks_passed += 1
+                matched.append(expected)
+            else:
+                missing.append(expected)
+                reasons.append("missing_exact_output_line")
+        evidence["exact_output_lines"] = {"matched": matched, "missing": missing}
+
+    if spec.required_files:
+        checks_total += len(spec.required_files)
+        missing_files: list[str] = []
+        for rel_path in spec.required_files:
+            if (workspace.work_dir / rel_path).exists():
+                checks_passed += 1
+            else:
+                missing_files.append(rel_path)
+                reasons.append("missing_required_file")
+        evidence["required_files"] = {"missing": missing_files}
+
+    if spec.file_content_patterns:
+        checks_total += len(spec.file_content_patterns)
+        pattern_results: list[dict[str, Any]] = []
+        for probe in spec.file_content_patterns:
+            file_path = workspace.work_dir / probe.path
+            if not file_path.exists():
+                reasons.append("missing_required_file")
+                pattern_results.append(
+                    {"path": probe.path, "pattern": probe.pattern, "matched": False, "error": "missing_file"}
+                )
+                continue
+            try:
+                file_text = file_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                reasons.append("file_pattern_mismatch")
+                pattern_results.append(
+                    {
+                        "path": probe.path,
+                        "pattern": probe.pattern,
+                        "matched": False,
+                        "error": f"{type(exc).__name__}:{exc}",
+                    }
+                )
+                continue
+            matched = bool(re.search(probe.pattern, file_text, flags=0))
+            if matched:
+                checks_passed += 1
+            else:
+                reasons.append("file_pattern_mismatch")
+            pattern_results.append({"path": probe.path, "pattern": probe.pattern, "matched": matched})
+        evidence["file_content_patterns"] = pattern_results
+
+    if spec.query_checks:
+        checks_total += len(spec.query_checks)
+        query_results: list[dict[str, Any]] = []
+        for probe in spec.query_checks:
+            db_path = workspace.work_dir / probe.db_path
+            actual_rows, query_error = _run_sqlite_query(db_path=db_path, sql=probe.sql)
+            expected_rows = [list(row) for row in probe.expected_rows]
+            matched = query_error is None and actual_rows == expected_rows
+            if matched:
+                checks_passed += 1
+            else:
+                reasons.append("query_check_mismatch" if query_error is None else "query_check_error")
+            query_results.append(
+                {
+                    "id": probe.id,
+                    "db_path": probe.db_path,
+                    "sql": probe.sql,
+                    "matched": matched,
+                    "error": query_error,
+                    "expected_rows": expected_rows,
+                    "actual_rows": actual_rows,
+                }
+            )
+        evidence["query_checks"] = query_results
+
+    if output_blob:
+        evidence["event_output_chars"] = len(output_blob)
+    score = 0.0 if checks_total <= 0 else round(checks_passed / float(checks_total), 3)
+    passed = checks_total > 0 and len(reasons) == 0
+    return DeterministicProbeResult(
+        source=spec.source,
+        applicable=checks_total > 0,
+        passed=passed,
+        score=(1.0 if passed else score),
+        reasons=sorted(set(reasons)),
+        evidence=evidence,
+    )
 
 
 def _tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, Any]:
@@ -2505,12 +2872,22 @@ def _run_cli_agent_impl(
         "eval_score": 0.0,
         "eval_reasons": [],
         "eval_passed": False,
+        "deterministic_probe_source": "none",
+        "deterministic_probe_applicable": False,
+        "deterministic_probe_passed": False,
+        "deterministic_probe_score": 0.0,
+        "deterministic_probe_reasons": [],
+        "deterministic_probe_evidence": {},
+        "verification_spec_source": verification_spec.source if verification_spec is not None else "none",
+        "verification_spec_errors": list(verification_spec_errors),
         "judge_score": None,
         "judge_passed": None,
         "judge_invoked": False,
         "judge_reasons": [],
         "judge_doc_grounding": [],
         "judge_critique": "",
+        "judge_fail_probe_pass": False,
+        "judge_pass_probe_fail": False,
         "critic_raw_lessons": [],
         "critic_filtered_lessons": [],
         "critic_rejected_lessons": [],
@@ -3234,6 +3611,14 @@ def _run_cli_agent_impl(
 
     # --- Evaluation ---
     events = read_events(paths.events_path)
+    probe_result = DeterministicProbeResult(
+        source="none",
+        applicable=False,
+        passed=False,
+        score=0.0,
+        reasons=["no_verification_spec"],
+        evidence={},
+    )
 
     # Deterministic eval (CONTRACT.json) — works for domains that have contracts
     if has_contract:
@@ -3250,9 +3635,21 @@ def _run_cli_agent_impl(
             db_path=workspace.work_dir / "task.db",
             tasks_root=TASKS_ROOT,
         ).to_dict()
-        metrics["eval_passed"] = bool(eval_result.get("passed", False))
-        metrics["eval_score"] = float(eval_result.get("score", 0.0) or 0.0)
-        metrics["eval_reasons"] = list(eval_result.get("reasons", [])) if isinstance(eval_result.get("reasons"), list) else []
+        probe_result = DeterministicProbeResult(
+            source="CONTRACT.json",
+            applicable=True,
+            passed=bool(eval_result.get("passed", False)),
+            score=float(eval_result.get("score", 0.0) or 0.0),
+            reasons=list(eval_result.get("reasons", [])) if isinstance(eval_result.get("reasons"), list) else [],
+            evidence=(
+                dict(eval_result.get("evidence", {}))
+                if isinstance(eval_result.get("evidence"), dict)
+                else {}
+            ),
+        )
+        metrics["eval_passed"] = probe_result.passed
+        metrics["eval_score"] = probe_result.score
+        metrics["eval_reasons"] = list(probe_result.reasons)
     else:
         eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
     final_unresolved_gaps = unresolved_contract_gaps(eval_result) if has_contract else []
@@ -3310,8 +3707,8 @@ def _run_cli_agent_impl(
             "raw_response": judge_result.raw_response,
         }
 
-        # If no CONTRACT exists, use judge as primary eval signal
-        if not has_contract:
+        # Judge remains primary only when deterministic probes are unavailable.
+        if not has_contract and not probe_result.applicable:
             metrics["eval_passed"] = judge_result.passed
             metrics["eval_score"] = judge_result.score
             metrics["eval_reasons"] = judge_result.reasons

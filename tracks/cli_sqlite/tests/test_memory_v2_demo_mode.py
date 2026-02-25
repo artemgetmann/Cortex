@@ -85,6 +85,46 @@ class _FakeAdapter:
         return []
 
 
+class _ProbeAdapter(_FakeAdapter):
+    @property
+    def executor_tool_name(self) -> str:
+        return "run_probe"
+
+    def tool_defs(self, fixture_refs: list[str], *, opaque: bool) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "run_probe",
+                "description": "Deterministic probe test tool.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+
+    def execute(self, tool_name: str, tool_input: dict[str, Any], workspace: DomainWorkspace) -> ToolResult:
+        return ToolResult(output=json.dumps({"stdout": "REPORT_OK line=stable"}))
+
+    def prepare_workspace(self, task_dir: Path, work_dir: Path) -> DomainWorkspace:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        fixture_paths: dict[str, Path] = {}
+        for file_path in task_dir.glob("*"):
+            if not file_path.is_file():
+                continue
+            fixture_paths[file_path.name] = file_path
+            if file_path.name == "CONTRACT.json":
+                continue
+            (work_dir / file_path.name).write_text(file_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return DomainWorkspace(
+            task_id=task_dir.name,
+            task_dir=task_dir,
+            work_dir=work_dir,
+            fixture_paths=fixture_paths,
+        )
+
+
 def _configure_agent_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     track_root = tmp_path / "track"
     tasks_root = track_root / "tasks"
@@ -752,6 +792,137 @@ def test_run_cli_agent_writes_prompt_artifacts_bundle(monkeypatch: pytest.Monkey
     assert payload["judge"]["invoked"] is True
     assert payload["judge"]["diagnostic_mode"] is True
     assert str(artifact_path).startswith(str(sessions_root))
+
+
+def test_no_contract_verification_probe_passes_under_claude_print(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    task_dir = tmp_path / "track" / "tasks" / "demo_task"
+    task_dir.joinpath("VERIFICATION.json").write_text(
+        json.dumps({"exact_output_lines": ["REPORT_OK line=stable"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_cli, "_resolve_adapter_with_mode", lambda *args, **kwargs: _ProbeAdapter())
+
+    state = {"turn": 0}
+
+    def _fake_claude_print(**_: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        if state["turn"] == 0:
+            state["turn"] = 1
+            return (
+                [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_probe_1",
+                        "name": "run_probe",
+                        "input": {"command": "echo ok"},
+                    }
+                ],
+                {"backend": "claude_print"},
+            )
+        return ([{"type": "text", "text": "done"}], {"backend": "claude_print"})
+
+    monkeypatch.setattr(agent_cli, "_create_executor_response_via_claude_print", _fake_claude_print)
+
+    result = agent_cli.run_cli_agent(
+        cfg=SimpleNamespace(anthropic_api_key=""),
+        task_id="demo_task",
+        task=None,
+        session_id=104,
+        max_steps=3,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=False,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        llm_backend="claude_print",
+    )
+    assert result.metrics["eval_passed"] is True
+    assert result.metrics["deterministic_probe_source"] == "VERIFICATION.json"
+    assert result.metrics["deterministic_probe_applicable"] is True
+    assert result.metrics["judge_passed"] is None
+    assert "judge_skipped_llm_backend" not in result.metrics["eval_reasons"]
+
+
+def test_no_contract_probe_pass_overrides_judge_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    task_dir = tmp_path / "track" / "tasks" / "demo_task"
+    task_dir.joinpath("VERIFICATION.json").write_text(
+        json.dumps({"required_files": ["task.md"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_cli, "_resolve_adapter_with_mode", lambda *args, **kwargs: _ProbeAdapter())
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(passed=False, score=0.1, reasons=["judge_fail"], raw_response="{}"),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=SimpleNamespace(anthropic_api_key="test-key"),
+        task_id="demo_task",
+        task=None,
+        session_id=105,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=False,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["eval_passed"] is True
+    assert result.metrics["judge_passed"] is False
+    assert result.metrics["judge_fail_probe_pass"] is True
+    assert result.metrics["judge_pass_probe_fail"] is False
+
+
+def test_no_contract_probe_fail_blocks_judge_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    task_dir = tmp_path / "track" / "tasks" / "demo_task"
+    task_dir.joinpath("VERIFICATION.json").write_text(
+        json.dumps({"required_files": ["missing.txt"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_cli, "_resolve_adapter_with_mode", lambda *args, **kwargs: _ProbeAdapter())
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(passed=True, score=1.0, reasons=["judge_pass"], raw_response="{}"),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=SimpleNamespace(anthropic_api_key="test-key"),
+        task_id="demo_task",
+        task=None,
+        session_id=106,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=False,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["eval_passed"] is False
+    assert "missing_required_file" in result.metrics["eval_reasons"]
+    assert result.metrics["judge_passed"] is True
+    assert result.metrics["judge_pass_probe_fail"] is True
+    assert result.metrics["judge_fail_probe_pass"] is False
 
 
 def test_run_memory_stability_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
