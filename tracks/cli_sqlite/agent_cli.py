@@ -924,10 +924,10 @@ def _load_verification_spec(
     try:
         payload = json.loads(verification_path.read_text(encoding="utf-8"))
     except Exception:
-        spec["source"] = "task_md+verification_json_invalid"
+        spec["source"] = "VERIFICATION.json_invalid"
         return spec
     if not isinstance(payload, dict):
-        spec["source"] = "task_md+verification_json_invalid"
+        spec["source"] = "VERIFICATION.json_invalid"
         return spec
 
     # Explicit JSON entries replace inferred values for the same field.
@@ -953,9 +953,64 @@ def _load_verification_spec(
     if db_path:
         spec["db_path"] = db_path
 
-    spec["source"] = "task_md+verification_json"
+    spec["source"] = "VERIFICATION.json"
     spec["source_path"] = str(verification_path)
     return spec
+
+
+def _verification_spec_for_probe(spec: dict[str, Any] | None) -> VerificationSpec | None:
+    """
+    Convert the runtime verifier dict into the legacy deterministic probe spec.
+
+    Why this exists:
+    - The runtime verifier stack now uses dict-based specs.
+    - Existing deterministic probe evaluator expects VerificationSpec dataclass.
+    - We keep a small adapter instead of forking probe logic.
+    """
+    if not isinstance(spec, dict):
+        return None
+    exact_output_lines = tuple(
+        _dedupe_nonempty_text_rows([str(value) for value in (spec.get("exact_output_lines", []) or [])])
+    )
+    required_files = tuple(
+        _dedupe_nonempty_text_rows([str(value) for value in (spec.get("required_files", []) or [])])
+    )
+    file_content_patterns_rows = _normalize_required_file_content_patterns(
+        spec.get("required_file_content_patterns", [])
+    )
+    file_content_patterns: list[VerificationFilePattern] = []
+    for row in file_content_patterns_rows:
+        rel_path = str(row.get("path", "")).strip()
+        for pattern in row.get("patterns", []):
+            pattern_text = str(pattern).strip()
+            if rel_path and pattern_text:
+                file_content_patterns.append(
+                    VerificationFilePattern(path=rel_path, pattern=pattern_text)
+                )
+    query_checks_rows = _normalize_required_queries(spec.get("required_queries", []))
+    query_checks: list[VerificationQueryCheck] = []
+    for row in query_checks_rows:
+        expected_rows_raw = row.get("expected_rows", [])
+        expected_rows = tuple(tuple(str(col) for col in rec) for rec in expected_rows_raw)
+        db_path = str(row.get("db_path", "task.db")).strip() or "task.db"
+        query_checks.append(
+            VerificationQueryCheck(
+                id=str(row.get("id", "")).strip() or "required_query",
+                sql=str(row.get("sql", "")).strip(),
+                expected_rows=expected_rows,
+                db_path=db_path,
+            )
+        )
+    probe_spec = VerificationSpec(
+        source=str(spec.get("source", "")).strip() or "none",
+        exact_output_lines=exact_output_lines,
+        required_files=required_files,
+        file_content_patterns=tuple(file_content_patterns),
+        query_checks=tuple(query_checks),
+    )
+    if probe_spec.check_count() <= 0:
+        return None
+    return probe_spec
 
 
 def _run_required_files_probe(*, work_dir: Path, required_files: list[str]) -> dict[str, Any]:
@@ -2599,6 +2654,13 @@ def _run_cli_agent_impl(
         task_id=task_id,
         task_text=task_text,
     )
+    # Verification loader may provide non-fatal parse notes. Keep them in metrics
+    # when available, and default to empty for backward compatibility.
+    verification_spec_errors = (
+        list(verification_spec.get("errors", []))
+        if isinstance(verification_spec, dict)
+        else []
+    )
 
     # Build full manifest always (needed for posttask learning even in bootstrap)
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
@@ -2878,7 +2940,7 @@ def _run_cli_agent_impl(
         "deterministic_probe_score": 0.0,
         "deterministic_probe_reasons": [],
         "deterministic_probe_evidence": {},
-        "verification_spec_source": verification_spec.source if verification_spec is not None else "none",
+        "verification_spec_source": str(verification_spec.get("source", "none")) if verification_spec is not None else "none",
         "verification_spec_errors": list(verification_spec_errors),
         "judge_score": None,
         "judge_passed": None,
@@ -3651,7 +3713,33 @@ def _run_cli_agent_impl(
         metrics["eval_score"] = probe_result.score
         metrics["eval_reasons"] = list(probe_result.reasons)
     else:
-        eval_result = {"passed": False, "score": 0.0, "reasons": ["no_contract"]}
+        verification_probe_spec = _verification_spec_for_probe(verification_spec)
+        probe_result = _run_deterministic_probes(
+            spec=verification_probe_spec,
+            events=events,
+            workspace=workspace,
+        )
+        if probe_result.applicable:
+            # No-contract tasks become deterministic when local probes exist.
+            eval_result = probe_result.to_eval_dict()
+            metrics["eval_passed"] = probe_result.passed
+            metrics["eval_score"] = probe_result.score
+            metrics["eval_reasons"] = list(probe_result.reasons)
+        else:
+            eval_reasons = ["no_contract", "no_verification_spec"]
+            if verification_spec_errors:
+                eval_reasons.append("verification_spec_invalid")
+            eval_result = {"passed": False, "score": 0.0, "reasons": eval_reasons}
+            metrics["eval_passed"] = False
+            metrics["eval_score"] = 0.0
+            metrics["eval_reasons"] = list(eval_reasons)
+
+    metrics["deterministic_probe_source"] = probe_result.source
+    metrics["deterministic_probe_applicable"] = probe_result.applicable
+    metrics["deterministic_probe_passed"] = probe_result.passed
+    metrics["deterministic_probe_score"] = probe_result.score
+    metrics["deterministic_probe_reasons"] = list(probe_result.reasons)
+    metrics["deterministic_probe_evidence"] = dict(probe_result.evidence)
     final_unresolved_gaps = unresolved_contract_gaps(eval_result) if has_contract else []
     latest_unresolved_gaps = final_unresolved_gaps
     metrics["contract_gap_unresolved_count_final"] = int(len(final_unresolved_gaps))
@@ -3675,7 +3763,16 @@ def _run_cli_agent_impl(
 
     # LLM Judge can run in diagnostic mode even when deterministic contract passes.
     # Contract pass/fail remains authoritative whenever a contract exists.
-    use_llm_judge = bool(judge_diagnostic) or not has_contract or not metrics.get("eval_passed", False)
+    use_llm_judge = bool(judge_diagnostic) or (not metrics.get("eval_passed", False))
+    if not has_contract:
+        if llm_backend == "anthropic":
+            # Keep judge telemetry on anthropic for no-contract runs even when
+            # deterministic probes pass; probes remain primary signal.
+            use_llm_judge = True
+        elif not probe_result.applicable:
+            # For non-anthropic transports, judge is only needed when probes are
+            # unavailable and we have no deterministic signal.
+            use_llm_judge = True
     metrics["judge_invoked"] = bool(use_llm_judge)
     if use_llm_judge:
         if client is None:
@@ -3702,6 +3799,9 @@ def _run_cli_agent_impl(
         metrics["judge_reasons"] = judge_result.reasons
         metrics["judge_doc_grounding"] = list(judge_result.doc_grounding)
         metrics["judge_critique"] = judge_result.raw_response
+        if probe_result.applicable:
+            metrics["judge_fail_probe_pass"] = bool((not judge_result.passed) and probe_result.passed)
+            metrics["judge_pass_probe_fail"] = bool(judge_result.passed and (not probe_result.passed))
         judge_payload_bundle = {
             "result": judge_result.to_dict(),
             "raw_response": judge_result.raw_response,
