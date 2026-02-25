@@ -7,7 +7,7 @@ import {
 } from "../../config";
 
 export type CortexDispatchPayload = {
-  mode?: "run" | "status" | "chat";
+  mode?: "run" | "status" | "chat" | "cancel" | "followup";
   plan?: Record<string, unknown>;
   result?: Record<string, unknown>;
   ok?: boolean;

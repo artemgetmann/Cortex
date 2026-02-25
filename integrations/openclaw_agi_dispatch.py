@@ -46,8 +46,9 @@ KNOWN_TASK_DOMAIN: dict[str, str] = {
 }
 
 RUN_PREFIXES = ("/run", "run ")
-STATUS_PREFIXES = ("/learn-status", "/status", "learn status")
+STATUS_PREFIXES = ("/learn-status", "/learnstatus", "/learn_status", "/run-status", "/status", "learn status")
 CANCEL_PREFIXES = ("/cancel", "/cancel-run", "cancel run")
+FOLLOWUP_PREFIXES = ("/followup", "followup ")
 CHAT_PREFIXES = ("/chat",)
 
 
@@ -58,11 +59,14 @@ class DispatchPlan:
     domain: str | None = None
     task_id: str | None = None
     task_text: str | None = None
+    followup_text: str | None = None
     run_id: str | None = None
     max_steps: int = 6
     model_executor: str = "claude-haiku-4-5"
     llm_backend: str = "anthropic"
     posttask_learn: bool = True
+    progress: bool = False
+    progress_limit: int = 8
     reason: str = ""
 
 
@@ -103,6 +107,83 @@ def _parse_keyvals(payload: str) -> tuple[dict[str, str], str]:
         tail_start = idx + 1
     tail = " ".join(tokens[tail_start:]).strip()
     return controls, tail
+
+
+def _looks_like_run_id(value: str) -> bool:
+    token = str(value or "").strip()
+    return token.startswith("run_") or token.startswith("run-")
+
+
+def _parse_bool(value: str, *, default: bool = False) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "on", "yes", "y"}:
+        return True
+    if text in {"0", "false", "off", "no", "n"}:
+        return False
+    return default
+
+
+def _parse_progress_limit(value: str, *, default: int = 8) -> int:
+    raw = str(value or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, min(20, int(raw)))
+    except ValueError:
+        return default
+
+
+def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
+    event = str(row.get("event", "")).strip().lower()
+    if not event:
+        return None
+    ts_raw = row.get("ts")
+    try:
+        ts = float(ts_raw)
+    except (TypeError, ValueError):
+        ts = 0.0
+
+    step_raw = row.get("step")
+    try:
+        step = int(step_raw) if step_raw is not None else None
+    except (TypeError, ValueError):
+        step = None
+
+    session_raw = row.get("session_id")
+    try:
+        session_id = int(session_raw) if session_raw is not None else None
+    except (TypeError, ValueError):
+        session_id = None
+
+    trigger_text = str(row.get("trigger", "")).strip()
+    task_text = str(row.get("task_id", "")).strip()
+    domain_text = str(row.get("domain", "")).strip()
+    return {
+        "ts": ts,
+        "event": event,
+        "step": step,
+        "trigger": trigger_text or None,
+        "session_id": session_id,
+        "task_id": task_text or None,
+        "domain": domain_text or None,
+    }
+
+
+def _latest_lifecycle_events(*, run_id: str, limit: int) -> list[dict[str, Any]]:
+    path = run_service.resolve_lifecycle_path()
+    rows = run_service.list_events(run_id, max_events=max(1, limit), lifecycle_path=path)
+    matched: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = _coerce_lifecycle_event(row)
+        if normalized is not None:
+            matched.append(normalized)
+    return matched
+
+
+def _print_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
 
 
 def _infer_domain(task_text: str, fallback: str = "shell") -> str:
@@ -183,10 +264,35 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         payload = _strip_prefix(normalized, STATUS_PREFIXES)
         controls, payload_tail = _parse_keyvals(payload)
         run_id = controls.get("run_id", "").strip()
-        if not run_id:
-            token = payload_tail.split(" ", 1)[0].strip() if payload_tail else ""
-            run_id = token if token.startswith("run_") else ""
-        return DispatchPlan(mode="status", chat_scope=chat_scope, run_id=run_id or None, reason="status_prefix")
+        tail_tokens = payload_tail.split() if payload_tail else []
+        if not run_id and tail_tokens and _looks_like_run_id(tail_tokens[0]):
+            run_id = tail_tokens[0].strip()
+            tail_tokens = tail_tokens[1:]
+
+        progress = _parse_bool(controls.get("progress", ""), default=False)
+        progress_limit = _parse_progress_limit(controls.get("limit", controls.get("events", "")), default=8)
+        for token in tail_tokens:
+            lowered_token = token.strip().lower()
+            if lowered_token in {"progress", "--progress"}:
+                progress = True
+                continue
+            if lowered_token.startswith("progress="):
+                progress = _parse_bool(lowered_token.split("=", 1)[1], default=progress)
+                continue
+            if lowered_token.startswith("limit="):
+                progress_limit = _parse_progress_limit(lowered_token.split("=", 1)[1], default=progress_limit)
+                continue
+            if lowered_token.startswith("events="):
+                progress_limit = _parse_progress_limit(lowered_token.split("=", 1)[1], default=progress_limit)
+
+        return DispatchPlan(
+            mode="status",
+            chat_scope=chat_scope,
+            run_id=run_id or None,
+            progress=progress,
+            progress_limit=progress_limit,
+            reason="status_prefix",
+        )
 
     if any(lowered.startswith(prefix) for prefix in CANCEL_PREFIXES):
         payload = _strip_prefix(normalized, CANCEL_PREFIXES)
@@ -194,8 +300,31 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         run_id = controls.get("run_id", "").strip()
         if not run_id and payload_tail:
             token = payload_tail.split(" ", 1)[0].strip()
-            run_id = token if token.startswith("run_") else ""
+            run_id = token if _looks_like_run_id(token) else ""
         return DispatchPlan(mode="cancel", chat_scope=chat_scope, run_id=run_id or None, reason="cancel_prefix")
+
+    if any(lowered.startswith(prefix) for prefix in FOLLOWUP_PREFIXES):
+        payload = _strip_prefix(normalized, FOLLOWUP_PREFIXES)
+        controls, payload_tail = _parse_keyvals(payload)
+        run_id = controls.get("run_id", "").strip()
+        followup_text = controls.get("text", "").strip()
+
+        tail = payload_tail
+        if tail and not run_id:
+            token, *rest = tail.split(" ", 1)
+            if _looks_like_run_id(token):
+                run_id = token.strip()
+                tail = rest[0].strip() if rest else ""
+        if not followup_text:
+            followup_text = tail.strip()
+
+        return DispatchPlan(
+            mode="followup",
+            chat_scope=chat_scope,
+            run_id=run_id or None,
+            followup_text=followup_text or None,
+            reason="followup_prefix",
+        )
 
     if any(lowered.startswith(prefix) for prefix in CHAT_PREFIXES):
         return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="chat_prefix")
@@ -337,7 +466,13 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
     }
 
 
-def _status_payload(*, chat_scope: str, run_id: str | None = None) -> dict[str, Any]:
+def _status_payload(
+    *,
+    chat_scope: str,
+    run_id: str | None = None,
+    include_progress: bool = False,
+    progress_limit: int = 8,
+) -> dict[str, Any]:
     lesson_count = 0
     scoped_count = 0
     if LESSONS_V2_PATH.exists():
@@ -373,6 +508,9 @@ def _status_payload(*, chat_scope: str, run_id: str | None = None) -> dict[str, 
 
     active_runs = [row.to_dict() for row in run_service.list_active()]
     run_row = run_service.get_run(run_id) if run_id else None
+    lifecycle_events: list[dict[str, Any]] = []
+    if include_progress and run_id:
+        lifecycle_events = _latest_lifecycle_events(run_id=run_id, limit=progress_limit)
 
     return {
         "ok": True,
@@ -381,6 +519,9 @@ def _status_payload(*, chat_scope: str, run_id: str | None = None) -> dict[str, 
         "run_id": run_id,
         "run": run_row.to_dict() if run_row else None,
         "active_runs": active_runs,
+        "progress_mode": bool(include_progress),
+        "progress_limit": int(progress_limit),
+        "lifecycle_events": lifecycle_events,
         "lessons_total": lesson_count,
         "lessons_scoped": scoped_count,
         "latest_session": {
@@ -401,7 +542,8 @@ def _chat_payload() -> dict[str, Any]:
         "reply": (
             "Chat mode. No learning run executed.\n"
             "Use /run <task> to trigger Cortex learning loop.\n"
-            "Use /learn-status for learning metrics and /status run_id=<id> for run status."
+            "Use /learn-status for learning metrics, /run-status run_id=<id> progress=on for progress,\n"
+            "and /followup run_id=<id> <text> to append steering."
         ),
     }
 
@@ -420,6 +562,84 @@ def _cancel_payload(*, run_id: str | None) -> tuple[dict[str, Any], int]:
     return {"ok": True, "mode": "cancel", "run_id": rid, "run": row.to_dict()}, 0
 
 
+def _followup_payload(
+    *,
+    run_id: str | None,
+    followup_text: str | None,
+    chat_scope: str,
+) -> tuple[dict[str, Any], int]:
+    rid = str(run_id or "").strip()
+    text = str(followup_text or "").strip()
+    if not rid:
+        return {
+            "ok": False,
+            "mode": "followup",
+            "error": "Missing run_id. Usage: /followup run_id=<run_id> <text>",
+        }, 1
+    if not text:
+        return {
+            "ok": False,
+            "mode": "followup",
+            "run_id": rid,
+            "error": "Missing follow-up text. Usage: /followup run_id=<run_id> <text>",
+        }, 1
+
+    append_fn = getattr(run_service, "append_followup", None)
+    if not callable(append_fn):
+        return {
+            "ok": False,
+            "mode": "followup",
+            "run_id": rid,
+            "error": "run_service.append_followup is unavailable in this build.",
+        }, 1
+
+    # Follow-up is stored as run-linked steering input with source metadata so
+    # future analysis can attribute behavior changes to transport-level guidance.
+    try:
+        raw_result = append_fn(
+            rid,
+            text,
+            source=f"transport:{chat_scope}",
+            ts=time.time(),
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "mode": "followup",
+            "run_id": rid,
+            "error": f"append_followup failed: {exc}",
+        }, 1
+
+    if raw_result is None:
+        return {
+            "ok": False,
+            "mode": "followup",
+            "run_id": rid,
+            "error": "run_id not found",
+        }, 1
+
+    if hasattr(raw_result, "to_dict"):
+        result_payload = raw_result.to_dict()  # RunRecord
+        accepted = True
+    elif isinstance(raw_result, dict):
+        result_payload = dict(raw_result)
+        accepted = bool(result_payload.get("accepted", True))
+    else:
+        accepted = bool(raw_result)
+        result_payload = {"accepted": accepted}
+
+    payload = {
+        "ok": accepted,
+        "mode": "followup",
+        "run_id": rid,
+        "accepted": accepted,
+        "result": result_payload,
+    }
+    if not accepted:
+        payload["error"] = "Follow-up was rejected."
+    return payload, (0 if accepted else 1)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Dispatch Telegram/OpenClaw text into Cortex learning runs.")
     ap.add_argument("--text", required=True, help="Raw inbound user message text.")
@@ -432,18 +652,33 @@ def main() -> int:
     plan = _build_plan(str(args.text), chat_scope=chat_scope, default_domain=args.default_domain)
 
     if plan.mode == "chat":
-        print(json.dumps(_chat_payload(), ensure_ascii=True, indent=2))
+        _print_json(_chat_payload())
         return 0
     if plan.mode == "status":
-        print(json.dumps(_status_payload(chat_scope=chat_scope, run_id=plan.run_id), ensure_ascii=True, indent=2))
+        _print_json(
+            _status_payload(
+                chat_scope=chat_scope,
+                run_id=plan.run_id,
+                include_progress=plan.progress,
+                progress_limit=plan.progress_limit,
+            )
+        )
         return 0
     if plan.mode == "cancel":
         payload, rc = _cancel_payload(run_id=plan.run_id)
-        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        _print_json(payload)
+        return rc
+    if plan.mode == "followup":
+        payload, rc = _followup_payload(
+            run_id=plan.run_id,
+            followup_text=plan.followup_text,
+            chat_scope=chat_scope,
+        )
+        _print_json(payload)
         return rc
 
     result = _run_task(plan, dry_run=bool(args.dry_run))
-    print(json.dumps({"mode": "run", "plan": plan.__dict__, "result": result}, ensure_ascii=True, indent=2))
+    _print_json({"mode": "run", "plan": plan.__dict__, "result": result})
     return 0 if bool(result.get("ok", False)) else 1
 
 

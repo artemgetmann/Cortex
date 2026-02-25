@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -12,7 +13,9 @@ from typing import Any, Iterator
 
 TRACK_ROOT = Path(__file__).resolve().parent
 DEFAULT_STATE_PATH = TRACK_ROOT / "sessions" / "run_service_state.json"
+DEFAULT_LIFECYCLE_PATH = TRACK_ROOT / "sessions" / "run_lifecycle.jsonl"
 ENV_STATE_PATH = "CORTEX_RUN_SERVICE_STATE_PATH"
+ENV_LIFECYCLE_PATH = "CORTEX_RUN_SERVICE_LIFECYCLE_PATH"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -49,6 +52,7 @@ class RunRecord:
     last_step: int | None = None
     metadata: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
+    followups: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +71,7 @@ class RunRecord:
             "last_step": self.last_step,
             "metadata": self.metadata or {},
             "result": self.result or {},
+            "followups": [dict(item) for item in (self.followups or [])],
         }
 
     @classmethod
@@ -110,7 +115,27 @@ class RunRecord:
             ),
             metadata=dict(payload.get("metadata") or {}),
             result=dict(payload.get("result") or {}),
+            followups=_normalize_followups(payload.get("followups")),
         )
+
+
+def _normalize_followups(payload: Any) -> list[dict[str, Any]]:
+    rows = payload if isinstance(payload, list) else []
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get("text", "")).strip()
+        source = str(row.get("source", "")).strip()
+        ts_raw = row.get("ts")
+        try:
+            ts = float(ts_raw)
+        except (TypeError, ValueError):
+            continue
+        if not text or not source:
+            continue
+        parsed.append({"text": text, "source": source, "ts": ts})
+    return parsed
 
 
 @contextlib.contextmanager
@@ -167,6 +192,30 @@ def _normalize_state_path(state_path: Path | None) -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
     return DEFAULT_STATE_PATH.resolve()
+
+
+def _normalize_lifecycle_path(lifecycle_path: Path | None) -> Path:
+    if lifecycle_path is not None:
+        return lifecycle_path.resolve()
+    env_path = str(os.getenv(ENV_LIFECYCLE_PATH, "")).strip()
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return DEFAULT_LIFECYCLE_PATH.resolve()
+
+
+def resolve_state_path(state_path: Path | None = None) -> Path:
+    return _normalize_state_path(state_path)
+
+
+def resolve_lifecycle_path(lifecycle_path: Path | None = None) -> Path:
+    return _normalize_lifecycle_path(lifecycle_path)
+
+
+def _coerce_ts(ts: Any) -> float | None:
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return None
 
 
 def _transition_allowed(current: str, next_status: str) -> bool:
@@ -354,3 +403,117 @@ def is_cancel_requested(run_id: str, *, state_path: Path | None = None) -> bool:
     if row is None:
         return False
     return bool(row.cancel_requested or row.status in {STATUS_CANCEL_REQUESTED, STATUS_CANCELLED})
+
+
+def append_followup(
+    run_id: str,
+    text: str,
+    source: str,
+    ts: float,
+    *,
+    state_path: Path | None = None,
+) -> RunRecord | None:
+    rid = str(run_id).strip()
+    if not rid:
+        return None
+    followup_text = str(text).strip()
+    if not followup_text:
+        raise RunServiceError("Follow-up text cannot be empty.")
+    followup_source = str(source).strip()
+    if not followup_source:
+        raise RunServiceError("Follow-up source cannot be empty.")
+    followup_ts = _coerce_ts(ts)
+    if followup_ts is None:
+        raise RunServiceError("Follow-up timestamp must be numeric.")
+
+    path = _normalize_state_path(state_path)
+    now = time.time()
+    with _locked_state_file(path, mutate=True) as (_, state):
+        row = _read_record(state, rid)
+        if row is None:
+            return None
+        current = RunRecord.from_dict(row)
+        merged = current.to_dict()
+        followups = _normalize_followups(merged.get("followups"))
+        followups.append({"text": followup_text, "source": followup_source, "ts": followup_ts})
+        merged["followups"] = followups
+        merged["updated_at_epoch_s"] = now
+        state["runs"][rid] = merged
+        return RunRecord.from_dict(merged)
+
+
+def list_events(
+    run_id: str,
+    *,
+    from_ts: float | None = None,
+    max_events: int = 200,
+    lifecycle_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    rid = str(run_id).strip()
+    if not rid:
+        return []
+    cursor = _coerce_ts(from_ts) if from_ts is not None else None
+    limit = max(0, int(max_events))
+    if limit == 0:
+        return []
+
+    path = _normalize_lifecycle_path(lifecycle_path)
+    if not path.exists():
+        return []
+    if cursor is None:
+        # For dashboard/status calls we only need the newest tail. Keep this
+        # bounded so large lifecycle logs do not force unbounded memory usage.
+        tail: deque[dict[str, Any]] = deque(maxlen=limit)
+    else:
+        # Cursor mode is used by incremental polling; return earliest unseen
+        # events first so clients can advance deterministically.
+        rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            if str(parsed.get("run_id", "")).strip() != rid:
+                continue
+            ts = _coerce_ts(parsed.get("ts"))
+            if ts is None:
+                continue
+            # Cursor is exclusive so clients can pass the last seen ts.
+            if cursor is not None and ts <= cursor:
+                continue
+            row = dict(parsed)
+            if cursor is None:
+                tail.append(row)
+            else:
+                rows.append(row)
+                if len(rows) >= limit:
+                    break
+
+    if cursor is None:
+        return list(tail)
+    return rows
+
+
+def stream_run(
+    run_id: str,
+    *,
+    from_ts: float | None = None,
+    max_events: int = 200,
+    state_path: Path | None = None,
+    lifecycle_path: Path | None = None,
+) -> dict[str, Any]:
+    return {
+        "run": get_run(run_id, state_path=state_path),
+        "events": list_events(
+            run_id,
+            from_ts=from_ts,
+            max_events=max_events,
+            lifecycle_path=lifecycle_path,
+        ),
+    }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from integrations import openclaw_agi_dispatch as dispatch
 from tracks.cli_sqlite import run_service
 
@@ -50,3 +52,44 @@ def test_cancel_payload_calls_run_service(monkeypatch) -> None:
     assert rc == 0
     assert payload["ok"] is True
     assert payload["run"]["status"] == run_service.STATUS_CANCEL_REQUESTED
+
+
+def test_followup_payload_reports_missing_run_id(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dispatch.run_service,
+        "append_followup",
+        lambda run_id, text, source, ts: None,
+    )
+    payload, rc = dispatch._followup_payload(
+        run_id="run_missing",
+        followup_text="retry with a stricter verifier",
+        chat_scope="tg-1",
+    )
+    assert rc == 1
+    assert payload["ok"] is False
+    assert payload["error"] == "run_id not found"
+
+
+def test_latest_lifecycle_events_uses_run_service_resolved_path(monkeypatch) -> None:
+    expected_path = Path("/tmp/cortex_custom_lifecycle.jsonl")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        dispatch.run_service,
+        "resolve_lifecycle_path",
+        lambda: expected_path,
+    )
+
+    def _fake_list_events(run_id: str, *, max_events: int, lifecycle_path: Path):
+        captured["run_id"] = run_id
+        captured["max_events"] = max_events
+        captured["path"] = lifecycle_path
+        return [{"ts": 10.0, "event": "started", "run_id": run_id}]
+
+    monkeypatch.setattr(dispatch.run_service, "list_events", _fake_list_events)
+    events = dispatch._latest_lifecycle_events(run_id="run_1", limit=4)
+    assert len(events) == 1
+    assert events[0]["event"] == "started"
+    assert captured["run_id"] == "run_1"
+    assert captured["max_events"] == 4
+    assert captured["path"] == expected_path
