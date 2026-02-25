@@ -1,0 +1,240 @@
+{
+  "task_id": "shell_excel_openpyxl_summary",
+  "domain": "shell",
+  "backend": "anthropic",
+  "max_steps": 6,
+  "off": {
+    "session_ids": [
+      96710,
+      96711,
+      96712,
+      96713,
+      96714
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 0.6,
+      "mean_eval_score": 0.85,
+      "low_confidence_triggered": 0,
+      "probe_status": {
+        "not_run": 5
+      },
+      "override_applied": 0,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96710,
+        "eval_passed": false,
+        "eval_score": 0.5,
+        "judge_score": 0.5,
+        "eval_reasons": [
+          "sales_report.xlsx was successfully created with correct sheet names (RawData, RegionSummary, ProductSummary) and correct row counts (11 in RawData including header, 4 in RegionSummary including header, 4 in ProductSummary including header)",
+          "report_manifest.json was created with all required keys (raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha)",
+          "CRITICAL FAILURE: Task requires printing exactly 3 verification lines to stdout, but none of these lines appear in the final successful output (step 6). The required lines are: 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North ",
+          "Step 6 output shows only 'ls -lh' results and manifest contents, but no verification print statements",
+          "The data processing appears correct based on manifest values (grand_total=10150 matches sum of amounts in fixture.csv, top_region=North with 4200 total, top_product=Alpha), but the task explicitly requires specific print output format for verification",
+          "Two earlier attempts (steps 2 and 4) failed with errors, showing the agent had difficulty completing the script, though the final attempt succeeded in creating the files"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96711,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "Step 4 successfully created sales_report.xlsx with all three required sheets: RawData, RegionSummary, and ProductSummary",
+          "RawData sheet contains all 10 data rows plus 1 header row (total 11 rows) with correct headers (region, product, amount, quantity) as verified in step 6",
+          "RegionSummary sheet contains 3 regions (North, South, East) with correct columns (region, total_amount, avg_quantity, txn_count) sorted by total_amount descending: North(4200), South(3200), East(2750)",
+          "ProductSummary sheet contains 3 products (Alpha, Beta, Gamma) with correct columns (product, total_amount) sorted by total_amount descending: Alpha(5100), Beta(2800), Gamma(2250)",
+          "report_manifest.json was created with all exact required keys as shown in step 5: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150.0, top_region=North, top_product=Alpha",
+          "All three exact verification lines were printed in step 4: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96711/sales_report.xlsx raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_OR"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96712,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "Step 1: Fixture file was successfully loaded showing 10 data rows with headers region,product,amount,quantity",
+          "Step 2: Python script using openpyxl successfully created sales_report.xlsx and report_manifest.json, printing all required verification lines: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96712/sales_report.xlsx raw_rows=10 region_ro",
+          "Step 3: Confirmed both files exist in workspace. report_manifest.json contains exact required keys: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region='North', top_product='Alpha'",
+          "Step 4: Validated Excel content. RawData sheet contains all 10 rows from fixture plus header. RegionSummary sheet shows region,total_amount,avg_quantity,txn_count with North (4200), South (3200) sorted by total_amount descending",
+          "Step 5: Final verification step prints all three exact required lines with correct values and formats",
+          "Final state confirms sales_report.xlsx exists (6278 bytes) with three sheets (RawData: 11 rows including header, RegionSummary: 4 rows including header, ProductSummary: 4 rows including header)"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96713,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "sales_report.xlsx created successfully with 6282 bytes (final state shows file exists)",
+          "Excel file contains all 3 required sheets: RawData (11 rows including header = 10 data rows), RegionSummary (4 rows including header = 3 data rows), ProductSummary (4 rows including header = 3 data rows) - verified in final state xlsx metadata",
+          "report_manifest.json created with all 6 required keys: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha (step 6 output)",
+          "All 3 verification lines printed correctly in step 5: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96713/sales_report.xlsx raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER N",
+          "Verification values match fixture data: grand_total 10150 = sum of all amounts (1200+800+950+1100+1500+600+750+900+1050+1300), North has highest total (4200), Alpha has highest total (4000)",
+          "Only run_bash tool used as required by constraints"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96714,
+        "eval_passed": false,
+        "eval_score": 0.75,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "sales_report.xlsx successfully created with correct structure: RawData (11 rows including header), RegionSummary (4 rows including header = 3 data rows), ProductSummary (4 rows including header = 3 data rows)",
+          "report_manifest.json successfully created with all required keys and correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha",
+          "Step 5 output shows partial verification output but is truncated mid-line: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96714/sales_repor' - missing the complete verification line",
+          "CRITICAL FAILURE: The task explicitly requires printing exactly 3 verification lines: (1) REPORT_OK with all parameters, (2) REGION_ORDER North,South,East, (3) PRODUCT_ORDER Alpha,Beta,Gamma. The final state and event log show only partial output from step 5, and step 6 only show",
+          "The agent did not execute a final command to print the complete verification output as required by constraint #6 in the task specification",
+          "Although the underlying data and files are correct (as evidenced by the manifest content and xlsx structure), the task explicitly requires specific stdout verification lines which are missing from the final state"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      }
+    ]
+  },
+  "on": {
+    "session_ids": [
+      96750,
+      96751,
+      96752,
+      96753,
+      96754
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 0.4,
+      "mean_eval_score": 0.88,
+      "low_confidence_triggered": 3,
+      "probe_status": {
+        "not_run": 2,
+        "pass": 3
+      },
+      "override_applied": 3,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96750,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "sales_report.xlsx created successfully with 3 required sheets: RawData (11 rows including header), RegionSummary (4 rows including header), ProductSummary (4 rows including header)",
+          "RawData sheet contains all 10 data rows from fixture.csv with headers, as confirmed in step 3 verification output showing correct columns (region, product, amount, quantity) and sample rows",
+          "RegionSummary sheet correctly computed: North (4200 total, 4.5 avg_qty, 4 txn), South (3200 total, 4.67 avg_qty, 3 txn), East (2750 total, 4.33 avg_qty, 3 txn), sorted by total_amount descending",
+          "ProductSummary sheet correctly computed and sorted: Alpha (5100), Beta (2800), Gamma (2250) by total_amount descending",
+          "report_manifest.json written with exact required keys and correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha",
+          "All 3 required verification lines printed exactly as specified in step 4: REPORT_OK with correct values, REGION_ORDER North,South,East, PRODUCT_ORDER Alpha,Beta,Gamma"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96751,
+        "eval_passed": true,
+        "eval_score": 1.0,
+        "judge_score": 1.0,
+        "eval_reasons": [
+          "All required files created: sales_report.xlsx (6283 bytes) and report_manifest.json (136 bytes) present in final state",
+          "RawData sheet contains 11 rows (header + 10 data rows) matching fixture.csv, verified in step 5 output showing headers ('region', 'product', 'amount', 'quantity') and first data row ('North', 'Alpha', 1200, 5)",
+          "RegionSummary sheet contains 4 rows (header + 3 regions) with correct structure ('region', 'total_amount', 'avg_quantity', 'txn_count') and sorted by total_amount desc: North (4200), South (3200), East (2750)",
+          "ProductSummary sheet contains 4 rows (header + 3 products) with correct structure and sorted by total_amount desc: Alpha, Beta, Gamma",
+          "report_manifest.json contains all required keys with correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha (verified in step 4 output)",
+          "All three exact verification lines printed in step 3 output: 'REPORT_OK path=/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-96751/sales_report.xlsx raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_"
+        ],
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96752,
+        "eval_passed": false,
+        "eval_score": 0.8,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "Excel file `sales_report.xlsx` created successfully with correct structure: RawData (11 rows including header), RegionSummary (4 rows including header), ProductSummary (4 rows including header) as shown in final state xlsx metadata.",
+          "RawData sheet contains all 10 data rows plus header with correct columns (region, product, amount, quantity) verified in step 6 output.",
+          "RegionSummary sheet has correct columns (region, total_amount, avg_quantity, txn_count) and is sorted by total_amount descending: North (4200), South (3200), East (2750) as shown in step 6 output.",
+          "ProductSummary sheet has correct columns (product, total_amount) sorted by total_amount descending: Alpha (5100), Beta (2800), Gamma (2250) as shown in step 6 output.",
+          "Manifest file `report_manifest.json` created with all required keys and correct values: raw_rows=10, region_rows=3, product_rows=3, grand_total=10150, top_region=North, top_product=Alpha verified in step 5 output.",
+          "CRITICAL FAILURE: Missing all three required verification print statements. Task requirement 6 explicitly requires printing exactly: 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,Sout"
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96753,
+        "eval_passed": false,
+        "eval_score": 0.8,
+        "judge_score": 0.75,
+        "eval_reasons": [
+          "Task requirement 1-4 fully satisfied: sales_report.xlsx created with correct sheets (RawData, RegionSummary, ProductSummary) containing proper data. Event log step 6 output confirms RawData has 11 rows (header + 10 data rows), RegionSummary sorted by total_amount desc (North:4200",
+          "Task requirement 5 fully satisfied: report_manifest.json created with all required keys and correct values (raw_rows:10, region_rows:3, product_rows:3, grand_total:10150, top_region:North, top_product:Alpha) as shown in event log step 5.",
+          "Task requirement 6 FAILED: Agent did not print the three required verification lines. The task explicitly requires printing 'REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha', 'REGION_ORDER North,South,East', ",
+          "The last successful output (step 6) shows verification queries but does not contain the mandated REPORT_OK, REGION_ORDER, and PRODUCT_ORDER print statements, which are explicit task requirements."
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      },
+      {
+        "session_id": 96754,
+        "eval_passed": false,
+        "eval_score": 0.8,
+        "judge_score": 0.0,
+        "eval_reasons": [
+          "judge_response_unparseable"
+        ],
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "pass",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": ""
+      }
+    ]
+  },
+  "delta": {
+    "pass_rate": -0.2,
+    "mean_eval_score": 0.03
+  }
+}
