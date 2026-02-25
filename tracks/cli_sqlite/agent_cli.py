@@ -375,6 +375,327 @@ def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[s
     return deduped[: max(1, int(max_lines))]
 
 
+def _dedupe_nonempty_text_rows(values: list[str]) -> list[str]:
+    """Normalize string lists while preserving deterministic order."""
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        rows.append(text)
+    return rows
+
+
+def _extract_required_files_from_task_text(task_text: str, *, max_files: int = 8) -> list[str]:
+    """
+    Infer required output files from imperative task lines.
+
+    We intentionally keep this narrow (Create/Write/Generate/Save/Output + backticks)
+    to avoid speculative checks that produce noisy verifier failures.
+    """
+    if not str(task_text).strip():
+        return []
+    files: list[str] = []
+    pattern = re.compile(
+        r"\b(?:create|write|generate|save|output)\s+`([^`]+)`",
+        re.IGNORECASE,
+    )
+    for line in str(task_text).splitlines():
+        for match in pattern.findall(line):
+            text = str(match).strip()
+            if text:
+                files.append(text)
+            if len(files) >= max(1, int(max_files)):
+                return _dedupe_nonempty_text_rows(files)
+    return _dedupe_nonempty_text_rows(files)
+
+
+def _extract_required_file_content_patterns_from_task_text(
+    task_text: str,
+    *,
+    max_keys_per_file: int = 12,
+) -> list[dict[str, Any]]:
+    """
+    Infer file-key expectations from markdown text like:
+    `Write `report_manifest.json` with exact keys: `k1`, `k2``.
+    """
+    if not str(task_text).strip():
+        return []
+    lines = str(task_text).splitlines()
+    rows: list[dict[str, Any]] = []
+    for idx, raw_line in enumerate(lines):
+        line = str(raw_line)
+        match = re.search(
+            r"\bwrite\s+`([^`]+)`\s+with\s+exact\s+keys?\s*:\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        rel_path = str(match.group(1)).strip()
+        if not rel_path:
+            continue
+        key_names: list[str] = [str(name).strip() for name in re.findall(r"`([^`]+)`", str(match.group(2)))]
+        cursor = idx + 1
+        while cursor < len(lines) and len(key_names) < max(1, int(max_keys_per_file)):
+            candidate = str(lines[cursor]).strip()
+            if not candidate:
+                if key_names:
+                    break
+                cursor += 1
+                continue
+            if candidate.startswith("Constraints:") or candidate.startswith("Goal:"):
+                break
+            inline = [str(name).strip() for name in re.findall(r"`([^`]+)`", candidate)]
+            if inline:
+                key_names.extend(inline)
+                cursor += 1
+                continue
+            if key_names:
+                break
+            cursor += 1
+        normalized_keys = _dedupe_nonempty_text_rows(key_names)[: max(1, int(max_keys_per_file))]
+        if not normalized_keys:
+            continue
+        patterns = [rf"\"{re.escape(key)}\"\s*:" for key in normalized_keys]
+        rows.append({"path": rel_path, "patterns": patterns})
+    return rows
+
+
+def _normalize_required_file_content_patterns(raw: Any) -> list[dict[str, Any]]:
+    """Normalize `required_file_content_patterns` from VERIFICATION.json."""
+    rows: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return rows
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rel_path = str(item.get("path", "")).strip()
+        if not rel_path:
+            continue
+        raw_patterns = item.get("patterns")
+        if not isinstance(raw_patterns, list):
+            single = str(item.get("pattern", "")).strip()
+            raw_patterns = [single] if single else []
+        patterns = _dedupe_nonempty_text_rows([str(value).strip() for value in raw_patterns])
+        if not patterns:
+            continue
+        rows.append({"path": rel_path, "patterns": patterns})
+    return rows
+
+
+def _normalize_required_queries(raw: Any) -> list[dict[str, Any]]:
+    """Normalize verifier query specs into deterministic rows."""
+    rows: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return rows
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        query_sql = str(item.get("sql", "")).strip()
+        if not query_sql:
+            continue
+        query_id = str(item.get("id", "")).strip() or f"required_query_{idx + 1}"
+        expected_rows = _normalize_expected_rows(item.get("expected_rows", []))
+        db_path = str(item.get("db_path", "")).strip()
+        row = {
+            "id": query_id,
+            "sql": query_sql,
+            "expected_rows": expected_rows,
+        }
+        if db_path:
+            row["db_path"] = db_path
+        rows.append(row)
+    return rows
+
+
+def _load_verification_spec(
+    *,
+    tasks_root: Path,
+    task_id: str,
+    task_text: str,
+) -> dict[str, Any]:
+    """
+    Load deterministic verifier anchors from task text and optional JSON spec.
+
+    Priority rules:
+    - infer narrow anchors from `task.md` (verification lines + obvious output files)
+    - if `VERIFICATION.json` exists, its explicit fields override inferred fields
+    """
+    inferred_lines = _extract_verification_lines(task_text)
+    inferred_files = _extract_required_files_from_task_text(task_text)
+    inferred_file_patterns = _extract_required_file_content_patterns_from_task_text(task_text)
+
+    spec: dict[str, Any] = {
+        "source": "task_md",
+        "source_path": str(tasks_root / task_id / "task.md"),
+        "exact_output_lines": inferred_lines,
+        "required_files": inferred_files,
+        "required_file_content_patterns": inferred_file_patterns,
+        "required_queries": [],
+        "db_path": "",
+    }
+
+    verification_path = tasks_root / task_id / "VERIFICATION.json"
+    if not verification_path.exists():
+        return spec
+    try:
+        payload = json.loads(verification_path.read_text(encoding="utf-8"))
+    except Exception:
+        spec["source"] = "task_md+verification_json_invalid"
+        return spec
+    if not isinstance(payload, dict):
+        spec["source"] = "task_md+verification_json_invalid"
+        return spec
+
+    # Explicit JSON entries replace inferred values for the same field.
+    if "exact_output_lines" in payload:
+        spec["exact_output_lines"] = _dedupe_nonempty_text_rows(
+            [str(value) for value in payload.get("exact_output_lines", [])]
+            if isinstance(payload.get("exact_output_lines"), list)
+            else []
+        )
+    if "required_files" in payload:
+        spec["required_files"] = _dedupe_nonempty_text_rows(
+            [str(value) for value in payload.get("required_files", [])]
+            if isinstance(payload.get("required_files"), list)
+            else []
+        )
+    if "required_file_content_patterns" in payload:
+        spec["required_file_content_patterns"] = _normalize_required_file_content_patterns(
+            payload.get("required_file_content_patterns")
+        )
+    if "required_queries" in payload:
+        spec["required_queries"] = _normalize_required_queries(payload.get("required_queries"))
+    db_path = str(payload.get("db_path", "")).strip()
+    if db_path:
+        spec["db_path"] = db_path
+
+    spec["source"] = "task_md+verification_json"
+    spec["source_path"] = str(verification_path)
+    return spec
+
+
+def _run_required_files_probe(*, work_dir: Path, required_files: list[str]) -> dict[str, Any]:
+    missing: list[str] = []
+    present: list[str] = []
+    for rel_path in required_files:
+        target = work_dir / rel_path
+        if target.exists():
+            present.append(rel_path)
+        else:
+            missing.append(rel_path)
+    return {
+        "probe_id": "required_files",
+        "applicable": bool(required_files),
+        "passed": len(missing) == 0,
+        "detail": "matched" if len(missing) == 0 else "missing_required_file",
+        "evidence": {
+            "work_dir": str(work_dir),
+            "required_files": list(required_files),
+            "present_files": present,
+            "missing_files": missing,
+        },
+    }
+
+
+def _run_required_file_content_patterns_probe(
+    *,
+    work_dir: Path,
+    required_file_content_patterns: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matched: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    for row in required_file_content_patterns:
+        rel_path = str(row.get("path", "")).strip()
+        patterns = row.get("patterns", [])
+        if not rel_path or not isinstance(patterns, list):
+            continue
+        target = work_dir / rel_path
+        file_text = ""
+        if target.exists():
+            try:
+                file_text = target.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                file_text = ""
+        for pattern in patterns:
+            pattern_text = str(pattern).strip()
+            if not pattern_text:
+                continue
+            if file_text and re.search(pattern_text, file_text, flags=0):
+                matched.append({"path": rel_path, "pattern": pattern_text})
+            else:
+                missing.append({"path": rel_path, "pattern": pattern_text})
+    return {
+        "probe_id": "required_file_content_patterns",
+        "applicable": bool(required_file_content_patterns),
+        "passed": len(missing) == 0,
+        "detail": "matched" if len(missing) == 0 else "missing_required_file_content_pattern",
+        "evidence": {
+            "work_dir": str(work_dir),
+            "matched": matched,
+            "missing": missing,
+        },
+    }
+
+
+def _resolve_verification_db_path(*, work_dir: Path, db_path_hint: str) -> Path:
+    hint = str(db_path_hint).strip()
+    if not hint:
+        return work_dir / "task.db"
+    candidate = Path(hint)
+    if candidate.is_absolute():
+        return candidate
+    return work_dir / candidate
+
+
+def _run_required_query_probe(*, db_path: Path, query_spec: dict[str, Any]) -> dict[str, Any]:
+    query_id = str(query_spec.get("id", "")).strip() or "required_query"
+    query_sql = str(query_spec.get("sql", "")).strip()
+    expected_rows = _normalize_expected_rows(query_spec.get("expected_rows", []))
+    if not query_sql:
+        return {
+            "probe_id": f"required_query:{query_id}",
+            "applicable": False,
+            "passed": False,
+            "detail": "missing_query_sql",
+            "evidence": {},
+        }
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.execute(query_sql)
+            actual_rows = [[str(cell) for cell in row] for row in cursor.fetchall()]
+    except Exception as exc:
+        return {
+            "probe_id": f"required_query:{query_id}",
+            "applicable": True,
+            "passed": False,
+            "detail": "required_query_error",
+            "evidence": {
+                "query_id": query_id,
+                "query_sql": query_sql,
+                "db_path": str(db_path),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        }
+    passed = actual_rows == expected_rows
+    return {
+        "probe_id": f"required_query:{query_id}",
+        "applicable": True,
+        "passed": bool(passed),
+        "detail": "matched" if passed else "required_query_mismatch",
+        "evidence": {
+            "query_id": query_id,
+            "query_sql": query_sql,
+            "db_path": str(db_path),
+            "expected_rows": expected_rows,
+            "actual_rows": actual_rows,
+        },
+    }
+
+
 def _collect_event_text_blobs(events: list[dict[str, Any]]) -> str:
     """Collect textual event outputs/errors for deterministic probe checks."""
     chunks: list[str] = []
@@ -1399,6 +1720,11 @@ def run_cli_agent(
     if not task_dir.exists():
         raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
     workspace: DomainWorkspace = adapter.prepare_workspace(task_dir, paths.session_dir)
+    verification_spec = _load_verification_spec(
+        tasks_root=TASKS_ROOT,
+        task_id=task_id,
+        task_text=task_text,
+    )
 
     # Build full manifest always (needed for posttask learning even in bootstrap)
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
@@ -1593,6 +1919,18 @@ def run_cli_agent(
         "verifier_low_confidence_threshold": round(float(low_confidence_threshold), 3),
         "verifier_clarify_on_low_confidence": bool(clarify_on_low_confidence),
         "verifier_max_low_confidence_probes": int(max_low_confidence_probes),
+        "verifier_spec_source": str(verification_spec.get("source", "")),
+        "verifier_spec_source_path": str(verification_spec.get("source_path", "")),
+        "verifier_spec_exact_output_lines": int(len(verification_spec.get("exact_output_lines", []) or [])),
+        "verifier_spec_required_files": int(len(verification_spec.get("required_files", []) or [])),
+        "verifier_spec_required_file_patterns": int(
+            sum(
+                len(row.get("patterns", []))
+                for row in (verification_spec.get("required_file_content_patterns", []) or [])
+                if isinstance(row, dict)
+            )
+        ),
+        "verifier_spec_required_queries": int(len(verification_spec.get("required_queries", []) or [])),
         "verifier_confidence_base": None,
         "verifier_low_confidence_triggered": False,
         "verifier_probe_status": "not_run",
@@ -2401,7 +2739,9 @@ def run_cli_agent(
         probe_rows: list[dict[str, Any]] = []
         missing_verification_lines: list[str] = []
 
-        required_verification_lines = _extract_verification_lines(task_text)
+        required_verification_lines = _dedupe_nonempty_text_rows(
+            [str(value) for value in (verification_spec.get("exact_output_lines", []) or [])]
+        )
         if required_verification_lines and len(probe_rows) < max_low_confidence_probes:
             event_text = _collect_event_text_blobs(events)
             missing_verification_lines = [
@@ -2420,6 +2760,48 @@ def run_cli_agent(
                     },
                 }
             )
+
+        required_files = _dedupe_nonempty_text_rows(
+            [str(value) for value in (verification_spec.get("required_files", []) or [])]
+        )
+        if required_files and len(probe_rows) < max_low_confidence_probes:
+            probe_rows.append(
+                _run_required_files_probe(
+                    work_dir=workspace.work_dir,
+                    required_files=required_files,
+                )
+            )
+
+        required_file_content_patterns = _normalize_required_file_content_patterns(
+            verification_spec.get("required_file_content_patterns", [])
+        )
+        if required_file_content_patterns and len(probe_rows) < max_low_confidence_probes:
+            probe_rows.append(
+                _run_required_file_content_patterns_probe(
+                    work_dir=workspace.work_dir,
+                    required_file_content_patterns=required_file_content_patterns,
+                )
+            )
+
+        required_queries = _normalize_required_queries(verification_spec.get("required_queries", []))
+        if required_queries:
+            default_query_db_path = _resolve_verification_db_path(
+                work_dir=workspace.work_dir,
+                db_path_hint=str(verification_spec.get("db_path", "")).strip(),
+            )
+            for query_spec in required_queries:
+                if len(probe_rows) >= max_low_confidence_probes:
+                    break
+                query_db_path = _resolve_verification_db_path(
+                    work_dir=workspace.work_dir,
+                    db_path_hint=str(query_spec.get("db_path", "")).strip() or str(default_query_db_path),
+                )
+                probe_rows.append(
+                    _run_required_query_probe(
+                        db_path=query_db_path,
+                        query_spec=query_spec,
+                    )
+                )
 
         if has_contract and len(probe_rows) < max_low_confidence_probes:
             no_unresolved_gaps = len(final_unresolved_gaps) == 0

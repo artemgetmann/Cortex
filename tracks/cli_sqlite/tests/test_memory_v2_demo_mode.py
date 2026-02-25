@@ -546,6 +546,98 @@ def test_low_confidence_verifier_can_override_non_contract_eval_on_failed_probe(
     )
 
 
+def test_load_verification_spec_infers_required_files_and_manifest_keys(
+    tmp_path: Path,
+) -> None:
+    tasks_root = tmp_path / "tasks"
+    task_dir = tasks_root / "shell_excel_multi_summary"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_text = (
+        "Goal:\n"
+        "1) Create `sales_report.xlsx` from `fixture.csv`.\n"
+        "2) Write `report_manifest.json` with exact keys:\n"
+        "   `raw_rows`, `region_rows`, `product_rows`, `grand_total`, `top_region`, `top_product`.\n"
+        "3) Print exactly this verification line:\n"
+        "- `REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha`\n"
+    )
+    task_dir.joinpath("task.md").write_text(task_text, encoding="utf-8")
+
+    spec = agent_cli._load_verification_spec(
+        tasks_root=tasks_root,
+        task_id="shell_excel_multi_summary",
+        task_text=task_text,
+    )
+
+    assert spec["source"] == "task_md"
+    assert spec["exact_output_lines"] == [
+        "REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha"
+    ]
+    assert spec["required_files"] == ["sales_report.xlsx", "report_manifest.json"]
+    pattern_rows = spec["required_file_content_patterns"]
+    assert isinstance(pattern_rows, list) and pattern_rows
+    manifest_row = next(row for row in pattern_rows if row.get("path") == "report_manifest.json")
+    assert any("\\\"raw_rows\\\"\\s*:" in str(pattern) for pattern in manifest_row.get("patterns", []))
+    assert any("\\\"top_product\\\"\\s*:" in str(pattern) for pattern in manifest_row.get("patterns", []))
+
+
+def test_low_confidence_verifier_uses_verification_json_required_file_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    task_dir = agent_cli.TASKS_ROOT / "demo_task"
+    task_dir.joinpath("VERIFICATION.json").write_text(
+        json.dumps(
+            {
+                "required_files": ["expected_output.txt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=True,
+            score=0.3,
+            reasons=["weak_signal"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task="demo task without explicit verification lines",
+        session_id=107,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        judge_diagnostic=True,
+        verifier_stack_enabled=True,
+        low_confidence_threshold=0.7,
+        clarify_on_low_confidence=True,
+        max_low_confidence_probes=4,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["verifier_low_confidence_triggered"] is True
+    assert result.metrics["verifier_probe_status"] == "fail"
+    assert result.metrics["verifier_override_applied"] is True
+    assert any(
+        str(reason).startswith("deterministic_probe_failed:missing_required_file")
+        for reason in result.metrics["eval_reasons"]
+    )
+
+
 def test_run_cli_agent_writes_prompt_artifacts_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     sessions_root = _configure_agent_cli_env(monkeypatch, tmp_path)
     cfg = SimpleNamespace(anthropic_api_key="test-key")

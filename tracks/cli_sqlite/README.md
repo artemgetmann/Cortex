@@ -146,7 +146,11 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Benchmark default backend is API (`anthropic`) with Haiku 4.5.
 - Critic tuning flags are intentionally hidden in benchmark runners; critic stays locked to executor-equivalent behavior.
 - `--judge-diagnostic` forces judge rationale capture even on contract-pass runs while keeping contract pass/fail authoritative.
-- `--verifier-stack` adds deterministic post-eval checks for low-confidence outcomes. If probes are inconclusive, runtime emits a deterministic clarifying question (`metrics.verifier_clarifying_question` + `verifier_clarify` event).
+- `--verifier-stack` adds deterministic post-eval checks for low-confidence outcomes. Probe sources:
+  - `CONTRACT.json` (when present)
+  - `task.md` inferred anchors (exact verification lines + obvious output files)
+  - optional `VERIFICATION.json` per task (`exact_output_lines`, `required_files`, `required_file_content_patterns`, optional `required_queries`)
+- If low-confidence probes are still inconclusive, runtime emits a deterministic clarifying question (`metrics.verifier_clarifying_question` + `verifier_clarify` event).
 - Learning is credited only when transfer pass lifts and mechanism metrics engage (`lesson_activations > 0`, `retrieval_help_ratio` lift).
 - For transfer/holdout protocol details, see `docs/MEMORY-V2-BENCHMARKS.md`.
 - Latest SQLite benchmark write-up: `tracks/cli_sqlite/reports/benchmark_report_sqlite_2026-02-21.md`.

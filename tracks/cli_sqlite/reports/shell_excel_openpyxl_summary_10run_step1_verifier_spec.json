@@ -1,0 +1,276 @@
+{
+  "task_id": "shell_excel_openpyxl_summary",
+  "domain": "shell",
+  "max_steps": 1,
+  "backend": "anthropic",
+  "off": {
+    "session_ids": [
+      96610,
+      96611,
+      96612,
+      96613,
+      96614
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 0.0,
+      "mean_eval_score": 0.0,
+      "low_confidence_triggered": 0,
+      "probe_status": {
+        "not_run": 5
+      },
+      "override_applied": 0,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96610,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Required file 'sales_report.xlsx' was not created - final state shows xlsx list is empty",
+          "Required file 'report_manifest.json' is missing from the final state files list",
+          "No verification lines were printed - last_successful_output is empty",
+          "The agent only showed the fixture files but did not execute any processing steps",
+          "No bash commands were run to process fixture.csv or generate the Excel file using openpyxl",
+          "Task requires run_bash tool to create Excel workbook with 3 sheets (RawData, RegionSummary, ProductSummary) but no such execution occurred"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96611,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "judge_response_unparseable"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96612,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Required file 'sales_report.xlsx' is missing from the final state files list",
+          "Required file 'report_manifest.json' is missing from the final state files list",
+          "No xlsx files found in workspace according to final state xlsx array",
+          "The three required verification lines were never printed (last_successful_output is empty)",
+          "The agent only executed show_fixture commands to view the task requirements and fixture data, but never ran any bash commands to create the Excel file, process the CSV data, or generate the manifest",
+          "No Python script or openpyxl commands were executed to transform fixture.csv into sales_report.xlsx with the required sheets (RawData, RegionSummary, ProductSummary)"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96613,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Required file 'sales_report.xlsx' was not created - final state shows no xlsx files exist",
+          "Required file 'report_manifest.json' was not created - only VERIFICATION.json, events.jsonl, and fixture.csv are present",
+          "None of the three required verification print statements were produced (REPORT_OK, REGION_ORDER, PRODUCT_ORDER)",
+          "No RawData sheet was created as required by task goal #2",
+          "No RegionSummary sheet was created as required by task goal #3",
+          "No ProductSummary sheet was created as required by task goal #4"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96614,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Required file 'sales_report.xlsx' is missing from the final state (only VERIFICATION.json, events.jsonl, and fixture.csv are present)",
+          "Required file 'report_manifest.json' is missing from the final state",
+          "No bash commands were executed - the agent only used show_fixture to inspect files but never ran any processing",
+          "None of the required verification output lines were printed (REPORT_OK, REGION_ORDER, PRODUCT_ORDER)",
+          "The xlsx field in final state is empty, confirming no Excel file was created",
+          "The last_successful_output is empty, indicating no command produced the required verification output"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": false,
+        "verifier_probe_status": "not_run",
+        "verifier_probe_failures": 0,
+        "verifier_override_applied": false,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      }
+    ]
+  },
+  "on": {
+    "session_ids": [
+      96650,
+      96651,
+      96652,
+      96653,
+      96654
+    ],
+    "summary": {
+      "runs": 5,
+      "available": 5,
+      "pass_rate": 0.0,
+      "mean_eval_score": 0.0,
+      "low_confidence_triggered": 5,
+      "probe_status": {
+        "fail": 5
+      },
+      "override_applied": 5,
+      "clarifying_question": 0
+    },
+    "runs": [
+      {
+        "session_id": 96650,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "No ProductSummary sheet was created",
+          "No RawData sheet was created as sales_report.xlsx does not exist",
+          "No RegionSummary sheet was created",
+          "None of the required verification output lines were printed (REPORT_OK, REGION_ORDER, PRODUCT_ORDER)",
+          "Required output file `report_manifest.json` was not created - only VERIFICATION.json, events.jsonl, and fixture.csv exist",
+          "Required output file `sales_report.xlsx` was not created - final state shows no xlsx files in workspace",
+          "deterministic_probe_failed:missing_required_file",
+          "deterministic_probe_failed:missing_required_file_content_pattern"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "fail",
+        "verifier_probe_failures": 2,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96651,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Agent only performed fixture inspection (show_fixture calls) but never executed any run_bash commands to create the Excel file or JSON manifest",
+          "No Python script using openpyxl was created or executed to process the CSV data",
+          "No verification output lines were printed (REPORT_OK, REGION_ORDER, PRODUCT_ORDER all missing)",
+          "Required file 'report_manifest.json' is missing from final state",
+          "Required file 'sales_report.xlsx' does not exist in final workspace (xlsx array is empty)",
+          "Task requires creating 3 sheets with specific calculations and sorting - none of this work was completed",
+          "deterministic_probe_failed:missing_required_file",
+          "deterministic_probe_failed:missing_required_file_content_pattern"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "fail",
+        "verifier_probe_failures": 2,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96652,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "Event log shows only fixture file reading in steps, no bash execution to generate the required outputs",
+          "Final state shows only 3 files (VERIFICATION.json, events.jsonl, fixture.csv) when at minimum 5 files should exist (fixture.csv + sales_report.xlsx + report_manifest.json + task artifacts)",
+          "No output verification lines were produced - task requirement 6 completely unfulfilled (expected 'REPORT_OK path=...', 'REGION_ORDER North,South,East', 'PRODUCT_ORDER Alpha,Beta,Gamma')",
+          "Required file 'report_manifest.json' is missing from final state - task requirement 5 not met",
+          "Required file 'sales_report.xlsx' is missing from final state - task requirement 1 not met",
+          "The xlsx array in final state is empty, confirming no Excel file was created",
+          "deterministic_probe_failed:missing_required_file",
+          "deterministic_probe_failed:missing_required_file_content_pattern"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "fail",
+        "verifier_probe_failures": 2,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96653,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "deterministic_probe_failed:missing_required_file",
+          "deterministic_probe_failed:missing_required_file_content_pattern",
+          "judge_response_unparseable"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "fail",
+        "verifier_probe_failures": 2,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      },
+      {
+        "session_id": 96654,
+        "eval_passed": false,
+        "eval_score": 0.0,
+        "eval_reasons": [
+          "No report_manifest.json file was created - only VERIFICATION.json exists which is not the required output file",
+          "No sales_report.xlsx file was created - final state shows only 3 files: VERIFICATION.json, events.jsonl, and fixture.csv",
+          "Required ProductSummary sheet was not created",
+          "Required RawData sheet was not created",
+          "Required RegionSummary sheet was not created",
+          "The 'xlsx' field in final state is empty, confirming no Excel workbook exists",
+          "deterministic_probe_failed:missing_required_file",
+          "deterministic_probe_failed:missing_required_file_content_pattern"
+        ],
+        "judge_score": 0.0,
+        "verifier_low_confidence_triggered": true,
+        "verifier_probe_status": "fail",
+        "verifier_probe_failures": 2,
+        "verifier_override_applied": true,
+        "verifier_clarifying_question": "",
+        "verifier_spec_source": "task_md+verification_json",
+        "verifier_spec_required_files": 2,
+        "verifier_spec_required_file_patterns": 6
+      }
+    ]
+  },
+  "delta": {
+    "pass_rate": 0.0,
+    "mean_eval_score": 0.0
+  }
+}

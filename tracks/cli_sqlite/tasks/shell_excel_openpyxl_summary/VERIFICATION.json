@@ -1,0 +1,24 @@
+{
+  "exact_output_lines": [
+    "REPORT_OK path=<abs_path> raw_rows=10 region_rows=3 product_rows=3 grand_total=10150 top_region=North top_product=Alpha",
+    "REGION_ORDER North,South,East",
+    "PRODUCT_ORDER Alpha,Beta,Gamma"
+  ],
+  "required_files": [
+    "sales_report.xlsx",
+    "report_manifest.json"
+  ],
+  "required_file_content_patterns": [
+    {
+      "path": "report_manifest.json",
+      "patterns": [
+        "\"raw_rows\"\\s*:\\s*10",
+        "\"region_rows\"\\s*:\\s*3",
+        "\"product_rows\"\\s*:\\s*3",
+        "\"grand_total\"\\s*:\\s*10150",
+        "\"top_region\"\\s*:\\s*\"North\"",
+        "\"top_product\"\\s*:\\s*\"Alpha\""
+      ]
+    }
+  ]
+}
