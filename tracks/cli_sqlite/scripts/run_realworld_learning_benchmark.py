@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -14,11 +15,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite import agent_cli
+from tracks.cli_sqlite.domains.shell_adapter import HOTFIX_HARD_TASK_ID, HOTFIX_HARD_VARIANT_OVERRIDE_ENV
+from tracks.cli_sqlite.variant_scoreboard import (
+    append_variant_score_entry,
+    read_variant_score_rows,
+    resolve_runtime_variant,
+    select_best_variant,
+    select_best_variant_from_scoreboard,
+)
 
 
 TRACK_ROOT = Path(__file__).resolve().parents[1]
 LEARNING_ROOT = TRACK_ROOT / "learning"
 REPORTS_ROOT = TRACK_ROOT / "reports"
+SESSIONS_ROOT = TRACK_ROOT / "sessions"
 
 DEFAULT_LESSONS_PATH = LEARNING_ROOT / "lessons.jsonl"
 DEFAULT_LESSONS_V2_PATH = LEARNING_ROOT / "lessons_v2.jsonl"
@@ -31,6 +41,7 @@ BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
 DEFAULT_BENCHMARK_DETERMINISTIC = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_DETERMINISTIC", False))
 DEFAULT_BENCHMARK_PROMOTED_ONLY = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PROMOTED_ONLY", False))
+DEFAULT_SELF_EDIT_MODE = bool(getattr(agent_cli, "DEFAULT_SELF_EDIT_MODE", False))
 
 run_cli_agent = agent_cli.run_cli_agent
 LESSONS_PATH = Path(getattr(agent_cli, "LESSONS_PATH", DEFAULT_LESSONS_PATH))
@@ -124,6 +135,10 @@ def _build_task_schedule() -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _is_hotfix_hard_variant_task(*, domain: str, task_id: str) -> bool:
+    return str(domain).strip() == "shell" and str(task_id).strip() == HOTFIX_HARD_TASK_ID
 
 
 def _pick_task_for_run(run_index: int, schedule: list[dict[str, str]]) -> dict[str, str]:
@@ -467,6 +482,12 @@ def main() -> int:
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
+    ap.add_argument(
+        "--self-edit-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SELF_EDIT_MODE,
+        help="Enable guarded orchestration self-edit gate during benchmark runs.",
+    )
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
@@ -524,6 +545,7 @@ def main() -> int:
     model_judge = args.model_judge.strip() if args.model_judge else model_executor
     doc_retriever_model = str(args.doc_retriever_model).strip() or None
     auto_escalate_critic = False
+    initial_hotfix_variant_override = os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV)
 
     selected_suites = {str(item).strip() for item in args.suite if str(item).strip()}
     active_suites = [
@@ -558,6 +580,7 @@ def main() -> int:
             }
         )
     all_rows: list[dict[str, Any]] = []
+    scoreboard_rows: list[dict[str, Any]] = []
     rows_by_arm: dict[str, list[dict[str, Any]]] = {str(arm["arm_id"]): [] for arm in arms}
 
     print(f"\n{'=' * 96}")
@@ -595,6 +618,38 @@ def main() -> int:
                 f"  run {run_index}/{args.sessions} session={session_cursor} "
                 f"suite={task_spec['suite']} phase={task_spec['phase']} task={task_spec['task_id']}"
             )
+            uses_hotfix_hard_variants = _is_hotfix_hard_variant_task(
+                domain=task_spec["domain"],
+                task_id=task_spec["task_id"],
+            )
+            if uses_hotfix_hard_variants:
+                pinned_variant = str(initial_hotfix_variant_override or "").strip()
+                if pinned_variant:
+                    print(
+                        f"    [variant-scoreboard] env override pinned task={task_spec['task_id']} variant={pinned_variant}"
+                    )
+                else:
+                    best_variant = select_best_variant_from_scoreboard(
+                        sessions_root=SESSIONS_ROOT,
+                        variant_family=str(task_spec["task_id"]),
+                    )
+                    if best_variant and str(best_variant.get("variant_id", "")).strip():
+                        variant_id = str(best_variant["variant_id"]).strip()
+                        os.environ[HOTFIX_HARD_VARIANT_OVERRIDE_ENV] = variant_id
+                        print(
+                            "    [variant-scoreboard] default task={task} variant={variant} mean_score={score:.4f}".format(
+                                task=str(task_spec["task_id"]),
+                                variant=variant_id,
+                                score=float(best_variant.get("mean_variant_score", 0.0)),
+                            )
+                        )
+                    else:
+                        os.environ.pop(HOTFIX_HARD_VARIANT_OVERRIDE_ENV, None)
+                        print(
+                            "    [variant-scoreboard] no prior winner for task={task}; using deterministic fallback".format(
+                                task=str(task_spec["task_id"]),
+                            )
+                        )
             t0 = time.time()
             result = run_cli_agent(
                 cfg=cfg,
@@ -611,6 +666,7 @@ def main() -> int:
                 bootstrap=False,
                 posttask_mode=args.posttask_mode,
                 posttask_learn=bool(arm["lessons_enabled"]),
+                self_edit_mode=bool(args.self_edit_mode),
                 memory_v2_demo_mode=False,
                 verbose=bool(args.verbose),
                 auto_escalate_critic=auto_escalate_critic,
@@ -637,15 +693,42 @@ def main() -> int:
                 benchmark_promoted_only=bool(args.benchmark_promoted_only),
             )
             metrics = result.metrics if isinstance(result.metrics, dict) else {}
+            elapsed_s = time.time() - t0
             row = _build_row(
                 arm=arm,
                 run_index=run_index,
                 session_id=session_cursor,
-                elapsed_s=time.time() - t0,
+                elapsed_s=elapsed_s,
                 task_spec=task_spec,
                 effective_doc_mode=doc_mode,
                 metrics=metrics,
             )
+            runtime_variant_id, runtime_variant_source = resolve_runtime_variant(
+                sessions_root=SESSIONS_ROOT,
+                session_id=session_cursor,
+                default_variant_id="default",
+            )
+            scoreboard_row = append_variant_score_entry(
+                sessions_root=SESSIONS_ROOT,
+                run_source="run_realworld_learning_benchmark",
+                session_id=session_cursor,
+                task_id=str(task_spec["task_id"]),
+                domain=str(task_spec["domain"]),
+                variant_id=runtime_variant_id,
+                variant_source=runtime_variant_source,
+                elapsed_s=elapsed_s,
+                metrics=metrics,
+                run_index=run_index,
+                phase=str(task_spec["phase"]),
+                arm_id=arm_id,
+                variant_family=str(task_spec["task_id"]),
+            )
+            scoreboard_rows.append(scoreboard_row)
+            row["variant_id"] = scoreboard_row["variant_id"]
+            row["variant_score"] = scoreboard_row["variant_score"]
+            row["variant_quality_score"] = scoreboard_row["quality_score"]
+            row["variant_speed_score"] = scoreboard_row["speed_score"]
+            row["variant_cost_score"] = scoreboard_row["cost_score"]
             rows_by_arm[arm_id].append(row)
             all_rows.append(row)
             status = "PASS" if row["passed"] else "FAIL"
@@ -654,6 +737,28 @@ def main() -> int:
                 f"errors={row['tool_errors']} repeat_delta={row['repeated_error_delta']:+.2f} "
                 f"({row['elapsed_s']:.2f}s)"
             )
+            print(
+                "    [variant-scoreboard] variant={variant} score={score:.4f} quality={quality:.4f} speed={speed:.4f} cost={cost:.4f}".format(
+                    variant=str(scoreboard_row.get("variant_id", "default")),
+                    score=float(scoreboard_row.get("variant_score", 0.0)),
+                    quality=float(scoreboard_row.get("quality_score", 0.0)),
+                    speed=float(scoreboard_row.get("speed_score", 0.0)),
+                    cost=float(scoreboard_row.get("cost_score", 0.0)),
+                )
+            )
+            if uses_hotfix_hard_variants:
+                best_after = select_best_variant_from_scoreboard(
+                    sessions_root=SESSIONS_ROOT,
+                    variant_family=str(task_spec["task_id"]),
+                )
+                if best_after and str(best_after.get("variant_id", "")).strip():
+                    print(
+                        "    [variant-scoreboard] next default task={task} variant={variant} mean_score={score:.4f}".format(
+                            task=str(task_spec["task_id"]),
+                            variant=str(best_after["variant_id"]),
+                            score=float(best_after.get("mean_variant_score", 0.0)),
+                        )
+                    )
             session_cursor += 1
         print()
 
@@ -670,6 +775,19 @@ def main() -> int:
             "runs": rows,
         }
 
+    all_scoreboard_rows = read_variant_score_rows(sessions_root=SESSIONS_ROOT)
+    best_by_task: dict[str, dict[str, Any]] = {}
+    for task_id in sorted(
+        {
+            str(row.get("task_id", ""))
+            for row in all_rows
+            if str(row.get("task_id", "")).strip()
+        }
+    ):
+        best_row = select_best_variant(all_scoreboard_rows, variant_family=task_id)
+        if isinstance(best_row, dict):
+            best_by_task[task_id] = best_row
+
     payload = {
         "config": {
             "sessions_per_arm": int(args.sessions),
@@ -680,6 +798,7 @@ def main() -> int:
             "model_critic": model_critic,
             "model_judge": model_judge,
             "posttask_mode": args.posttask_mode,
+            "self_edit_mode": bool(args.self_edit_mode),
             "doc_budget_tokens": int(args.doc_budget_tokens),
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,
@@ -694,6 +813,12 @@ def main() -> int:
         "transfer": _transfer_summary(all_rows),
         "arms": arms_payload,
         "runs": all_rows,
+        "variant_scoreboard": {
+            "path": str(SESSIONS_ROOT / "variant_scoreboard.jsonl"),
+            "rows_written": len(scoreboard_rows),
+            "rows": scoreboard_rows,
+            "best_by_task": best_by_task,
+        },
     }
     payload["did_learning_improve"] = _infer_learning_gain(payload)
 
@@ -720,6 +845,10 @@ def main() -> int:
     )
     print(f"  wrote_json={output_json}")
     print(f"  wrote_md={output_md}")
+    if initial_hotfix_variant_override is None:
+        os.environ.pop(HOTFIX_HARD_VARIANT_OVERRIDE_ENV, None)
+    else:
+        os.environ[HOTFIX_HARD_VARIANT_OVERRIDE_ENV] = initial_hotfix_variant_override
     return 0
 
 

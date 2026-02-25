@@ -41,6 +41,16 @@ from tracks.cli_sqlite.docs_pipeline import (
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session, load_contract, unresolved_contract_gaps
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
+from tracks.cli_sqlite.loop_watchdog import (
+    LoopWatchdogDecision,
+    LoopWatchdogSnapshot,
+    LoopWatchdogState,
+    evaluate_watchdog_policy,
+    load_watchdog_state,
+    next_watchdog_state,
+    persist_watchdog_state,
+    state_path_for_learning_root,
+)
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
@@ -71,11 +81,17 @@ from tracks.cli_sqlite.learning_cli import (
 )
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.run_observability import (
+    append_self_edit_gate_event,
     append_lifecycle_event,
     append_run_ledger_entry,
     build_run_id,
     format_utc_timestamp,
     normalize_error_summary,
+)
+from tracks.cli_sqlite.self_edit_gate import (
+    apply_guarded_self_edit_updates,
+    build_self_edit_manifest_entries,
+    self_edit_allowed_refs,
 )
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
@@ -135,6 +151,7 @@ DEFAULT_VERIFIER_STACK_ENABLED = False
 DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
 DEFAULT_CLARIFY_ON_LOW_CONFIDENCE = True
 DEFAULT_MAX_LOW_CONFIDENCE_PROBES = 4
+DEFAULT_SELF_EDIT_MODE = False
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
@@ -1792,6 +1809,18 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
 
 
+def _sum_rejection_counts(rejection_counts: Any) -> int:
+    if not isinstance(rejection_counts, dict):
+        return 0
+    total = 0
+    for value in rejection_counts.values():
+        try:
+            total += max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def _tier_from_model(model_name: str) -> str:
     lowered = model_name.lower()
     if "opus" in lowered:
@@ -2403,6 +2432,7 @@ def run_cli_agent(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+    self_edit_mode: bool = DEFAULT_SELF_EDIT_MODE,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
@@ -2498,6 +2528,7 @@ def run_cli_agent(
             low_confidence_threshold=low_confidence_threshold,
             clarify_on_low_confidence=clarify_on_low_confidence,
             max_low_confidence_probes=max_low_confidence_probes,
+            self_edit_mode=self_edit_mode,
             llm_backend=llm_backend,
             benchmark_deterministic=benchmark_deterministic,
             benchmark_promoted_only=benchmark_promoted_only,
@@ -2600,6 +2631,7 @@ def _run_cli_agent_impl(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+    self_edit_mode: bool = DEFAULT_SELF_EDIT_MODE,
     llm_backend: str = DEFAULT_LLM_BACKEND,
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
@@ -2681,6 +2713,9 @@ def _run_cli_agent_impl(
 
     # Build full manifest always (needed for posttask learning even in bootstrap)
     skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
+    self_edit_manifest_entries = build_self_edit_manifest_entries(track_root=TRACK_ROOT) if bool(self_edit_mode) else []
+    self_edit_mode_active = bool(self_edit_mode) and bool(self_edit_manifest_entries)
+    self_edit_refs = {entry.skill_ref for entry in self_edit_manifest_entries}
 
     if bootstrap:
         # Bootstrap mode: no skill docs, agent must learn from scratch via lessons
@@ -2825,6 +2860,13 @@ def _run_cli_agent_impl(
     else:
         effective_judge_model = model_judge or default_judge_model(model_executor)
 
+    loop_watchdog_state_path = state_path_for_learning_root(learning_root=LEARNING_ROOT)
+    loop_watchdog_state: LoopWatchdogState = load_watchdog_state(state_path=loop_watchdog_state_path)
+    loop_watchdog_decision: LoopWatchdogDecision | None = None
+    loop_watchdog_failure_signals: list[str] = []
+    loop_watchdog_safe_mode_active = bool(loop_watchdog_state.safe_mode_active)
+    loop_watchdog_stop_flag = bool(loop_watchdog_state.last_stop_flag)
+
     metrics: dict[str, Any] = {
         "run_id": str(run_id or ""),
         "run_started_at": str(run_started_at or ""),
@@ -2936,6 +2978,10 @@ def _run_cli_agent_impl(
         "lessons_generated": 0,
         "v2_lessons_generated": 0,
         "posttask_patch_attempted": False,
+        "self_edit_mode": bool(self_edit_mode_active),
+        "self_edit_targets": sorted(self_edit_refs),
+        "self_edit_forced_direct_mode": False,
+        "self_edit_gate_events": 0,
         "posttask_skill_patching_skipped_by_mode": False,
         "posttask_skill_patching_skip_reason": None,
         "posttask_candidates_queued": 0,
@@ -2974,6 +3020,22 @@ def _run_cli_agent_impl(
         "critic_raw_lessons": [],
         "critic_filtered_lessons": [],
         "critic_rejected_lessons": [],
+        "loop_watchdog_enabled": True,
+        "loop_watchdog_state_path": str(loop_watchdog_state_path),
+        "loop_watchdog_safe_mode_initial": bool(loop_watchdog_state.safe_mode_active),
+        "loop_watchdog_safe_mode_active": bool(loop_watchdog_safe_mode_active),
+        "loop_watchdog_safe_mode_triggered": False,
+        "loop_watchdog_failure_signals": [],
+        "loop_watchdog_disable_self_edit": False,
+        "loop_watchdog_disable_posttask_patching": False,
+        "loop_watchdog_stop_flag": bool(loop_watchdog_stop_flag),
+        "loop_watchdog_repeated_hard_failure_signatures": 0,
+        "loop_watchdog_contract_gap_unresolved_count": 0,
+        "loop_watchdog_rejection_streak_initial": int(loop_watchdog_state.rejection_streak),
+        "loop_watchdog_rejection_streak_final": int(loop_watchdog_state.rejection_streak),
+        "loop_watchdog_safe_mode_failure_streak": int(loop_watchdog_state.safe_mode_failure_streak),
+        "loop_watchdog_posttask_rejection_total": 0,
+        "loop_watchdog_state_persisted": False,
         "critic_no_updates_streak": int(escalation_state.get("critic_no_updates_streak", 0)),
         "low_score_streak": int(escalation_state.get("low_score_streak", 0)),
         "escalation_state": {
@@ -4023,6 +4085,106 @@ def _run_cli_agent_impl(
                 },
             )
 
+    # Evaluate watchdog policy before post-task patch hooks so safe mode can
+    # disable risky self-edit/patch paths in the same run.
+    hard_failure_counts = Counter(
+        event.fingerprint for event in run_error_events if event.channel == "hard_failure"
+    )
+    repeated_error_signatures = sorted(
+        fingerprint
+        for fingerprint, count in hard_failure_counts.items()
+        if count >= 2
+    )
+    loop_watchdog_snapshot = LoopWatchdogSnapshot(
+        repeated_hard_failure_signatures=len(repeated_error_signatures),
+        contract_gap_unresolved_count=len(final_unresolved_gaps),
+        rejection_streak=int(loop_watchdog_state.rejection_streak),
+    )
+    loop_watchdog_decision = evaluate_watchdog_policy(
+        state=loop_watchdog_state,
+        snapshot=loop_watchdog_snapshot,
+    )
+    loop_watchdog_safe_mode_active = bool(loop_watchdog_decision.safe_mode_active)
+    loop_watchdog_failure_signals = list(loop_watchdog_decision.failure_signals)
+    loop_watchdog_stop_flag = bool(loop_watchdog_decision.stop_flag)
+    metrics["loop_watchdog_safe_mode_active"] = bool(loop_watchdog_safe_mode_active)
+    metrics["loop_watchdog_safe_mode_triggered"] = bool(loop_watchdog_decision.safe_mode_triggered)
+    metrics["loop_watchdog_failure_signals"] = list(loop_watchdog_failure_signals)
+    metrics["loop_watchdog_disable_self_edit"] = bool(loop_watchdog_decision.disable_self_edit)
+    metrics["loop_watchdog_disable_posttask_patching"] = bool(loop_watchdog_decision.disable_posttask_patching)
+    metrics["loop_watchdog_stop_flag"] = bool(loop_watchdog_stop_flag)
+    metrics["loop_watchdog_repeated_hard_failure_signatures"] = int(loop_watchdog_snapshot.repeated_hard_failure_signatures)
+    metrics["loop_watchdog_contract_gap_unresolved_count"] = int(loop_watchdog_snapshot.contract_gap_unresolved_count)
+    metrics["loop_watchdog_safe_mode_failure_streak"] = int(loop_watchdog_decision.safe_mode_failure_streak)
+    loop_watchdog_visibility_required = bool(loop_watchdog_safe_mode_active) and (
+        bool(posttask_learn) or bool(self_edit_mode_active) or bool(loop_watchdog_stop_flag)
+    )
+    if loop_watchdog_visibility_required:
+        write_event(
+            paths.events_path,
+            {
+                "step": int(metrics.get("steps", 0) or 0) + 1,
+                "tool": "loop_watchdog",
+                "tool_input": {
+                    "signal_counts": {
+                        "repeated_hard_failure_signatures": int(loop_watchdog_snapshot.repeated_hard_failure_signatures),
+                        "contract_gap_unresolved_count": int(loop_watchdog_snapshot.contract_gap_unresolved_count),
+                        "rejection_streak": int(loop_watchdog_snapshot.rejection_streak),
+                    },
+                    "state_path": str(loop_watchdog_state_path),
+                },
+                "ok": not bool(loop_watchdog_stop_flag),
+                "error": "watchdog_stop_flag" if bool(loop_watchdog_stop_flag) else None,
+                "output": json.dumps(
+                    {
+                        "safe_mode_triggered": bool(loop_watchdog_decision.safe_mode_triggered),
+                        "safe_mode_active": bool(loop_watchdog_decision.safe_mode_active),
+                        "stop_flag": bool(loop_watchdog_decision.stop_flag),
+                        "failure_signals": list(loop_watchdog_failure_signals),
+                    },
+                    ensure_ascii=True,
+                ),
+            },
+        )
+        if on_lifecycle_event is not None:
+            try:
+                on_lifecycle_event(
+                    "step",
+                    {
+                        "step": int(metrics.get("steps", 0) or 0),
+                        "trigger": "loop_watchdog_safe_mode",
+                    },
+                )
+                if bool(loop_watchdog_stop_flag):
+                    on_lifecycle_event(
+                        "step",
+                        {
+                            "step": int(metrics.get("steps", 0) or 0),
+                            "trigger": "loop_watchdog_stop_flag",
+                        },
+                    )
+            except Exception:
+                pass
+
+    effective_self_edit_mode_active = bool(self_edit_mode_active) and not bool(loop_watchdog_decision.disable_self_edit)
+    metrics["self_edit_mode_effective"] = bool(effective_self_edit_mode_active)
+    if bool(self_edit_mode_active) and not bool(effective_self_edit_mode_active):
+        append_self_edit_gate_event(
+            sessions_root=SESSIONS_ROOT,
+            run_id=run_id or "",
+            session_id=session_id,
+            task_id=task_id,
+            domain=domain,
+            learn_mode=learning_mode,
+            stage="proposal",
+            status="rejected",
+            reason="loop_watchdog_safe_mode",
+            metadata={
+                "failure_signals": list(loop_watchdog_failure_signals),
+            },
+        )
+        metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+
     critic_no_updates = False
 
     if posttask_learn and skill_manifest_entries and client is not None:
@@ -4031,6 +4193,10 @@ def _run_cli_agent_impl(
         # Demo mode keeps Memory V2 lesson generation/promotion active while
         # suppressing legacy skill patching hooks/events for cleaner demos.
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
+        if bool(loop_watchdog_decision) and bool(loop_watchdog_decision.disable_posttask_patching):
+            patching_enabled = False
+            metrics["posttask_skill_patching_skipped_by_mode"] = True
+            metrics["posttask_skill_patching_skip_reason"] = "loop_watchdog_safe_mode"
         metrics["posttask_patch_attempted"] = patching_enabled
         tail_events = [
             {
@@ -4043,7 +4209,15 @@ def _run_cli_agent_impl(
             for row in events[-20:]
         ]
         routed_refs = [entry.skill_ref for entry in routed_entries]
-        skill_snapshots, skill_digests = _load_skill_snapshots(entries=skill_manifest_entries, routed_refs=routed_refs)
+        patch_manifest_entries = skill_manifest_entries
+        patch_snapshot_refs = routed_refs
+        if bool(effective_self_edit_mode_active) and self_edit_manifest_entries:
+            patch_manifest_entries = list(self_edit_manifest_entries)
+            patch_snapshot_refs = [entry.skill_ref for entry in patch_manifest_entries]
+        skill_snapshots, skill_digests = _load_skill_snapshots(
+            entries=patch_manifest_entries,
+            routed_refs=patch_snapshot_refs,
+        )
         domain_keywords = adapter.quality_keywords()
         critic_context = ""
         critic_context_sources: list[str] = []
@@ -4115,7 +4289,8 @@ def _run_cli_agent_impl(
         fingerprint_counts = Counter(event.fingerprint for event in hard_events)
         recurring_fingerprints = [fingerprint for fingerprint, count in fingerprint_counts.items() if count >= 2]
         prioritized_fingerprints = recurring_fingerprints or [fingerprint for fingerprint, _ in fingerprint_counts.most_common(3)]
-        repeated_error_signatures = list(recurring_fingerprints)
+        if not repeated_error_signatures:
+            repeated_error_signatures = list(recurring_fingerprints)
         v2_candidates: list[LessonRecord] = []
         structured_gap_rows = list(final_unresolved_gaps)
         fallback_rules: list[str] = []
@@ -4319,10 +4494,11 @@ def _run_cli_agent_impl(
         # Simplified architecture stores lessons only and skips post-task skill patches.
         if not patching_enabled:
             metrics["posttask_skill_patching_skipped_by_mode"] = True
-            if memory_v2_demo_mode:
-                metrics["posttask_skill_patching_skip_reason"] = "memory_v2_demo_mode"
-            else:
-                metrics["posttask_skill_patching_skip_reason"] = "architecture_mode"
+            if not metrics.get("posttask_skill_patching_skip_reason"):
+                if memory_v2_demo_mode:
+                    metrics["posttask_skill_patching_skip_reason"] = "memory_v2_demo_mode"
+                else:
+                    metrics["posttask_skill_patching_skip_reason"] = "architecture_mode"
         else:
             proposed_updates, confidence, reflection_raw = propose_skill_updates(
                 client=client,
@@ -4357,9 +4533,72 @@ def _run_cli_agent_impl(
 
             critic_no_updates = len(proposed_updates) == 0
             required_digests = {update.skill_ref: update.skill_digest for update in proposed_updates}
-            allowed_refs = {update.skill_ref for update in proposed_updates}
+            if bool(effective_self_edit_mode_active):
+                allowed_refs = self_edit_allowed_refs()
+            else:
+                allowed_refs = {update.skill_ref for update in proposed_updates}
 
-            if posttask_mode == "direct":
+            if bool(effective_self_edit_mode_active):
+                proposal_status = "proposed" if proposed_updates else "rejected"
+                proposal_reason = None if proposed_updates else "no_updates"
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="proposal",
+                    status=proposal_status,
+                    reason=proposal_reason,
+                    metadata={
+                        "confidence": float(confidence),
+                        "update_count": int(len(proposed_updates)),
+                    },
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+
+            effective_posttask_mode = posttask_mode
+            if bool(effective_self_edit_mode_active) and posttask_mode != "direct":
+                effective_posttask_mode = "direct"
+                metrics["self_edit_forced_direct_mode"] = True
+
+            if bool(effective_self_edit_mode_active):
+                patch_result = apply_guarded_self_edit_updates(
+                    entries=patch_manifest_entries,
+                    updates=proposed_updates,
+                    confidence=confidence,
+                    track_root=TRACK_ROOT,
+                    required_skill_digests=required_digests,
+                    allowed_skill_refs=allowed_refs,
+                )
+                metrics["posttask_patch_applied"] = int(patch_result.get("applied", 0))
+                patch_rejections = patch_result.get("rejection_counts", {})
+                if isinstance(patch_rejections, dict):
+                    for reason, count in patch_rejections.items():
+                        reason_key = str(reason)
+                        metrics["posttask_rejection_counts"][reason_key] = int(
+                            metrics["posttask_rejection_counts"].get(reason_key, 0)
+                        ) + int(count)
+                patch_status = "accepted" if int(patch_result.get("applied", 0) or 0) > 0 else "rejected"
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="patch",
+                    status=patch_status,
+                    reason=str(patch_result.get("skipped_reason", "")).strip() or None,
+                    rollback_reason="verification_failed" if bool(patch_result.get("rolled_back", False)) else None,
+                    metadata={
+                        "applied": int(patch_result.get("applied", 0) or 0),
+                        "updated_skill_refs": list(patch_result.get("updated_skill_refs", [])),
+                    },
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+            elif effective_posttask_mode == "direct":
                 patch_result = apply_skill_updates(
                     entries=skill_manifest_entries,
                     updates=proposed_updates,
@@ -4402,7 +4641,7 @@ def _run_cli_agent_impl(
                 {
                     "step": int(metrics["steps"]) + 1,
                     "tool": "posttask_hook",
-                    "tool_input": {"mode": posttask_mode, "critic_model": critic_model_for_run},
+                    "tool_input": {"mode": effective_posttask_mode, "critic_model": critic_model_for_run},
                     "ok": True,
                     "error": None,
                     "output": json.dumps(
@@ -4416,18 +4655,38 @@ def _run_cli_agent_impl(
                 },
             )
 
-            promotion_result = auto_promote_queued_candidates(
-                entries=skill_manifest_entries,
-                queue_path=QUEUE_PATH,
-                promoted_path=PROMOTED_PATH,
-                sessions_root=SESSIONS_ROOT,
-                task_id=task_id,
-                skills_root=SKILLS_ROOT,
-                manifest_path=MANIFEST_PATH,
-                min_runs=promotion_min_runs,
-                min_delta=promotion_min_delta,
-                max_regressions=promotion_max_regressions,
-            )
+            if bool(effective_self_edit_mode_active):
+                promotion_result = {
+                    "attempted": False,
+                    "applied": 0,
+                    "reason": "self_edit_direct_mode",
+                }
+                append_self_edit_gate_event(
+                    sessions_root=SESSIONS_ROOT,
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    task_id=task_id,
+                    domain=domain,
+                    learn_mode=learning_mode,
+                    stage="promotion",
+                    status="rejected",
+                    reason="self_edit_direct_mode",
+                    metadata={"posttask_mode": str(posttask_mode)},
+                )
+                metrics["self_edit_gate_events"] = int(metrics.get("self_edit_gate_events", 0) or 0) + 1
+            else:
+                promotion_result = auto_promote_queued_candidates(
+                    entries=skill_manifest_entries,
+                    queue_path=QUEUE_PATH,
+                    promoted_path=PROMOTED_PATH,
+                    sessions_root=SESSIONS_ROOT,
+                    task_id=task_id,
+                    skills_root=SKILLS_ROOT,
+                    manifest_path=MANIFEST_PATH,
+                    min_runs=promotion_min_runs,
+                    min_delta=promotion_min_delta,
+                    max_regressions=promotion_max_regressions,
+                )
             metrics["auto_promotion_applied"] = int(promotion_result.get("applied", 0))
             metrics["auto_promotion_reason"] = promotion_result.get("reason")
             write_event(
@@ -4444,6 +4703,34 @@ def _run_cli_agent_impl(
     elif posttask_learn and client is None:
         metrics["posttask_skill_patching_skipped_by_mode"] = True
         metrics["posttask_skill_patching_skip_reason"] = "no_llm_client"
+
+    loop_watchdog_posttask_rejection_total = _sum_rejection_counts(metrics.get("posttask_rejection_counts", {}))
+    metrics["loop_watchdog_posttask_rejection_total"] = int(loop_watchdog_posttask_rejection_total)
+    if loop_watchdog_decision is None:
+        loop_watchdog_decision = LoopWatchdogDecision(
+            safe_mode_active=False,
+            safe_mode_triggered=False,
+            stop_flag=False,
+            failure_signals=(),
+            disable_self_edit=False,
+            disable_posttask_patching=False,
+            safe_mode_failure_streak=0,
+        )
+    loop_watchdog_state = next_watchdog_state(
+        state=loop_watchdog_state,
+        decision=loop_watchdog_decision,
+        run_id=str(run_id or ""),
+        posttask_rejection_total=loop_watchdog_posttask_rejection_total,
+    )
+    metrics["loop_watchdog_rejection_streak_final"] = int(loop_watchdog_state.rejection_streak)
+    metrics["loop_watchdog_safe_mode_active"] = bool(loop_watchdog_decision.safe_mode_active)
+    metrics["loop_watchdog_stop_flag"] = bool(loop_watchdog_decision.stop_flag)
+    metrics["loop_watchdog_safe_mode_failure_streak"] = int(loop_watchdog_state.safe_mode_failure_streak)
+    try:
+        persist_watchdog_state(state_path=loop_watchdog_state_path, state=loop_watchdog_state)
+        metrics["loop_watchdog_state_persisted"] = True
+    except Exception:
+        metrics["loop_watchdog_state_persisted"] = False
 
     escalation_state = _escalate_if_needed(
         state=escalation_state,
@@ -4493,6 +4780,24 @@ def _run_cli_agent_impl(
             "unresolved_count_prestop": int(metrics.get("contract_gap_unresolved_count_prestop", 0) or 0),
             "unresolved_count_final": int(metrics.get("contract_gap_unresolved_count_final", 0) or 0),
             "unresolved_gaps_final": list(final_unresolved_gaps),
+        },
+        "loop_watchdog": {
+            "state_path": str(loop_watchdog_state_path),
+            "safe_mode_initial": bool(metrics.get("loop_watchdog_safe_mode_initial", False)),
+            "safe_mode_active": bool(metrics.get("loop_watchdog_safe_mode_active", False)),
+            "safe_mode_triggered": bool(metrics.get("loop_watchdog_safe_mode_triggered", False)),
+            "stop_flag": bool(metrics.get("loop_watchdog_stop_flag", False)),
+            "failure_signals": list(metrics.get("loop_watchdog_failure_signals", [])),
+            "repeated_hard_failure_signatures": int(
+                metrics.get("loop_watchdog_repeated_hard_failure_signatures", 0) or 0
+            ),
+            "contract_gap_unresolved_count": int(
+                metrics.get("loop_watchdog_contract_gap_unresolved_count", 0) or 0
+            ),
+            "rejection_streak_initial": int(metrics.get("loop_watchdog_rejection_streak_initial", 0) or 0),
+            "rejection_streak_final": int(metrics.get("loop_watchdog_rejection_streak_final", 0) or 0),
+            "safe_mode_failure_streak": int(metrics.get("loop_watchdog_safe_mode_failure_streak", 0) or 0),
+            "posttask_rejection_total": int(metrics.get("loop_watchdog_posttask_rejection_total", 0) or 0),
         },
         "lesson_candidates": v2_candidate_lessons,
         "promoted_lessons": promoted_lesson_ids,

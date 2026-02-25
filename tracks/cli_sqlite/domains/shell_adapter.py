@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -48,7 +49,9 @@ _SHELL_ALIASES: dict[str, ToolAlias] = {
     ),
 }
 
-_HOTFIX_HARD_TASK_ID = "shell_git_transfer_hotfix_hard"
+HOTFIX_HARD_TASK_ID = "shell_git_transfer_hotfix_hard"
+HOTFIX_HARD_VARIANT_OVERRIDE_ENV = "CORTEX_SHELL_HOTFIX_HARD_VARIANT"
+_HOTFIX_HARD_TASK_ID = HOTFIX_HARD_TASK_ID
 _HOTFIX_HARD_VARIANTS: tuple[dict[str, str], ...] = (
     {
         "variant_id": "alpha",
@@ -113,6 +116,11 @@ def _extract_session_id(work_dir: Path) -> int:
 def _select_hotfix_variant(session_id: int) -> dict[str, str]:
     if not _HOTFIX_HARD_VARIANTS:
         raise RuntimeError("No hotfix variants configured for shell_git_transfer_hotfix_hard.")
+    override_variant_id = str(os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV, "")).strip().lower()
+    if override_variant_id:
+        for item in _HOTFIX_HARD_VARIANTS:
+            if str(item.get("variant_id", "")).strip().lower() == override_variant_id:
+                return dict(item)
     if session_id <= 0:
         return dict(_HOTFIX_HARD_VARIANTS[0])
     idx = int(session_id) % len(_HOTFIX_HARD_VARIANTS)

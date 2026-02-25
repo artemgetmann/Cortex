@@ -230,6 +230,67 @@ def test_memory_v2_demo_mode_suppresses_legacy_hook_events(monkeypatch: pytest.M
     assert normal_result.metrics["posttask_patch_attempted"] is True
 
 
+def test_self_edit_mode_emits_gate_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+    gate_events: list[dict[str, Any]] = []
+
+    target = (tmp_path / "track" / "tracks" / "cli_sqlite" / "agent_cli.py")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agent_cli,
+        "build_self_edit_manifest_entries",
+        lambda **kwargs: [
+            SkillManifestEntry(
+                skill_ref="orchestration/agent_cli",
+                title="orchestrator",
+                description="target",
+                path=str(target),
+                version=1,
+                last_updated="2026-02-25T00:00:00+00:00",
+                confidence=0.7,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        agent_cli,
+        "apply_guarded_self_edit_updates",
+        lambda **kwargs: {
+            "attempted": False,
+            "proposed": 0,
+            "applied": 0,
+            "updated_skill_refs": [],
+            "confidence": 0.0,
+            "skipped_reason": "no_updates",
+            "rolled_back": False,
+            "verification": [],
+            "rejection_counts": {},
+        },
+    )
+    monkeypatch.setattr(agent_cli, "append_self_edit_gate_event", lambda **kwargs: gate_events.append(kwargs))
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task=None,
+        session_id=103,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        self_edit_mode=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["self_edit_mode"] is True
+    assert int(result.metrics["self_edit_gate_events"]) >= 2
+    assert len(gate_events) >= 2
+
+
 def test_run_cli_agent_script_forwards_demo_mode_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, Any] = {}
 
@@ -309,6 +370,32 @@ def test_run_cli_agent_script_forwards_llm_backend_flag(
     rc = run_cli_agent_script.main()
     assert rc == 0
     assert captured["llm_backend"] == "claude_print"
+    capsys.readouterr()
+
+
+def test_run_cli_agent_script_forwards_self_edit_mode_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--self-edit-mode",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["self_edit_mode"] is True
     capsys.readouterr()
 
 
