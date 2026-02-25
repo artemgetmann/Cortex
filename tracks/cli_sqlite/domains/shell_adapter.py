@@ -48,6 +48,34 @@ _SHELL_ALIASES: dict[str, ToolAlias] = {
     ),
 }
 
+_HOTFIX_HARD_TASK_ID = "shell_git_transfer_hotfix_hard"
+_HOTFIX_HARD_VARIANTS: tuple[dict[str, str], ...] = (
+    {
+        "variant_id": "alpha",
+        "patch_file": "hotfix_alpha.patch",
+        "hotfix_file": "hotfix_alpha.txt",
+        "commit_message": "hotfix: apply alpha retry profile",
+        "marker_line": "Retry profile alpha",
+        "change_line": "Set initial delay to 275ms",
+    },
+    {
+        "variant_id": "beta",
+        "patch_file": "hotfix_beta.patch",
+        "hotfix_file": "hotfix_beta.txt",
+        "commit_message": "hotfix: apply beta retry profile",
+        "marker_line": "Retry profile beta",
+        "change_line": "Set initial delay to 300ms",
+    },
+    {
+        "variant_id": "gamma",
+        "patch_file": "hotfix_gamma.patch",
+        "hotfix_file": "hotfix_gamma.txt",
+        "commit_message": "hotfix: apply gamma retry profile",
+        "marker_line": "Retry profile gamma",
+        "change_line": "Set initial delay to 325ms",
+    },
+)
+
 
 def _get_tool_api_name(canonical: str, opaque: bool) -> str:
     alias = _SHELL_ALIASES.get(canonical)
@@ -68,6 +96,142 @@ def _clip_text(text: str, *, max_chars: int = 1800) -> str:
     if len(compact) <= max_chars:
         return compact
     return compact[: max_chars - 3] + "..."
+
+
+def _extract_session_id(work_dir: Path) -> int:
+    # Session directories are created as `session-<id>` by the CLI harness.
+    # We parse the numeric suffix to deterministically select task variants.
+    match = re.search(r"session-(\d+)", str(work_dir))
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _select_hotfix_variant(session_id: int) -> dict[str, str]:
+    if not _HOTFIX_HARD_VARIANTS:
+        raise RuntimeError("No hotfix variants configured for shell_git_transfer_hotfix_hard.")
+    if session_id <= 0:
+        return dict(_HOTFIX_HARD_VARIANTS[0])
+    idx = int(session_id) % len(_HOTFIX_HARD_VARIANTS)
+    return dict(_HOTFIX_HARD_VARIANTS[idx])
+
+
+def _replace_tokens(payload: Any, replacements: dict[str, str]) -> Any:
+    if isinstance(payload, str):
+        out = payload
+        for token, value in replacements.items():
+            out = out.replace(token, value)
+        return out
+    if isinstance(payload, list):
+        return [_replace_tokens(item, replacements) for item in payload]
+    if isinstance(payload, dict):
+        return {str(key): _replace_tokens(value, replacements) for key, value in payload.items()}
+    return payload
+
+
+def _build_hotfix_hard_runtime_artifacts(
+    *,
+    task_dir: Path,
+    work_dir: Path,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    session_id = _extract_session_id(work_dir)
+    variant = _select_hotfix_variant(session_id)
+    transfer_branch = "main"
+    variant_id = str(variant["variant_id"])
+    patch_file = str(variant["patch_file"])
+    hotfix_file = str(variant["hotfix_file"])
+    commit_message = str(variant["commit_message"])
+    marker_line = str(variant["marker_line"])
+    change_line = str(variant["change_line"])
+    verification_line = (
+        f"GIT_TRANSFER_OK target=target_repo branch={transfer_branch} "
+        f"patches=1 file={hotfix_file} variant={variant_id}"
+    )
+    summary_lines = [
+        f"TRANSFER_BRANCH {transfer_branch}",
+        "TRANSFER_PATCHES 1",
+        f"TRANSFER_PATCH_FILE {patch_file}",
+        f"TRANSFER_VARIANT {variant_id}",
+    ]
+    payload_lines: list[str] = []
+    payload_path = task_dir / "hotfix_payload.txt"
+    if payload_path.exists():
+        payload_lines = [
+            str(line).strip()
+            for line in payload_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if str(line).strip()
+        ]
+    if marker_line not in payload_lines:
+        payload_lines.append(marker_line)
+    if change_line not in payload_lines:
+        payload_lines.append(change_line)
+
+    variant_spec = {
+        "task_id": _HOTFIX_HARD_TASK_ID,
+        "session_id": session_id,
+        "variant_id": variant_id,
+        "source_repo": "source_repo",
+        "target_repo": "target_repo",
+        "transfer_branch": transfer_branch,
+        "patch_file": patch_file,
+        "hotfix_file": hotfix_file,
+        "commit_message": commit_message,
+        "required_marker_line": marker_line,
+        "required_change_line": change_line,
+        "summary_lines": summary_lines,
+        "verification_line": verification_line,
+        "hotfix_lines": payload_lines,
+    }
+    variant_spec_path = work_dir / "variant_spec.json"
+    variant_spec_path.write_text(json.dumps(variant_spec, ensure_ascii=True, indent=2), encoding="utf-8")
+
+    contract_template_path = task_dir / "CONTRACT.json"
+    runtime_contract_path = work_dir / "CONTRACT.runtime.json"
+    if contract_template_path.exists():
+        try:
+            contract_template = json.loads(contract_template_path.read_text(encoding="utf-8"))
+        except Exception:
+            contract_template = {}
+        if isinstance(contract_template, dict):
+            replacements = {
+                "__PATCH_FILE__": patch_file,
+                "__HOTFIX_FILE__": hotfix_file,
+                "__COMMIT_MESSAGE__": commit_message,
+                "__TRANSFER_BRANCH__": transfer_branch,
+                "__VARIANT_ID__": variant_id,
+                "__VERIFICATION_LINE__": verification_line,
+                "__MARKER_LINE__": marker_line,
+                "__CHANGE_LINE__": change_line,
+            }
+            runtime_contract = _replace_tokens(contract_template, replacements)
+            runtime_contract_path.write_text(
+                json.dumps(runtime_contract, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+
+    runtime_brief_path = work_dir / "runtime_task.md"
+    runtime_brief_path.write_text(
+        (
+            "# Runtime Variant\n\n"
+            "Read `variant_spec.json` and follow it exactly.\n"
+            f"- variant_id: {variant_id}\n"
+            f"- hotfix_file: {hotfix_file}\n"
+            f"- patch_file: {patch_file}\n"
+            f"- commit_message: {commit_message}\n"
+        ),
+        encoding="utf-8",
+    )
+    return (
+        {
+            "variant_spec.json": variant_spec_path,
+            "runtime_task.md": runtime_brief_path,
+            "CONTRACT.runtime.json": runtime_contract_path,
+        },
+        variant_spec,
+    )
 
 
 def _inspect_xlsx(path: Path) -> dict[str, Any]:
@@ -202,6 +366,11 @@ class ShellAdapter:
             if file_path.name == "task.md":
                 continue
             shutil.copy2(file_path, work_dir / file_path.name)
+        if task_dir.name == _HOTFIX_HARD_TASK_ID:
+            runtime_paths, _ = _build_hotfix_hard_runtime_artifacts(task_dir=task_dir, work_dir=work_dir)
+            for ref, path in runtime_paths.items():
+                if path.exists():
+                    fixture_paths[ref] = path
         return DomainWorkspace(
             task_id=task_dir.name,
             task_dir=task_dir,

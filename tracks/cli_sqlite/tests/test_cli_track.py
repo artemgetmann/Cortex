@@ -309,6 +309,87 @@ class EvalTests(unittest.TestCase):
             )
             self.assertTrue(passed_result.passed)
 
+    def test_eval_uses_runtime_contract_override_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_root = root / "tasks"
+            task_dir = tasks_root / "shell_runtime_contract"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            (task_dir / "CONTRACT.json").write_text(
+                json.dumps(
+                    {
+                        "id": "shell-runtime-contract-template",
+                        "task_match": {"all": ["shell"], "any": []},
+                        "signals": {
+                            "required_event_patterns": [],
+                            "forbidden_event_patterns": [],
+                            "required_files": ["out.txt"],
+                            "required_file_content_patterns": [
+                                {"path": "out.txt", "patterns": ["(?m)^OLD_VALUE$"]},
+                            ],
+                            "required_queries": [],
+                            "max_error_count": 0,
+                        },
+                        "pass_rule": "required_file_content_patterns_present",
+                        "reason_codes": ["missing_required_file_content_pattern"],
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            work_dir = root / "sessions" / "session-002"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            db_path = work_dir / "task.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS marker(id INTEGER)")
+                conn.commit()
+            (work_dir / "out.txt").write_text("NEW_VALUE\n", encoding="utf-8")
+
+            # Without runtime override, template contract should fail.
+            failed = evaluate_cli_session(
+                task="shell runtime contract validation",
+                task_id="shell_runtime_contract",
+                events=[],
+                db_path=db_path,
+                tasks_root=tasks_root,
+            )
+            self.assertFalse(failed.passed)
+
+            # Runtime override should take precedence and pass.
+            (work_dir / "CONTRACT.runtime.json").write_text(
+                json.dumps(
+                    {
+                        "id": "shell-runtime-contract-override",
+                        "task_match": {"all": ["shell"], "any": []},
+                        "signals": {
+                            "required_event_patterns": [],
+                            "forbidden_event_patterns": [],
+                            "required_files": ["out.txt"],
+                            "required_file_content_patterns": [
+                                {"path": "out.txt", "patterns": ["(?m)^NEW_VALUE$"]},
+                            ],
+                            "required_queries": [],
+                            "max_error_count": 0,
+                        },
+                        "pass_rule": "required_file_content_patterns_present",
+                        "reason_codes": ["missing_required_file_content_pattern"],
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            passed = evaluate_cli_session(
+                task="shell runtime contract validation",
+                task_id="shell_runtime_contract",
+                events=[],
+                db_path=db_path,
+                tasks_root=tasks_root,
+            )
+            self.assertTrue(passed.passed)
+            self.assertTrue(str(passed.contract_path).endswith("CONTRACT.runtime.json"))
+
     def test_eval_incremental_reconcile_pass_case(self) -> None:
         track_tasks = Path(__file__).resolve().parents[1] / "tasks"
         with tempfile.TemporaryDirectory() as tmp:

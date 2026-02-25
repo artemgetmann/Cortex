@@ -1,0 +1,67 @@
+{
+  "id": "cli-shell-git-transfer-hotfix-hard-template-v1",
+  "task_match": {
+    "all": [
+      "shell",
+      "git"
+    ],
+    "any": [
+      "transfer",
+      "patch",
+      "hotfix"
+    ]
+  },
+  "setup": {
+    "fixture_paths": [
+      "hotfix_payload.txt",
+      "variant_spec.json"
+    ]
+  },
+  "signals": {
+    "required_event_patterns": [
+      "(?is)git\\s+init\\s+source_repo",
+      "(?is)git\\s+init\\s+target_repo",
+      "(?is)git\\s+am\\s+\\.\\./__PATCH_FILE__",
+      "(?is)__COMMIT_MESSAGE__",
+      "(?is)__VERIFICATION_LINE__"
+    ],
+    "forbidden_event_patterns": [
+      "(?is)\\b/tmp\\b"
+    ],
+    "required_files": [
+      "source_repo/.git",
+      "target_repo/.git",
+      "__PATCH_FILE__",
+      "target_repo/__HOTFIX_FILE__",
+      "target_repo/transfer_summary.txt"
+    ],
+    "required_file_content_patterns": [
+      {
+        "path": "target_repo/__HOTFIX_FILE__",
+        "patterns": [
+          "(?is)__MARKER_LINE__",
+          "(?is)__CHANGE_LINE__"
+        ]
+      },
+      {
+        "path": "target_repo/transfer_summary.txt",
+        "patterns": [
+          "(?m)^TRANSFER_BRANCH\\s+__TRANSFER_BRANCH__$",
+          "(?m)^TRANSFER_PATCHES\\s+1$",
+          "(?m)^TRANSFER_PATCH_FILE\\s+__PATCH_FILE__$",
+          "(?m)^TRANSFER_VARIANT\\s+__VARIANT_ID__$"
+        ]
+      }
+    ],
+    "required_queries": [],
+    "max_error_count": 0
+  },
+  "pass_rule": "all_required_events && no_forbidden_events && required_files_present && required_file_content_patterns_present && errors_within_budget",
+  "reason_codes": [
+    "missing_required_event_pattern",
+    "matched_forbidden_event_pattern",
+    "missing_required_file",
+    "missing_required_file_content_pattern",
+    "too_many_errors"
+  ]
+}

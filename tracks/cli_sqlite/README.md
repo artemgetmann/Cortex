@@ -32,6 +32,7 @@ For canonical docs index, use `docs/README.md`.
 - `shell_excel_build_report`
 - `shell_git_train_release_flow`
 - `shell_git_transfer_hotfix`
+- `shell_git_transfer_hotfix_hard` (session-seeded runtime variant contract)
 
 ## Core Commands
 
@@ -69,6 +70,20 @@ python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
   --doc-budget-tokens 900 \
   --executor-docs on \
   --judge-docs on
+```
+
+Run with deterministic low-confidence verifier stack (probe + clarify path):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_cli_agent.py \
+  --task-id shell_git_transfer_hotfix \
+  --domain shell \
+  --session 1004 \
+  --judge-diagnostic \
+  --verifier-stack \
+  --low-confidence-threshold 0.7 \
+  --clarify-on-low-confidence \
+  --max-low-confidence-probes 4
 ```
 
 Run tests:
@@ -131,6 +146,7 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Benchmark default backend is API (`anthropic`) with Haiku 4.5.
 - Critic tuning flags are intentionally hidden in benchmark runners; critic stays locked to executor-equivalent behavior.
 - `--judge-diagnostic` forces judge rationale capture even on contract-pass runs while keeping contract pass/fail authoritative.
+- `--verifier-stack` adds deterministic post-eval checks for low-confidence outcomes. If probes are inconclusive, runtime emits a deterministic clarifying question (`metrics.verifier_clarifying_question` + `verifier_clarify` event).
 - Learning is credited only when transfer pass lifts and mechanism metrics engage (`lesson_activations > 0`, `retrieval_help_ratio` lift).
 - For transfer/holdout protocol details, see `docs/MEMORY-V2-BENCHMARKS.md`.
 - Latest SQLite benchmark write-up: `tracks/cli_sqlite/reports/benchmark_report_sqlite_2026-02-21.md`.

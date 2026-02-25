@@ -226,7 +226,29 @@ DEFAULT_CONTRACT = {
 }
 
 
-def load_contract(tasks_root: Path, task_id: str) -> tuple[dict[str, Any], Path]:
+def load_contract(
+    tasks_root: Path,
+    task_id: str,
+    *,
+    work_dir: Path | None = None,
+) -> tuple[dict[str, Any], Path]:
+    """
+    Load contract with optional runtime override support.
+
+    If a session-scoped runtime contract exists in `work_dir/CONTRACT.runtime.json`,
+    it takes precedence. This enables deterministic per-run variants while keeping
+    task templates static in `tasks/<task_id>/CONTRACT.json`.
+    """
+    if isinstance(work_dir, Path):
+        runtime_path = work_dir / "CONTRACT.runtime.json"
+        if runtime_path.exists():
+            try:
+                runtime_data = json.loads(runtime_path.read_text(encoding="utf-8"))
+                if isinstance(runtime_data, dict):
+                    return runtime_data, runtime_path
+            except Exception:
+                # Fall through to task-level contract on malformed runtime payloads.
+                pass
     path = tasks_root / task_id / "CONTRACT.json"
     if not path.exists():
         return dict(DEFAULT_CONTRACT), path
@@ -309,8 +331,10 @@ def evaluate_cli_session(
     events: list[dict[str, Any]],
     db_path: Path,
     tasks_root: Path,
+    work_dir: Path | None = None,
 ) -> CliEvaluation:
-    contract, contract_path = load_contract(tasks_root, task_id)
+    effective_work_dir = work_dir if isinstance(work_dir, Path) else db_path.parent
+    contract, contract_path = load_contract(tasks_root, task_id, work_dir=effective_work_dir)
     if not _task_matches(task, contract):
         return CliEvaluation(
             applicable=False,

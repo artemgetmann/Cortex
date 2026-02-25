@@ -84,6 +84,52 @@ def test_shell_prepare_workspace_copies_fixture_files(tmp_path: Path) -> None:
     assert (workspace.work_dir / "fixture.csv").exists()
 
 
+def test_shell_prepare_workspace_generates_runtime_variant_for_hotfix_hard(tmp_path: Path) -> None:
+    adapter = ShellAdapter()
+    task_dir = tmp_path / "tasks" / "shell_git_transfer_hotfix_hard"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_dir.joinpath("task.md").write_text("hard git transfer", encoding="utf-8")
+    task_dir.joinpath("hotfix_payload.txt").write_text("Retry backoff tune:\n", encoding="utf-8")
+    task_dir.joinpath("CONTRACT.json").write_text(
+        json.dumps(
+            {
+                "id": "template",
+                "task_match": {"all": ["shell"], "any": ["git"]},
+                "signals": {
+                    "required_event_patterns": ["__COMMIT_MESSAGE__", "__VERIFICATION_LINE__"],
+                    "required_files": ["__PATCH_FILE__", "target_repo/__HOTFIX_FILE__"],
+                    "required_file_content_patterns": [
+                        {
+                            "path": "target_repo/__HOTFIX_FILE__",
+                            "patterns": ["__MARKER_LINE__", "__CHANGE_LINE__"],
+                        }
+                    ],
+                    "required_queries": [],
+                    "max_error_count": 0,
+                },
+            },
+            ensure_ascii=True,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    # Use a realistic session-style work directory so variant selection is deterministic.
+    work_dir = tmp_path / "sessions" / "session-147500"
+    workspace = adapter.prepare_workspace(task_dir, work_dir)
+    assert (workspace.work_dir / "variant_spec.json").exists()
+    assert (workspace.work_dir / "CONTRACT.runtime.json").exists()
+    assert "variant_spec.json" in workspace.fixture_paths
+    assert "runtime_task.md" in workspace.fixture_paths
+    assert "CONTRACT.runtime.json" in workspace.fixture_paths
+
+    spec = json.loads((workspace.work_dir / "variant_spec.json").read_text(encoding="utf-8"))
+    runtime_contract = json.loads((workspace.work_dir / "CONTRACT.runtime.json").read_text(encoding="utf-8"))
+    assert str(spec.get("variant_id", "")).strip() != ""
+    assert str(spec.get("patch_file", "")).strip() in runtime_contract["signals"]["required_files"]
+    assert "__PATCH_FILE__" not in json.dumps(runtime_contract, ensure_ascii=True)
+
+
 def test_agent_cli_resolves_shell_adapter() -> None:
     resolved = agent_cli._resolve_adapter("shell")
     assert resolved.name == "shell"
