@@ -1,0 +1,511 @@
+{
+  "generated_at_utc": "2026-02-25T11:49:01.798341+00:00",
+  "task_id": "incremental_reconcile",
+  "domain": "sqlite",
+  "protocol": {
+    "runs_per_arm": 10,
+    "max_steps": 4,
+    "llm_backend": "anthropic",
+    "model_executor": "claude-haiku-4-5",
+    "model_judge": "claude-haiku-4-5",
+    "docs": "on",
+    "doc_mode": "lossy",
+    "doc_retrieval": "auto",
+    "executor_docs": true,
+    "judge_docs": true,
+    "judge_diagnostic": true,
+    "contract_gap_retry": true,
+    "contract_gap_retry_steps": 1,
+    "structured_lessons_required": true,
+    "learning_state_reset_before_on": true,
+    "learning_state_reset_before_off": true
+  },
+  "arms": {
+    "on": {
+      "arm": "on",
+      "learning_on": true,
+      "start_session": 261000,
+      "end_session": 261009,
+      "run_count": 10,
+      "pass_count": 8,
+      "transfer_pass_rate": 0.8,
+      "last5_pass_rate": 1.0,
+      "median_steps_among_successes": 4.0,
+      "failed_run_count": 2,
+      "failed_runs_with_postretry_artifact": 2,
+      "failure_taxonomy": [
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 2
+        }
+      ],
+      "failure_taxonomy_query_ids": [],
+      "runs": [
+        {
+          "run": 1,
+          "session_id": 261000,
+          "passed": false,
+          "score": 0.917,
+          "steps": 4,
+          "tool_errors": 2,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261000/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=2 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          ]
+        },
+        {
+          "run": 2,
+          "session_id": 261001,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 5,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 3,
+          "session_id": 261002,
+          "passed": false,
+          "score": 0.917,
+          "steps": 4,
+          "tool_errors": 2,
+          "lessons_loaded": 2,
+          "lessons_generated": 4,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261002/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=2 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          ]
+        },
+        {
+          "run": 4,
+          "session_id": 261003,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 4,
+          "lessons_generated": 5,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 5,
+          "session_id": 261004,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 6,
+          "lessons_generated": 3,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 6,
+          "session_id": 261005,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 8,
+          "lessons_generated": 3,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 7,
+          "session_id": 261006,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 10,
+          "lessons_generated": 4,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 8,
+          "session_id": 261007,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 11,
+          "lessons_generated": 4,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 9,
+          "session_id": 261008,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 11,
+          "lessons_generated": 3,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 10,
+          "session_id": 261009,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 0,
+          "lessons_loaded": 11,
+          "lessons_generated": 3,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        }
+      ]
+    },
+    "off": {
+      "arm": "off",
+      "learning_on": false,
+      "start_session": 261100,
+      "end_session": 261109,
+      "run_count": 10,
+      "pass_count": 6,
+      "transfer_pass_rate": 0.6,
+      "last5_pass_rate": 0.4,
+      "median_steps_among_successes": 4.0,
+      "failed_run_count": 4,
+      "failed_runs_with_postretry_artifact": 4,
+      "failure_taxonomy": [
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "gap_signature": "required_query_mismatch|required_query|reject_count",
+          "count": 2
+        },
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 2
+        },
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+          "count": 2
+        },
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+          "count": 1
+        },
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+          "count": 1
+        }
+      ],
+      "failure_taxonomy_query_ids": [
+        {
+          "query_id": "reject_count",
+          "count": 2
+        },
+        {
+          "query_id": "checkpoint_row",
+          "count": 1
+        },
+        {
+          "query_id": "ledger_aggregate",
+          "count": 1
+        }
+      ],
+      "runs": [
+        {
+          "run": 1,
+          "session_id": 261100,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 2,
+          "session_id": 261101,
+          "passed": false,
+          "score": 0.833,
+          "steps": 4,
+          "tool_errors": 2,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261101/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "required_query_mismatch",
+              "gap_type": "required_query",
+              "detail": "reject_count: expected=[[\"1\"]] actual=[[\"6\"]]",
+              "gap_signature": "required_query_mismatch|required_query|reject_count",
+              "query_id": "reject_count",
+              "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+              "expected_rows": [
+                [
+                  "1"
+                ]
+              ],
+              "actual_rows": [
+                [
+                  "6"
+                ]
+              ]
+            },
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=2 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "required_query_mismatch|required_query|reject_count",
+            "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          ]
+        },
+        {
+          "run": 3,
+          "session_id": 261102,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 4,
+          "session_id": 261103,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 5,
+          "session_id": 261104,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 6,
+          "session_id": 261105,
+          "passed": false,
+          "score": 0.917,
+          "steps": 4,
+          "tool_errors": 3,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261105/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=3 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          ]
+        },
+        {
+          "run": 7,
+          "session_id": 261106,
+          "passed": false,
+          "score": 0.667,
+          "steps": 4,
+          "tool_errors": 2,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261106/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "required_query_mismatch",
+              "gap_type": "required_query",
+              "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+              "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+              "query_id": "ledger_aggregate",
+              "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+              "expected_rows": [
+                [
+                  "bass",
+                  "4"
+                ],
+                [
+                  "drums",
+                  "13"
+                ],
+                [
+                  "lead",
+                  "3"
+                ]
+              ],
+              "actual_rows": []
+            },
+            {
+              "reason_code": "required_query_mismatch",
+              "gap_type": "required_query",
+              "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+              "gap_signature": "required_query_mismatch|required_query|reject_count",
+              "query_id": "reject_count",
+              "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+              "expected_rows": [
+                [
+                  "1"
+                ]
+              ],
+              "actual_rows": [
+                [
+                  "0"
+                ]
+              ]
+            },
+            {
+              "reason_code": "required_query_mismatch",
+              "gap_type": "required_query",
+              "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[]",
+              "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+              "query_id": "checkpoint_row",
+              "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+              "expected_rows": [
+                [
+                  "CKP-APR-01",
+                  "4"
+                ]
+              ],
+              "actual_rows": []
+            },
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=2 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "required_query_mismatch|required_query|checkpoint_row",
+            "required_query_mismatch|required_query|ledger_aggregate",
+            "required_query_mismatch|required_query|reject_count",
+            "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          ]
+        },
+        {
+          "run": 8,
+          "session_id": 261107,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 9,
+          "session_id": 261108,
+          "passed": true,
+          "score": 1.0,
+          "steps": 4,
+          "tool_errors": 1,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": null,
+          "unresolved_gaps": [],
+          "unresolved_gap_signatures": []
+        },
+        {
+          "run": 10,
+          "session_id": 261109,
+          "passed": false,
+          "score": 0.917,
+          "steps": 4,
+          "tool_errors": 3,
+          "lessons_loaded": 0,
+          "lessons_generated": 0,
+          "contract_gap_postretry_artifact": "/tmp/Cortex-wt-bench/tracks/cli_sqlite/sessions/session-261109/contract_gap_postretry.json",
+          "unresolved_gaps": [
+            {
+              "reason_code": "too_many_errors",
+              "gap_type": "error_budget",
+              "detail": "error_count=3 max_error_count=1",
+              "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+            }
+          ],
+          "unresolved_gap_signatures": [
+            "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          ]
+        }
+      ]
+    }
+  },
+  "gate": {
+    "definition": "GO if ON last-5 >= 80% and ON transfer pass rate > OFF transfer pass rate",
+    "on_last5_ge_80": true,
+    "on_gt_off": true,
+    "go": true,
+    "on_transfer_pass_rate": 0.8,
+    "off_transfer_pass_rate": 0.6,
+    "on_last5_pass_rate": 1.0
+  }
+}
