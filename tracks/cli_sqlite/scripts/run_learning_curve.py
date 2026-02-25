@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
+from tracks.cli_sqlite.domains.shell_adapter import HOTFIX_HARD_TASK_ID, HOTFIX_HARD_VARIANT_OVERRIDE_ENV
 from tracks.cli_sqlite.agent_cli import (
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
@@ -38,8 +40,19 @@ from tracks.cli_sqlite.curriculum_planner import (
     create_curriculum_planner,
     outcome_from_metrics,
 )
+from tracks.cli_sqlite.variant_scoreboard import (
+    append_variant_score_entry,
+    resolve_runtime_variant,
+    select_best_variant_from_scoreboard,
+)
 
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
+TRACK_ROOT = Path(__file__).resolve().parents[1]
+SESSIONS_ROOT = TRACK_ROOT / "sessions"
+
+
+def _is_hotfix_hard_variant_task(*, domain: str, task_id: str) -> bool:
+    return str(domain).strip() == "shell" and str(task_id).strip() == HOTFIX_HARD_TASK_ID
 
 
 def main() -> int:
@@ -112,6 +125,8 @@ def main() -> int:
         domain=args.domain,
     )
     results: list[dict] = []
+    scoreboard_rows: list[dict[str, object]] = []
+    initial_hotfix_variant_override = os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV)
 
     # Clear escalation state for clean experiment
     escalation_path = Path(__file__).resolve().parents[1] / "learning" / "critic_escalation_state.json"
@@ -146,6 +161,33 @@ def main() -> int:
         )
         if args.verbose:
             print(f"  [curriculum] {schedule.rationale}")
+        uses_hotfix_hard_variants = _is_hotfix_hard_variant_task(domain=schedule.domain, task_id=schedule.task_id)
+        if uses_hotfix_hard_variants:
+            pinned_variant = str(initial_hotfix_variant_override or "").strip()
+            if pinned_variant:
+                print(
+                    f"  [variant-scoreboard] env override pinned task={schedule.task_id} variant={pinned_variant}"
+                )
+            else:
+                best_variant = select_best_variant_from_scoreboard(
+                    sessions_root=SESSIONS_ROOT,
+                    variant_family=schedule.task_id,
+                )
+                if best_variant and str(best_variant.get("variant_id", "")).strip():
+                    variant_id = str(best_variant["variant_id"]).strip()
+                    os.environ[HOTFIX_HARD_VARIANT_OVERRIDE_ENV] = variant_id
+                    print(
+                        "  [variant-scoreboard] default task={task} variant={variant} mean_score={score:.4f}".format(
+                            task=schedule.task_id,
+                            variant=variant_id,
+                            score=float(best_variant.get("mean_variant_score", 0.0)),
+                        )
+                    )
+                else:
+                    os.environ.pop(HOTFIX_HARD_VARIANT_OVERRIDE_ENV, None)
+                    print(
+                        f"  [variant-scoreboard] no prior winner for task={schedule.task_id}; using deterministic fallback"
+                    )
         t0 = time.time()
 
         result = run_cli_agent(
@@ -210,12 +252,56 @@ def main() -> int:
             "lessons_generated": m.get("lessons_generated", 0),
             "elapsed_s": round(elapsed, 1),
         }
+        runtime_variant_id, runtime_variant_source = resolve_runtime_variant(
+            sessions_root=SESSIONS_ROOT,
+            session_id=session_id,
+            default_variant_id="default",
+        )
+        scoreboard_row = append_variant_score_entry(
+            sessions_root=SESSIONS_ROOT,
+            run_source="run_learning_curve",
+            session_id=session_id,
+            task_id=schedule.task_id,
+            domain=schedule.domain,
+            variant_id=runtime_variant_id,
+            variant_source=runtime_variant_source,
+            elapsed_s=elapsed,
+            metrics=m if isinstance(m, dict) else {},
+            run_index=run_num,
+            phase="learning_curve",
+            variant_family=schedule.task_id,
+        )
+        scoreboard_rows.append(scoreboard_row)
+        row["variant_id"] = scoreboard_row["variant_id"]
+        row["variant_score"] = scoreboard_row["variant_score"]
         results.append(row)
 
         status = "PASS" if row["passed"] else "FAIL"
         print(f"  [{status}] score={row['score']:.2f}  steps={row['steps']}  "
               f"errors={row['tool_errors']}  lessons_in={row['lessons_loaded']}  "
               f"lessons_out={row['lessons_generated']}  ({row['elapsed_s']}s)")
+        print(
+            "  [variant-scoreboard] variant={variant} score={score:.4f} quality={quality:.4f} speed={speed:.4f} cost={cost:.4f}".format(
+                variant=str(scoreboard_row.get("variant_id", "default")),
+                score=float(scoreboard_row.get("variant_score", 0.0)),
+                quality=float(scoreboard_row.get("quality_score", 0.0)),
+                speed=float(scoreboard_row.get("speed_score", 0.0)),
+                cost=float(scoreboard_row.get("cost_score", 0.0)),
+            )
+        )
+        if uses_hotfix_hard_variants:
+            best_after = select_best_variant_from_scoreboard(
+                sessions_root=SESSIONS_ROOT,
+                variant_family=schedule.task_id,
+            )
+            if best_after and str(best_after.get("variant_id", "")).strip():
+                print(
+                    "  [variant-scoreboard] next default task={task} variant={variant} mean_score={score:.4f}".format(
+                        task=schedule.task_id,
+                        variant=str(best_after["variant_id"]),
+                        score=float(best_after.get("mean_variant_score", 0.0)),
+                    )
+                )
         print()
 
     # Summary table
@@ -235,7 +321,13 @@ def main() -> int:
     if len(scores) >= 2:
         delta = scores[-1] - scores[0]
         print(f"Improvement: {scores[0]:.2f} -> {scores[-1]:.2f} (delta={delta:+.2f})")
+    print(f"Variant scoreboard rows written: {len(scoreboard_rows)}")
     print()
+
+    if initial_hotfix_variant_override is None:
+        os.environ.pop(HOTFIX_HARD_VARIANT_OVERRIDE_ENV, None)
+    else:
+        os.environ[HOTFIX_HARD_VARIANT_OVERRIDE_ENV] = initial_hotfix_variant_override
 
     return 0
 

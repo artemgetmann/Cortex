@@ -7,6 +7,7 @@ from tracks.cli_sqlite.run_observability import (
     read_jsonl_rows,
     run_ledger_path,
     run_lifecycle_path,
+    variant_scoreboard_path,
 )
 
 
@@ -118,3 +119,8 @@ def test_self_edit_gate_event_rejects_unknown_status(tmp_path) -> None:
     )
     rows = read_jsonl_rows(run_lifecycle_path(sessions_root=sessions_root))
     assert rows == []
+
+
+def test_variant_scoreboard_path_uses_sessions_root(tmp_path) -> None:
+    sessions_root = tmp_path / "sessions"
+    assert variant_scoreboard_path(sessions_root=sessions_root) == sessions_root / "variant_scoreboard.jsonl"

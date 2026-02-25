@@ -13,11 +13,13 @@ from tracks.cli_sqlite.scripts import run_realworld_learning_benchmark
 def test_realworld_learning_benchmark_emits_expected_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     clear_calls: dict[str, int] = {"count": 0}
     run_calls: list[dict[str, Any]] = []
 
     monkeypatch.setattr(run_realworld_learning_benchmark, "load_config", lambda: object())
+    monkeypatch.setattr(run_realworld_learning_benchmark, "SESSIONS_ROOT", tmp_path / "sessions")
     monkeypatch.setattr(
         run_realworld_learning_benchmark,
         "_clear_learning_state",
@@ -46,6 +48,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
                 "repeated_error_signatures": ["fp_a"] if not passed else [],
                 "v2_fingerprint_recurrence_before": before,
                 "v2_fingerprint_recurrence_after": after,
+                "usage": [{"input_tokens": 210, "output_tokens": 55}],
             }
         )
 
@@ -86,6 +89,7 @@ def test_realworld_learning_benchmark_emits_expected_payload(
         "transfer",
         "arms",
         "runs",
+        "variant_scoreboard",
         "did_learning_improve",
     }
     assert len(payload["arms"]) == 8
@@ -106,6 +110,12 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert payload["transfer"]["run_count"] > 0
     assert "mean_lesson_activations_by_step" in payload["overall"]
     assert "activation_nonzero_run_count" in payload["overall"]
+    scoreboard = payload["variant_scoreboard"]
+    assert scoreboard["rows_written"] == 32
+    assert len(scoreboard["rows"]) == 32
+    assert isinstance(scoreboard["best_by_task"], dict)
+    assert all("variant_id" in row for row in payload["runs"])
+    assert all("variant_score" in row for row in payload["runs"])
 
     schedule_task_ids = [str(item["task_id"]) for item in payload["task_schedule"]]
     assert "shell_git_train_release_flow" in schedule_task_ids
@@ -121,6 +131,8 @@ def test_realworld_learning_benchmark_emits_expected_payload(
     assert "## Artifact Notes" in summary_md
     assert "| arm_id | docs | doc_mode | lessons | pass_rate |" in summary_md
     assert "mean_lesson_activations_by_step" in summary_md
+    out = capsys.readouterr().out
+    assert "[variant-scoreboard]" in out
 
 
 def test_learning_gate_requires_activation_and_retrieval_lift() -> None:

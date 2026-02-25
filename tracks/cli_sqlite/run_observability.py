@@ -8,6 +8,7 @@ from typing import Any
 
 RUN_LEDGER_FILENAME = "run_ledger.jsonl"
 RUN_LIFECYCLE_FILENAME = "run_lifecycle.jsonl"
+VARIANT_SCOREBOARD_FILENAME = "variant_scoreboard.jsonl"
 MAX_ERROR_SUMMARY_CHARS = 240
 
 LIFECYCLE_EVENTS: frozenset[str] = frozenset(
@@ -53,6 +54,10 @@ def run_ledger_path(*, sessions_root: Path) -> Path:
 
 def run_lifecycle_path(*, sessions_root: Path) -> Path:
     return sessions_root / RUN_LIFECYCLE_FILENAME
+
+
+def variant_scoreboard_path(*, sessions_root: Path) -> Path:
+    return sessions_root / VARIANT_SCOREBOARD_FILENAME
 
 
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:
