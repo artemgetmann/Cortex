@@ -225,6 +225,7 @@ export async function handlePolicy(ctx: Context): Promise<void> {
  * - /model codex 5.3 low
  * - /model codex 5.3 medium
  * - /model codex 5.3 high
+ * - /model cortex 5.3 medium (codex alias)
  */
 export async function handleModel(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -246,7 +247,8 @@ export async function handleModel(ctx: Context): Promise<void> {
         `/model sonnet 4.6\n` +
         `/model codex 5.3 low\n` +
         `/model codex 5.3 medium\n` +
-        `/model codex 5.3 high`,
+        `/model codex 5.3 high\n` +
+        `/model cortex 5.3 medium`,
       { parse_mode: "HTML" }
     );
     return;

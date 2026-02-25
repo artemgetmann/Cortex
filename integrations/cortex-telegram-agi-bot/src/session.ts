@@ -106,12 +106,17 @@ function compactToken(value: string): string {
 }
 
 function isCodexAlias(base: string): boolean {
-  return compactToken(base) === "codex";
+  const compact = compactToken(base);
+  return compact === "codex" || compact === "cortex";
 }
 
 function isCodex53Alias(base: string): boolean {
   const compact = compactToken(base);
-  return compact === "codex53" || compact === "gpt53codex";
+  return (
+    compact === "codex53" ||
+    compact === "gpt53codex" ||
+    compact === "cortex53"
+  );
 }
 
 function parseEffortToken(token: string): CodexReasoningEffort | null {
@@ -149,9 +154,12 @@ function parseCodexPreset(
 
   // Supports:
   // - codex 5.3 high
+  // - cortex 5.3 high
   // - gpt-5.3-codex medium
   // - codex high
+  // - cortex high
   // - codex5.3high
+  // - cortex5.3high
   const spacedMatch = normalized.match(
     /^(.*?)[\s_-]+(minimal|low|medium|high|xhigh)$/
   );
@@ -169,7 +177,7 @@ function parseCodexPreset(
 
   const compact = compactToken(selection);
   const compactMatch = compact.match(
-    /^(codex53|gpt53codex|codex)(minimal|low|medium|high|xhigh)$/
+    /^(codex53|gpt53codex|cortex53|codex|cortex)(minimal|low|medium|high|xhigh)$/
   );
   if (!compactMatch) {
     return null;
@@ -180,8 +188,36 @@ function parseCodexPreset(
     return null;
   }
 
-  const model = compactMatch[1] === "codex" ? CODEX_MODEL : "gpt-5.3-codex";
+  const baseAlias = compactMatch[1]!;
+  const model =
+    baseAlias === "codex" || baseAlias === "cortex"
+      ? CODEX_MODEL
+      : "gpt-5.3-codex";
   return { model, effort };
+}
+
+function normalizeCodexRuntimeConfig(
+  rawModel: string,
+  rawEffort: CodexReasoningEffort
+): { model: string; effort: CodexReasoningEffort } {
+  const preset = parseCodexPreset(rawModel);
+  if (preset) {
+    return preset;
+  }
+
+  const compact = compactToken(rawModel);
+  if (compact === "codex" || compact === "cortex") {
+    return { model: CODEX_MODEL, effort: rawEffort };
+  }
+  if (
+    compact === "codex53" ||
+    compact === "gpt53codex" ||
+    compact === "cortex53"
+  ) {
+    return { model: "gpt-5.3-codex", effort: rawEffort };
+  }
+
+  return { model: rawModel, effort: rawEffort };
 }
 
 /**
@@ -312,6 +348,7 @@ class ClaudeSession {
    * - "codex 5.3 low"
    * - "codex 5.3 medium"
    * - "codex 5.3 high"
+   * - "cortex 5.3 medium" (alias for codex preset)
    *
    * Any non-claude value is treated as a Codex model id.
    * We clear the active session because cross-model resume can corrupt context.
@@ -341,6 +378,10 @@ class ClaudeSession {
       this.assistantMode = "claude";
       this.claudeModel = CLAUDE_MODEL;
     } else if (normalized === "codex") {
+      this.assistantMode = "codex";
+      this.codexModel = CODEX_MODEL;
+      this.codexEffort = CODEX_REASONING_EFFORT;
+    } else if (normalized === "cortex") {
       this.assistantMode = "codex";
       this.codexModel = CODEX_MODEL;
       this.codexEffort = CODEX_REASONING_EFFORT;
@@ -859,6 +900,23 @@ class ClaudeSession {
     statusCallback: StatusCallback,
     chatId?: number
   ): Promise<string> {
+    // Recover from stale persisted aliases (for example legacy "cortex 5.3 medium")
+    // before touching the SDK so old sessions do not fail on first message.
+    const normalized = normalizeCodexRuntimeConfig(
+      this.codexModel,
+      this.codexEffort
+    );
+    if (
+      normalized.model !== this.codexModel ||
+      normalized.effort !== this.codexEffort
+    ) {
+      console.log(
+        `Normalized Codex runtime config: model=${this.codexModel} -> ${normalized.model}, effort=${this.codexEffort} -> ${normalized.effort}`
+      );
+      this.codexModel = normalized.model;
+      this.codexEffort = normalized.effort;
+    }
+
     if (chatId) {
       process.env.TELEGRAM_CHAT_ID = String(chatId);
     }
@@ -1279,10 +1337,12 @@ class ClaudeSession {
     }
     if (sessionData.model) {
       if (this.assistantMode === "codex") {
-        this.codexModel = sessionData.model;
-        if (sessionData.codex_reasoning_effort) {
-          this.codexEffort = sessionData.codex_reasoning_effort;
-        }
+        const normalized = normalizeCodexRuntimeConfig(
+          sessionData.model,
+          sessionData.codex_reasoning_effort ?? this.codexEffort
+        );
+        this.codexModel = normalized.model;
+        this.codexEffort = normalized.effort;
       } else {
         this.claudeModel = sessionData.model;
       }
