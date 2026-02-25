@@ -162,6 +162,12 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 : > tracks/cli_sqlite/learning/lessons.jsonl
 ```
 
+### API limit handling policy
+
+- If Anthropic API limit/quota is hit, stop immediately and notify the user to raise limits.
+- Do **not** continue with `claude_print` fallback by default because it is much slower and wastes iteration time.
+- Only use `claude_print` after an API limit hit if the user explicitly says to continue unattended (example: user says they are going to sleep and wants overnight progress).
+
 ## OpenClaw AGI Bridge (Isolated Runtime)
 
 The OpenClaw AGI bot must run in an isolated profile so the existing `~/.openclaw` bot is never affected.
