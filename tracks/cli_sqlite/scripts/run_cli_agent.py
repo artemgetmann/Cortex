@@ -25,6 +25,8 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
+    DEFAULT_BENCHMARK_DETERMINISTIC,
+    DEFAULT_BENCHMARK_PROMOTED_ONLY,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
@@ -191,6 +193,18 @@ def main() -> int:
         default=DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
         help="Maximum deterministic probes to run when low-confidence verifier stack triggers.",
     )
+    ap.add_argument(
+        "--benchmark-deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_DETERMINISTIC,
+        help="Force deterministic benchmark settings (temperature=0 for executor/judge/lesson generation).",
+    )
+    ap.add_argument(
+        "--benchmark-promoted-only",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PROMOTED_ONLY,
+        help="Restrict retrieval to promoted lessons only (exclude candidates).",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -278,6 +292,8 @@ def main() -> int:
             clarify_on_low_confidence=bool(args.clarify_on_low_confidence),
             max_low_confidence_probes=max(1, int(args.max_low_confidence_probes)),
             llm_backend=args.llm_backend,
+            benchmark_deterministic=bool(args.benchmark_deterministic),
+            benchmark_promoted_only=bool(args.benchmark_promoted_only),
             on_step=_on_step,
         )
     except _RunCancelled as exc:

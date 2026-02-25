@@ -45,6 +45,7 @@ from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint,
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
     CANDIDATE_POLICY_ANCHORED,
+    CANDIDATE_POLICY_PROMOTED_ONLY,
     DEFAULT_TRANSFER_MAX_RESULTS,
     DEFAULT_TRANSFER_SCORE_COEFFICIENT,
     TRANSFER_POLICY_ALWAYS,
@@ -122,6 +123,8 @@ DEFAULT_ARCHITECTURE_MODE = "full"
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = DEFAULT_TRANSFER_MAX_RESULTS
 DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT = DEFAULT_TRANSFER_SCORE_COEFFICIENT
 DEFAULT_RUNTIME_CANDIDATE_POLICY = CANDIDATE_POLICY_ANCHORED
+DEFAULT_BENCHMARK_DETERMINISTIC = False
+DEFAULT_BENCHMARK_PROMOTED_ONLY = False
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
@@ -2401,6 +2404,8 @@ def run_cli_agent(
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     llm_backend: str = DEFAULT_LLM_BACKEND,
+    benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
+    benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     normalized_learning_mode = _normalize_learning_mode(learning_mode)
@@ -2494,6 +2499,8 @@ def run_cli_agent(
             clarify_on_low_confidence=clarify_on_low_confidence,
             max_low_confidence_probes=max_low_confidence_probes,
             llm_backend=llm_backend,
+            benchmark_deterministic=benchmark_deterministic,
+            benchmark_promoted_only=benchmark_promoted_only,
             on_step=on_step,
             run_id=run_id,
             run_started_at=run_started_at,
@@ -2594,6 +2601,8 @@ def _run_cli_agent_impl(
     clarify_on_low_confidence: bool = DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
     max_low_confidence_probes: int = DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     llm_backend: str = DEFAULT_LLM_BACKEND,
+    benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
+    benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
     run_id: str | None = None,
     run_started_at: str | None = None,
@@ -2613,6 +2622,14 @@ def _run_cli_agent_impl(
     low_confidence_threshold = _clamp(float(low_confidence_threshold), 0.0, 1.0)
     max_low_confidence_probes = max(1, int(max_low_confidence_probes))
     llm_backend = _normalize_llm_backend(llm_backend)
+    benchmark_deterministic = bool(benchmark_deterministic)
+    benchmark_promoted_only = bool(benchmark_promoted_only)
+    runtime_candidate_policy = (
+        CANDIDATE_POLICY_PROMOTED_ONLY
+        if benchmark_promoted_only
+        else DEFAULT_RUNTIME_CANDIDATE_POLICY
+    )
+    runtime_temperature: float | None = 0.0 if benchmark_deterministic else None
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
         transfer_retrieval_max_results=transfer_retrieval_max_results,
@@ -2702,7 +2719,7 @@ def _run_cli_agent_impl(
         domain=domain,
         task_text=task_text,
         max_results=8,
-        candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
+        candidate_policy=runtime_candidate_policy,
     )
     prerun_v2_matches = _select_high_signal_prerun_matches(
         matches=prerun_v2_matches,
@@ -2904,6 +2921,10 @@ def _run_cli_agent_impl(
         "docs_read_error_count": len(docs_read_error_entries),
         "docs_read_errors": docs_read_error_entries,
         "llm_backend": llm_backend,
+        "benchmark_deterministic": bool(benchmark_deterministic),
+        "benchmark_promoted_only": bool(benchmark_promoted_only),
+        "runtime_candidate_policy": runtime_candidate_policy,
+        "runtime_temperature": runtime_temperature,
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
         "v2_reflection_reasons": [],
@@ -3165,7 +3186,7 @@ def _run_cli_agent_impl(
             transfer_max_results=transfer_retrieval_max_results,
             transfer_score_weight=transfer_retrieval_score_weight,
             unresolved_gaps=unresolved_gaps,
-            candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
+            candidate_policy=runtime_candidate_policy,
         )
         gap_hints = [str(match.lesson.rule_text).strip() for match in gap_matches if str(match.lesson.rule_text).strip()]
         if gap_matches:
@@ -3265,13 +3286,16 @@ def _run_cli_agent_impl(
         if llm_backend == "anthropic":
             if client is None:
                 raise RuntimeError("Anthropic client unavailable while llm_backend=anthropic.")
-            response = client.messages.create(
-                model=model_executor,
-                max_tokens=1800,
-                system=system_prompt,
-                tools=tools,
-                messages=messages,
-            )
+            request: dict[str, Any] = {
+                "model": model_executor,
+                "max_tokens": 1800,
+                "system": system_prompt,
+                "tools": tools,
+                "messages": messages,
+            }
+            if runtime_temperature is not None:
+                request["temperature"] = float(runtime_temperature)
+            response = client.messages.create(**request)
             try:
                 usage = response.usage.model_dump()  # type: ignore[attr-defined]
             except Exception:
@@ -3538,7 +3562,7 @@ def _run_cli_agent_impl(
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
                     unresolved_gaps=latest_unresolved_gaps,
-                    candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
+                    candidate_policy=runtime_candidate_policy,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
@@ -3792,6 +3816,7 @@ def _run_cli_agent_impl(
             final_state=final_state,
             domain_name=domain,
             docs_context=judge_docs_context,
+            temperature=runtime_temperature,
             input_logger=_judge_input_logger,
         )
         metrics["judge_passed"] = judge_result.passed
@@ -4059,6 +4084,7 @@ def _run_cli_agent_impl(
             learning_mode=learning_mode,
             critic_context=critic_context,
             domain_keywords=domain_keywords,
+            temperature=runtime_temperature,
         )
         metrics["critic_raw_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.raw_lessons]
         metrics["critic_filtered_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.filtered_lessons]
@@ -4083,6 +4109,7 @@ def _run_cli_agent_impl(
             learning_mode=learning_mode,
             critic_context=critic_context,
             domain_keywords=domain_keywords,
+            temperature=runtime_temperature,
         )
         hard_events = [event for event in run_error_events if event.channel == "hard_failure"]
         fingerprint_counts = Counter(event.fingerprint for event in hard_events)

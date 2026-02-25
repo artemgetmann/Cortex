@@ -29,6 +29,8 @@ DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "strict"
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
+DEFAULT_BENCHMARK_DETERMINISTIC = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_DETERMINISTIC", False))
+DEFAULT_BENCHMARK_PROMOTED_ONLY = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PROMOTED_ONLY", False))
 
 run_cli_agent = agent_cli.run_cli_agent
 LESSONS_PATH = Path(getattr(agent_cli, "LESSONS_PATH", DEFAULT_LESSONS_PATH))
@@ -470,6 +472,18 @@ def main() -> int:
     ap.add_argument("--doc-retriever-model", default="")
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
     ap.add_argument(
+        "--benchmark-deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_DETERMINISTIC,
+        help="Force deterministic benchmark settings (temperature=0 for executor/judge/lesson generation).",
+    )
+    ap.add_argument(
+        "--benchmark-promoted-only",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PROMOTED_ONLY,
+        help="Restrict retrieval to promoted lessons only (exclude candidates).",
+    )
+    ap.add_argument(
         "--judge-diagnostic",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -619,6 +633,8 @@ def main() -> int:
                 executor_docs=executor_docs,
                 judge_diagnostic=bool(args.judge_diagnostic),
                 llm_backend=args.llm_backend,
+                benchmark_deterministic=bool(args.benchmark_deterministic),
+                benchmark_promoted_only=bool(args.benchmark_promoted_only),
             )
             metrics = result.metrics if isinstance(result.metrics, dict) else {}
             row = _build_row(
@@ -668,6 +684,8 @@ def main() -> int:
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,
             "llm_backend": args.llm_backend,
+            "benchmark_deterministic": bool(args.benchmark_deterministic),
+            "benchmark_promoted_only": bool(args.benchmark_promoted_only),
             "auto_escalate_critic": False,
             "judge_diagnostic": bool(args.judge_diagnostic),
         },

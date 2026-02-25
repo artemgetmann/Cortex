@@ -54,6 +54,8 @@ def test_learning_curve_default_curriculum_is_fixed(monkeypatch: pytest.MonkeyPa
     assert len(calls) == 3
     assert [str(call["task_id"]) for call in calls] == ["aggregate_report", "aggregate_report", "aggregate_report"]
     assert [str(call["domain"]) for call in calls] == ["gridtool", "gridtool", "gridtool"]
+    assert all(bool(call.get("benchmark_deterministic", False)) is False for call in calls)
+    assert all(bool(call.get("benchmark_promoted_only", False)) is False for call in calls)
 
 
 def test_learning_curve_auto_mode_uses_curriculum_planner(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,5 +133,7 @@ def test_learning_curve_auto_mode_uses_curriculum_planner(monkeypatch: pytest.Mo
         "shell_excel_build_report",
         "shell_excel_multi_summary",
     ]
+    assert all(bool(call.get("benchmark_deterministic", False)) is False for call in calls)
+    assert all(bool(call.get("benchmark_promoted_only", False)) is False for call in calls)
     assert recorded_runs == [1, 2]
     assert len(recorded_outcomes) == 2

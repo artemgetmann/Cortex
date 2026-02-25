@@ -72,6 +72,7 @@ def llm_judge(
     final_state: str,
     domain_name: str,
     docs_context: str = "",
+    temperature: float | None = None,
     input_logger: Callable[[dict[str, Any]], None] | None = None,
 ) -> JudgeResult:
     """Evaluate task completion using an LLM judge.
@@ -156,11 +157,16 @@ def llm_judge(
         )
 
     try:
+        request: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 600,
+            "system": system,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
+        }
+        if temperature is not None:
+            request["temperature"] = float(temperature)
         response = client.messages.create(
-            model=model,
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": [{"type": "text", "text": user}]}],
+            **request,
         )
     except Exception as exc:
         return JudgeResult(

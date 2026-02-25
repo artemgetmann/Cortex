@@ -1,0 +1,58 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=claude-haiku-4-5 judge_model=claude-haiku-4-5 backend=anthropic critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 132100, task=incremental_reconcile, domain=sqlite) ---
+  [FAIL] score=0.92  steps=4  errors=2  lessons_in=0  lessons_out=0  (37.5s)
+
+--- Run 2/10 (session 132101, task=incremental_reconcile, domain=sqlite) ---
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (37.0s)
+
+--- Run 3/10 (session 132102, task=incremental_reconcile, domain=sqlite) ---
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=3  (39.0s)
+
+--- Run 4/10 (session 132103, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=2  lessons_out=4  (31.0s)
+
+--- Run 5/10 (session 132104, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=4  lessons_out=3  (29.3s)
+
+--- Run 6/10 (session 132105, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=6  lessons_out=4  (33.2s)
+
+--- Run 7/10 (session 132106, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=8  lessons_out=3  (29.2s)
+
+--- Run 8/10 (session 132107, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=10  lessons_out=3  (25.6s)
+
+--- Run 9/10 (session 132108, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=3  (26.5s)
+
+--- Run 10/10 (session 132109, task=incremental_reconcile, domain=sqlite) ---
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=12  lessons_out=2  (26.4s)
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   132100   0.92     N      4     2       0        0  37.5s
+   2   132101   0.83     N      4     2       0        0  37.0s
+   3   132102   0.83     N      4     2       0        3  39.0s
+   4   132103   1.00     Y      4     1       2        4  31.0s
+   5   132104   1.00     Y      4     1       4        3  29.3s
+   6   132105   1.00     Y      4     1       6        4  33.2s
+   7   132106   1.00     Y      4     1       8        3  29.2s
+   8   132107   1.00     Y      4     0      10        3  25.6s
+   9   132108   1.00     Y      4     0      12        3  26.5s
+  10   132109   1.00     Y      4     0      12        2  26.4s
+
+Score trajectory: 0.92 -> 0.83 -> 0.83 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00
+Improvement: 0.92 -> 1.00 (delta=+0.08)
+

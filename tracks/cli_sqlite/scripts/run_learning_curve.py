@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from config import load_config
 from tracks.cli_sqlite.agent_cli import (
+    DEFAULT_BENCHMARK_DETERMINISTIC,
+    DEFAULT_BENCHMARK_PROMOTED_ONLY,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
     DEFAULT_DOC_BUDGET_TOKENS,
@@ -94,6 +96,18 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_STRUCTURED_LESSONS_REQUIRED,
         help="Require V2 candidates to include reason_code + gap_type metadata.",
+    )
+    ap.add_argument(
+        "--benchmark-deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_DETERMINISTIC,
+        help="Force deterministic benchmark settings (temperature=0 for executor/judge/lesson generation).",
+    )
+    ap.add_argument(
+        "--benchmark-promoted-only",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_BENCHMARK_PROMOTED_ONLY,
+        help="Restrict retrieval to promoted lessons only (exclude candidates).",
     )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -176,6 +190,8 @@ def main() -> int:
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
             structured_lessons_required=bool(args.structured_lessons_required),
             llm_backend=args.llm_backend,
+            benchmark_deterministic=bool(args.benchmark_deterministic),
+            benchmark_promoted_only=bool(args.benchmark_promoted_only),
         )
 
         m = result.metrics

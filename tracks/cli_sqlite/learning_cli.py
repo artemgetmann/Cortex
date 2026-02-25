@@ -514,6 +514,7 @@ def generate_lessons(
     learning_mode: str = DEFAULT_LEARNING_MODE,
     critic_context: str = "",
     domain_keywords: re.Pattern[str] | None = None,
+    temperature: float | None = None,
 ) -> LessonGenerationResult:
     mode = _normalize_learning_mode(learning_mode)
     passed = bool(eval_result.get("passed", False))
@@ -605,12 +606,15 @@ def generate_lessons(
     )
 
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=500,
-            system=system,
-            messages=[{"role": "user", "content": [{"type": "text", "text": user}]}],
-        )
+        request: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 500,
+            "system": system,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
+        }
+        if temperature is not None:
+            request["temperature"] = float(temperature)
+        response = client.messages.create(**request)
     except Exception:
         return LessonGenerationResult(raw_lessons=[], filtered_lessons=[])
 

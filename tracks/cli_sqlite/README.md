@@ -163,6 +163,8 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
 - Benchmark default backend is API (`anthropic`) with Haiku 4.5.
 - Critic tuning flags are intentionally hidden in benchmark runners; critic stays locked to executor-equivalent behavior.
 - `--judge-diagnostic` forces judge rationale capture even on contract-pass runs while keeping contract pass/fail authoritative.
+- `--benchmark-deterministic` forces `temperature=0` for executor/judge/lesson-generation calls (API path) for repeatable benchmark runs.
+- `--benchmark-promoted-only` restricts retrieval to promoted lessons only (candidates excluded) during benchmark runs.
 - `--verifier-stack` adds deterministic post-eval checks for low-confidence outcomes. Probe sources:
   - `CONTRACT.json` (when present)
   - `task.md` inferred anchors (exact verification lines + obvious output files)
