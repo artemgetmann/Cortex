@@ -379,6 +379,40 @@ def test_run_cli_agent_script_forwards_contract_gap_and_structured_lesson_flags(
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_forwards_verifier_stack_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--verifier-stack",
+            "--low-confidence-threshold",
+            "0.72",
+            "--clarify-on-low-confidence",
+            "--max-low-confidence-probes",
+            "3",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["verifier_stack_enabled"] is True
+    assert captured["low_confidence_threshold"] == 0.72
+    assert captured["clarify_on_low_confidence"] is True
+    assert captured["max_low_confidence_probes"] == 3
+    capsys.readouterr()
+
+
 def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -411,6 +445,105 @@ def test_run_cli_agent_with_claude_print_backend_runs_judge_and_posttask_calls(
     assert result.metrics["posttask_patch_attempted"] is True
     assert result.metrics["posttask_skill_patching_skip_reason"] is None
     assert result.metrics["eval_passed"] is True
+
+
+def test_low_confidence_verifier_emits_deterministic_clarifying_question(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sessions_root = _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=True,
+            score=0.4,
+            reasons=["uncertain_completion"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task=None,
+        session_id=105,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        judge_diagnostic=True,
+        verifier_stack_enabled=True,
+        low_confidence_threshold=0.7,
+        clarify_on_low_confidence=True,
+        max_low_confidence_probes=2,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["verifier_low_confidence_triggered"] is True
+    assert result.metrics["verifier_probe_status"] == "inconclusive"
+    assert "deterministic success signal" in result.metrics["verifier_clarifying_question"]
+    events = read_events(sessions_root / "session-105" / "events.jsonl")
+    assert any(str(row.get("tool", "")) == "verifier_clarify" for row in events)
+
+
+def test_low_confidence_verifier_can_override_non_contract_eval_on_failed_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_agent_cli_env(monkeypatch, tmp_path)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    monkeypatch.setattr(
+        agent_cli,
+        "llm_judge",
+        lambda **kwargs: JudgeResult(
+            passed=True,
+            score=0.3,
+            reasons=["weak_signal"],
+            doc_grounding=[],
+            raw_response="{}",
+        ),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="demo_task",
+        task=(
+            "demo task\n\n"
+            "Print exactly this verification line:\n"
+            "- `DEMO_OK`"
+        ),
+        session_id=106,
+        max_steps=1,
+        domain="sqlite",
+        learning_mode="legacy",
+        architecture_mode="full",
+        posttask_mode="candidate",
+        posttask_learn=True,
+        memory_v2_demo_mode=False,
+        require_skill_read=False,
+        judge_diagnostic=True,
+        verifier_stack_enabled=True,
+        low_confidence_threshold=0.7,
+        clarify_on_low_confidence=True,
+        max_low_confidence_probes=4,
+        llm_backend="anthropic",
+    )
+    assert result.metrics["verifier_low_confidence_triggered"] is True
+    assert result.metrics["verifier_probe_status"] == "fail"
+    assert result.metrics["verifier_override_applied"] is True
+    assert result.metrics["eval_passed"] is False
+    assert any(
+        str(reason).startswith("deterministic_probe_failed:verification_line_missing")
+        for reason in result.metrics["eval_reasons"]
+    )
 
 
 def test_run_cli_agent_writes_prompt_artifacts_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

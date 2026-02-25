@@ -19,6 +19,10 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    DEFAULT_VERIFIER_STACK_ENABLED,
+    DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+    DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
+    DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
     DEFAULT_LLM_BACKEND,
     DEFAULT_LEARNING_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
@@ -153,6 +157,30 @@ def main() -> int:
         default=DEFAULT_STRUCTURED_LESSONS_REQUIRED,
         help="Require V2 candidates to include reason_code + gap_type metadata.",
     )
+    ap.add_argument(
+        "--verifier-stack",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_VERIFIER_STACK_ENABLED,
+        help="Enable deterministic low-confidence verifier stack (probes + optional clarify prompt).",
+    )
+    ap.add_argument(
+        "--low-confidence-threshold",
+        type=float,
+        default=DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+        help="Trigger deterministic probes when eval confidence drops below this threshold.",
+    )
+    ap.add_argument(
+        "--clarify-on-low-confidence",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
+        help="Emit deterministic clarification question when low-confidence probes are inconclusive.",
+    )
+    ap.add_argument(
+        "--max-low-confidence-probes",
+        type=int,
+        default=DEFAULT_MAX_LOW_CONFIDENCE_PROBES,
+        help="Maximum deterministic probes to run when low-confidence verifier stack triggers.",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -203,6 +231,10 @@ def main() -> int:
         contract_gap_retry=bool(args.contract_gap_retry),
         contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
         structured_lessons_required=bool(args.structured_lessons_required),
+        verifier_stack_enabled=bool(args.verifier_stack),
+        low_confidence_threshold=max(0.0, min(1.0, float(args.low_confidence_threshold))),
+        clarify_on_low_confidence=bool(args.clarify_on_low_confidence),
+        max_low_confidence_probes=max(1, int(args.max_low_confidence_probes)),
         llm_backend=args.llm_backend,
     )
     print(json_dump(result.metrics))
