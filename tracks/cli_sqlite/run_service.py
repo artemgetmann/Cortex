@@ -203,6 +203,12 @@ def _normalize_lifecycle_path(lifecycle_path: Path | None) -> Path:
     return DEFAULT_LIFECYCLE_PATH.resolve()
 
 
+def _append_lifecycle_row(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=True) + "\n")
+
+
 def resolve_state_path(state_path: Path | None = None) -> Path:
     return _normalize_state_path(state_path)
 
@@ -412,6 +418,7 @@ def append_followup(
     ts: float,
     *,
     state_path: Path | None = None,
+    lifecycle_path: Path | None = None,
 ) -> RunRecord | None:
     rid = str(run_id).strip()
     if not rid:
@@ -426,9 +433,11 @@ def append_followup(
     if followup_ts is None:
         raise RunServiceError("Follow-up timestamp must be numeric.")
 
-    path = _normalize_state_path(state_path)
+    state_path_target = _normalize_state_path(state_path)
+    lifecycle_target = _normalize_lifecycle_path(lifecycle_path)
     now = time.time()
-    with _locked_state_file(path, mutate=True) as (_, state):
+    record: RunRecord | None = None
+    with _locked_state_file(state_path_target, mutate=True) as (_, state):
         row = _read_record(state, rid)
         if row is None:
             return None
@@ -439,7 +448,24 @@ def append_followup(
         merged["followups"] = followups
         merged["updated_at_epoch_s"] = now
         state["runs"][rid] = merged
-        return RunRecord.from_dict(merged)
+        record = RunRecord.from_dict(merged)
+    if record is None:
+        return None
+    _append_lifecycle_row(
+        lifecycle_target,
+        {
+            "ts": followup_ts,
+            "run_id": rid,
+            "session_id": record.session_id,
+            "task_id": record.task_id,
+            "domain": record.domain,
+            "event": "followup",
+            "trigger": followup_source,
+            "text": followup_text,
+            "source": followup_source,
+        },
+    )
+    return record
 
 
 def list_events(

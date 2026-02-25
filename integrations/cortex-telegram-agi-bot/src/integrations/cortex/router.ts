@@ -19,6 +19,7 @@ type ActiveRunState = {
   pollInFlight: boolean;
   lastProgressSignature: string;
   lastProgressSentAtMs: number;
+  lastLifecycleTs: number;
 };
 
 const pendingTasks = new Map<string, PendingTask>();
@@ -27,6 +28,7 @@ const activeRuns = new Map<string, ActiveRunState>();
 // Polling is intentionally lightweight: fixed interval and throttled updates.
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
 const RUN_STATUS_UPDATE_THROTTLE_MS = 9000;
+const RUN_STATUS_POLL_EVENT_LIMIT = 6;
 
 const POSITIVE_CONFIRM = new Set([
   "yes",
@@ -84,10 +86,29 @@ export function buildStatusDispatchText(
   statusText: string,
   activeRunId?: string
 ): { dispatchText: string; runId?: string } {
+  const lowered = statusText.trim().toLowerCase();
+  const isRunStatus = startsWithAny(lowered, RUN_STATUS_PREFIXES);
   const runId = extractRunId(statusText) || activeRunId;
+  const explicitProgress = statusText.match(/\bprogress=(true|false|on|off|1|0|yes|no)\b/i);
+  const hasProgressToken = /\b(--progress|progress)\b/i.test(statusText);
+  const progressDisabled = explicitProgress
+    ? /^(false|off|0|no)$/i.test(explicitProgress[1] || "")
+    : false;
+  const progressEnabled = progressDisabled
+    ? false
+    : isRunStatus || hasProgressToken || Boolean(explicitProgress);
+
+  const limitMatch = statusText.match(/\b(?:limit|events)=([0-9]+)\b/i);
+  const limitValue = limitMatch?.[1]
+    ? Math.max(1, Math.min(20, Number(limitMatch[1])))
+    : undefined;
+  const progressArgs = progressEnabled
+    ? ` progress=on${limitValue ? ` limit=${limitValue}` : ""}`
+    : "";
+
   return runId
-    ? { dispatchText: `/status run_id=${runId}`, runId }
-    : { dispatchText: "/status" };
+    ? { dispatchText: `/status run_id=${runId}${progressArgs}`, runId }
+    : { dispatchText: `/status${progressArgs}` };
 }
 
 export function buildCancelDispatchText(
@@ -97,6 +118,30 @@ export function buildCancelDispatchText(
   const runId = extractRunId(stopText) || activeRunId;
   if (!runId) return null;
   return { dispatchText: `/cancel run_id=${runId}`, runId };
+}
+
+function buildFollowupDispatchText(
+  rawText: string,
+  activeRunId?: string
+): { dispatchText: string; runId: string; text: string } | null {
+  const normalized = rawText.trim();
+  const explicitRunId = extractRunId(normalized);
+  const runId = explicitRunId || activeRunId;
+  if (!runId) return null;
+
+  let text = normalized;
+  if (normalized.toLowerCase().startsWith("/followup")) {
+    text = normalized.slice("/followup".length).trim();
+  }
+  // Remove explicit run id token from the free-form followup body to avoid
+  // double-including controls in the transport payload.
+  text = text.replace(/\brun_id=[A-Za-z0-9_-]+\b/gi, "").trim();
+  if (!text) return null;
+  return {
+    dispatchText: `/followup run_id=${runId} ${text}`,
+    runId,
+    text,
+  };
 }
 
 function looksLikeTaskIntent(message: string): boolean {
@@ -155,16 +200,26 @@ function summarizeRunStatus(payload: Record<string, unknown>): string {
     ? (payload.active_runs as Record<string, unknown>[])
     : [];
   const run = payload.run as Record<string, unknown> | null | undefined;
+  const lifecycleEvents = Array.isArray(payload.lifecycle_events)
+    ? (payload.lifecycle_events as Record<string, unknown>[])
+    : [];
+  const progressMode = payload.progress_mode === true;
   if (run) {
+    const followups = Array.isArray(run.followups)
+      ? (run.followups as unknown[])
+      : [];
     return [
       "Cortex run status:",
       `- run_id: ${run.run_id ?? "?"}`,
       `- status: ${run.status ?? "?"}`,
       `- cancel_requested: ${run.cancel_requested ?? "?"}`,
       `- last_step: ${run.last_step ?? "?"}`,
+      `- followups: ${followups.length}`,
       `- task_id: ${run.task_id ?? "?"}`,
       `- domain: ${run.domain ?? "?"}`,
       `- active_runs: ${activeRows.length}`,
+      `- progress_mode: ${progressMode}`,
+      `- lifecycle_events: ${lifecycleEvents.length}`,
     ].join("\n");
   }
 
@@ -194,6 +249,12 @@ function summarizeRun(
   const sessionId = result?.session_id ?? "?";
   const sessionDir = result?.session_dir ?? "?";
   const metrics = (result?.metrics as Record<string, unknown>) || {};
+  const runRecord = (result?.run as Record<string, unknown> | undefined) || undefined;
+  const followups = Array.isArray(runRecord?.followups)
+    ? (runRecord?.followups as Record<string, unknown>[])
+    : [];
+  const lastFollowup = followups.length > 0 ? followups[followups.length - 1] : undefined;
+  const followupCount = Number(result?.run_followup_count ?? followups.length ?? 0);
   return [
     `Cortex run: ${ok ? "ok" : "failed"}`,
     `- run_id: ${runId}`,
@@ -205,16 +266,28 @@ function summarizeRun(
     `- eval_score: ${metrics.eval_score ?? "?"}`,
     `- lesson_activations: ${metrics.lesson_activations ?? "?"}`,
     `- retrieval_help_ratio: ${metrics.v2_retrieval_help_ratio ?? "?"}`,
+    `- followups_applied: ${followupCount}`,
+    `- last_followup: ${lastFollowup?.text ?? "none"}`,
     `- session_dir: ${sessionDir}`,
   ].join("\n");
 }
 
 function summarizePollUpdate(
   statusPayload: Record<string, unknown>,
-  runId: string
+  runId: string,
+  lastSeenLifecycleTs: number
 ): PollUpdate | null {
   const run = statusPayload.run as Record<string, unknown> | null | undefined;
   if (!run) return null;
+  const lifecycleEvents = Array.isArray(statusPayload.lifecycle_events)
+    ? (statusPayload.lifecycle_events as Record<string, unknown>[])
+    : [];
+  const latestLifecycle = lifecycleEvents.length
+    ? lifecycleEvents[lifecycleEvents.length - 1]
+    : null;
+  const latestLifecycleTs = latestLifecycle
+    ? Number(latestLifecycle.ts ?? 0)
+    : 0;
 
   const status = String(run.status ?? "unknown");
   const lastStep = run.last_step ?? "?";
@@ -223,14 +296,31 @@ function summarizePollUpdate(
   const elapsedSec =
     started > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - started)) : null;
   const terminal = status === "completed" || status === "failed" || status === "cancelled";
-  const signature = `${status}|${lastStep}|${cancelRequested}`;
+  const latestEvent = latestLifecycle ? String(latestLifecycle.event ?? "") : "";
+  const signature = `${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
   const elapsedPart = elapsedSec === null ? "" : `, elapsed=${elapsedSec}s`;
   const cancelPart = cancelRequested ? ", cancel_requested=true" : "";
+  const hasNewLifecycleEvent = latestLifecycleTs > lastSeenLifecycleTs;
+  const followups = Array.isArray(run.followups)
+    ? (run.followups as unknown[])
+    : [];
+
+  let eventPart = "";
+  if (hasNewLifecycleEvent && latestLifecycle) {
+    const eventName = String(latestLifecycle.event ?? "event");
+    const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
+    if (eventName === "followup") {
+      const text = String(latestLifecycle.text ?? "").trim();
+      eventPart = text ? `, event=followup("${text.slice(0, 80)}")` : ", event=followup";
+    } else {
+      eventPart = `, event=${eventName}, event_step=${eventStep}`;
+    }
+  }
 
   return {
     signature,
     terminal,
-    message: `Cortex run update (${runId}): status=${status}, last_step=${lastStep}${cancelPart}${elapsedPart}`,
+    message: `Cortex run update (${runId}): status=${status}, last_step=${lastStep}, followups=${followups.length}${cancelPart}${elapsedPart}${eventPart}`,
   };
 }
 
@@ -244,10 +334,14 @@ async function maybeSendRunProgressUpdate(
   state.pollInFlight = true;
 
   try {
-    const bridge = await runCortexDispatch(`/status run_id=${runId}`, scope);
+    const bridge = await runCortexDispatch(
+      `/status run_id=${runId} progress=on limit=${RUN_STATUS_POLL_EVENT_LIMIT}`,
+      scope
+    );
     if (!bridge.payload || bridge.payload.mode !== "status") return;
 
-    const poll = summarizePollUpdate(bridge.payload as Record<string, unknown>, runId);
+    const statusPayload = bridge.payload as Record<string, unknown>;
+    const poll = summarizePollUpdate(statusPayload, runId, state.lastLifecycleTs);
     if (!poll) return;
 
     if (poll.signature === state.lastProgressSignature) return;
@@ -261,6 +355,15 @@ async function maybeSendRunProgressUpdate(
 
     state.lastProgressSignature = poll.signature;
     state.lastProgressSentAtMs = now;
+    const lifecycleEvents = Array.isArray(statusPayload.lifecycle_events)
+      ? (statusPayload.lifecycle_events as Record<string, unknown>[])
+      : [];
+    for (const event of lifecycleEvents) {
+      const ts = Number(event.ts ?? 0);
+      if (Number.isFinite(ts) && ts > state.lastLifecycleTs) {
+        state.lastLifecycleTs = ts;
+      }
+    }
     await ctx.reply(poll.message);
   } catch {
     // Polling is best-effort: failures should not break the foreground run flow.
@@ -293,6 +396,7 @@ async function runTaskAndReply(
     pollInFlight: false,
     lastProgressSignature: "",
     lastProgressSentAtMs: 0,
+    lastLifecycleTs: 0,
   });
 
   await ctx.reply(
@@ -433,6 +537,50 @@ export async function handleCortexStopCommand(
   return true;
 }
 
+async function handleCortexFollowupCommand(
+  ctx: Context,
+  chatId: number,
+  rawText: string
+): Promise<boolean> {
+  if (!CORTEX_BRIDGE_ENABLED) return false;
+  const scope = chatScope(chatId);
+  const activeRunId = activeRuns.get(scope)?.runId;
+  const followupDispatch = buildFollowupDispatchText(rawText, activeRunId);
+  if (!followupDispatch) {
+    await ctx.reply(
+      "Follow-up requires an active run and non-empty text. Use /followup run_id=<id> <text>."
+    );
+    return true;
+  }
+
+  const bridge = await runCortexDispatch(followupDispatch.dispatchText, scope);
+  if (!bridge.payload) {
+    const tail =
+      bridge.stderr.trim() || bridge.stdout.trim() || bridge.error || "unknown";
+    await ctx.reply(`Cortex followup request failed:\n${tail.slice(0, 1200)}`);
+    return true;
+  }
+  const payload = bridge.payload as Record<string, unknown>;
+  if (payload.mode === "followup" && payload.ok === true) {
+    const count =
+      (payload.result as Record<string, unknown> | undefined)?.followups &&
+      Array.isArray((payload.result as Record<string, unknown>).followups)
+        ? ((payload.result as Record<string, unknown>).followups as unknown[]).length
+        : undefined;
+    await ctx.reply(
+      count === undefined
+        ? `Cortex followup accepted for run ${followupDispatch.runId}.`
+        : `Cortex followup accepted for run ${followupDispatch.runId} (total followups=${count}).`
+    );
+    return true;
+  }
+  const error = payload.error ?? bridge.error ?? "unknown";
+  await ctx.reply(
+    `Cortex followup failed for run ${followupDispatch.runId}:\n${String(error).slice(0, 1200)}`
+  );
+  return true;
+}
+
 export async function maybeHandleCortexRoute(
   ctx: Context,
   message: string,
@@ -460,6 +608,10 @@ export async function maybeHandleCortexRoute(
     return handled;
   }
 
+  if (lowered.startsWith("/followup")) {
+    return handleCortexFollowupCommand(ctx, chatId, normalized);
+  }
+
   if (
     lowered.startsWith("/run")
   ) {
@@ -481,6 +633,12 @@ export async function maybeHandleCortexRoute(
     }
     await ctx.reply("Reply with 'yes' to run via Cortex, or 'no' to cancel.");
     return true;
+  }
+
+  const activeRunId = activeRuns.get(scope)?.runId;
+  if (activeRunId && !normalized.startsWith("/")) {
+    // During active runs, plain text is treated as steering input.
+    return handleCortexFollowupCommand(ctx, chatId, normalized);
   }
 
   if (!CORTEX_AUTO_TASK_ROUTING || !looksLikeTaskIntent(normalized)) {

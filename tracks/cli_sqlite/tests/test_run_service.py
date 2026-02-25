@@ -103,6 +103,37 @@ def test_append_followup_persists_to_run_state(tmp_path: Path) -> None:
     assert persisted.followups[0]["text"] == "retry with stricter parser"
 
 
+def test_append_followup_records_lifecycle_event(tmp_path: Path) -> None:
+    state_path = tmp_path / "run_service_state.json"
+    lifecycle_path = tmp_path / "run_lifecycle.jsonl"
+    started = run_service.start_run(
+        task_id="aggregate_report",
+        domain="gridtool",
+        session_id=9403,
+        state_path=state_path,
+    )
+
+    run_service.append_followup(
+        started.run_id,
+        "confirm lockfile",
+        "transport:test",
+        1730000001.0,
+        state_path=state_path,
+        lifecycle_path=lifecycle_path,
+    )
+
+    events = run_service.list_events(
+        started.run_id,
+        lifecycle_path=lifecycle_path,
+    )
+    assert len(events) == 1
+    event = events[0]
+    assert event["event"] == "followup"
+    assert event["text"] == "confirm lockfile"
+    assert event["source"] == "transport:test"
+    assert event["ts"] == 1730000001.0
+
+
 @pytest.mark.parametrize(
     ("text", "source", "ts"),
     [

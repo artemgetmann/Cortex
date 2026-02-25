@@ -160,6 +160,8 @@ def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
     trigger_text = str(row.get("trigger", "")).strip()
     task_text = str(row.get("task_id", "")).strip()
     domain_text = str(row.get("domain", "")).strip()
+    text_value = row.get("text")
+    source_value = row.get("source")
     return {
         "ts": ts,
         "event": event,
@@ -168,6 +170,8 @@ def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
         "session_id": session_id,
         "task_id": task_text or None,
         "domain": domain_text or None,
+        "text": str(text_value).strip() if text_value is not None else None,
+        "source": str(source_value).strip() if source_value is not None else None,
     }
 
 
@@ -463,6 +467,8 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         "stderr_tail": "\n".join((proc.stderr or "").splitlines()[-16:]),
         "metrics": metrics,
         "run_status": run_row.status if run_row else None,
+        "run": run_row.to_dict() if run_row else None,
+        "run_followup_count": len(run_row.followups or []) if run_row else 0,
     }
 
 

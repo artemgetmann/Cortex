@@ -29,6 +29,18 @@ def test_build_plan_parses_cancel_with_run_id() -> None:
     assert plan.run_id == "run_1730000000000_00000042"
 
 
+def test_build_plan_parses_run_status_with_progress_controls() -> None:
+    plan = dispatch._build_plan(
+        "/run-status run_id=run_1730000000000_00000042 progress=on limit=4",
+        chat_scope="tg-1",
+        default_domain="shell",
+    )
+    assert plan.mode == "status"
+    assert plan.run_id == "run_1730000000000_00000042"
+    assert plan.progress is True
+    assert plan.progress_limit == 4
+
+
 def test_status_payload_exposes_active_runs(monkeypatch) -> None:
     monkeypatch.setattr(dispatch.run_service, "list_active", lambda: [_run_record(run_id="run_1", status="running")])
     monkeypatch.setattr(
@@ -40,6 +52,22 @@ def test_status_payload_exposes_active_runs(monkeypatch) -> None:
     assert payload["mode"] == "status"
     assert payload["run"]["run_id"] == "run_1"
     assert payload["active_runs"][0]["run_id"] == "run_1"
+
+
+def test_coerce_lifecycle_event_preserves_followup_metadata() -> None:
+    event = dispatch._coerce_lifecycle_event(
+        {
+            "ts": 10.0,
+            "event": "followup",
+            "text": "retry with strict verifier",
+            "source": "transport:tg-1",
+            "run_id": "run_1",
+        }
+    )
+    assert event is not None
+    assert event["event"] == "followup"
+    assert event["text"] == "retry with strict verifier"
+    assert event["source"] == "transport:tg-1"
 
 
 def test_cancel_payload_calls_run_service(monkeypatch) -> None:
@@ -93,3 +121,22 @@ def test_latest_lifecycle_events_uses_run_service_resolved_path(monkeypatch) -> 
     assert captured["run_id"] == "run_1"
     assert captured["max_events"] == 4
     assert captured["path"] == expected_path
+
+
+def test_status_payload_progress_mode_includes_lifecycle_events(monkeypatch) -> None:
+    monkeypatch.setattr(dispatch.run_service, "list_active", lambda: [])
+    monkeypatch.setattr(dispatch.run_service, "get_run", lambda run_id: None)
+    monkeypatch.setattr(
+        dispatch,
+        "_latest_lifecycle_events",
+        lambda run_id, limit: [{"ts": 11.0, "event": "step", "run_id": run_id}],
+    )
+    payload = dispatch._status_payload(
+        chat_scope="tg-1",
+        run_id="run_1",
+        include_progress=True,
+        progress_limit=5,
+    )
+    assert payload["progress_mode"] is True
+    assert payload["progress_limit"] == 5
+    assert len(payload["lifecycle_events"]) == 1
