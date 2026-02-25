@@ -30,6 +30,8 @@ DEFAULT_ESCALATION_PATH = LEARNING_ROOT / "critic_escalation_state.json"
 
 DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "legacy"))
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
+DEFAULT_LLM_BACKEND = str(getattr(agent_cli, "DEFAULT_LLM_BACKEND", "claude_print"))
+LLM_BACKENDS = tuple(getattr(agent_cli, "LLM_BACKENDS", ("anthropic", "claude_print")))
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
 DEFAULT_CRITIC_MODEL = str(getattr(agent_cli, "DEFAULT_CRITIC_MODEL", "claude-haiku-4-5"))
 DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS = int(getattr(agent_cli, "DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS", 0))
@@ -177,6 +179,7 @@ def _run_phase(
     model_executor: str,
     model_critic: str,
     model_judge: str | None,
+    llm_backend: str,
     posttask_mode: str,
     posttask_learn: bool,
     memory_v2_demo_mode: bool,
@@ -206,6 +209,7 @@ def _run_phase(
             model_executor=model_executor,
             model_critic=model_critic,
             model_judge=model_judge,
+            llm_backend=llm_backend,
             posttask_mode=posttask_mode,
             posttask_learn=posttask_learn,
             memory_v2_demo_mode=memory_v2_demo_mode,
@@ -264,6 +268,7 @@ def main() -> int:
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-critic", default=DEFAULT_CRITIC_MODEL)
     ap.add_argument("--model-judge", default=None)
+    ap.add_argument("--llm-backend", default=DEFAULT_LLM_BACKEND, choices=LLM_BACKENDS)
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument(
@@ -308,6 +313,7 @@ def main() -> int:
     model_executor = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
     model_critic = args.model_critic.strip() or DEFAULT_CRITIC_MODEL
     model_judge = args.model_judge.strip() if args.model_judge else None
+    llm_backend = str(args.llm_backend).strip() or DEFAULT_LLM_BACKEND
     posttask_learn = not args.no_posttask_learn
 
     phase_specs: list[tuple[str, str, str, int]] = [
@@ -324,7 +330,7 @@ def main() -> int:
     print(
         f"  learning_mode={args.learning_mode} bootstrap={args.bootstrap} max_steps={args.max_steps} "
         f"posttask_mode={args.posttask_mode} posttask_learn={posttask_learn} "
-        f"transfer_retrieval={bool(args.enable_transfer_retrieval)}"
+        f"transfer_retrieval={bool(args.enable_transfer_retrieval)} llm_backend={llm_backend}"
     )
     print(
         f"  runs: grid={args.grid_runs} flux={args.fluxtool_runs} shell={args.shell_runs} "
@@ -349,6 +355,7 @@ def main() -> int:
             model_executor=model_executor,
             model_critic=model_critic,
             model_judge=model_judge,
+            llm_backend=llm_backend,
             posttask_mode=args.posttask_mode,
             posttask_learn=posttask_learn,
             memory_v2_demo_mode=bool(args.memory_v2_demo_mode),
@@ -447,6 +454,7 @@ def main() -> int:
             "model_executor": model_executor,
             "model_critic": model_critic,
             "model_judge": model_judge,
+            "llm_backend": llm_backend,
             "clear_lessons": args.clear_lessons,
         },
         "protocol": [

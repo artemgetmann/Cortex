@@ -1,0 +1,215 @@
+{
+  "config": {
+    "grid_task_id": "aggregate_report",
+    "fluxtool_task_id": "aggregate_report_holdout",
+    "shell_task_id": "shell_excel_build_report",
+    "sqlite_task_id": "import_aggregate",
+    "retention_task_id": "aggregate_report",
+    "grid_runs": 1,
+    "fluxtool_runs": 1,
+    "shell_runs": 1,
+    "sqlite_runs": 1,
+    "retention_runs": 1,
+    "start_session": 27101,
+    "max_steps": 6,
+    "learning_mode": "strict",
+    "bootstrap": false,
+    "cryptic_errors": false,
+    "semi_helpful_errors": false,
+    "mixed_errors": false,
+    "posttask_mode": "direct",
+    "posttask_learn": false,
+    "memory_v2_demo_mode": false,
+    "enable_transfer_retrieval": false,
+    "transfer_retrieval_max_results": 1,
+    "transfer_retrieval_score_weight": 0.35,
+    "model_executor": "claude-haiku-4-5",
+    "model_critic": "claude-haiku-4-5",
+    "model_judge": null,
+    "llm_backend": "anthropic",
+    "clear_lessons": false
+  },
+  "protocol": [
+    {
+      "phase": "grid_warmup",
+      "domain": "gridtool",
+      "task_id": "aggregate_report",
+      "runs": 1
+    },
+    {
+      "phase": "fluxtool_interference",
+      "domain": "fluxtool",
+      "task_id": "aggregate_report_holdout",
+      "runs": 1
+    },
+    {
+      "phase": "shell_excel_interference",
+      "domain": "shell",
+      "task_id": "shell_excel_build_report",
+      "runs": 1
+    },
+    {
+      "phase": "sqlite_interference",
+      "domain": "sqlite",
+      "task_id": "import_aggregate",
+      "runs": 1
+    },
+    {
+      "phase": "grid_retention",
+      "domain": "gridtool",
+      "task_id": "aggregate_report",
+      "runs": 1
+    }
+  ],
+  "phase_summary": {
+    "grid_warmup": {
+      "runs": 1,
+      "pass_count": 1,
+      "fail_count": 0,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_steps": 3.0,
+      "mean_tool_errors": 0.0,
+      "lesson_activations_total": 0,
+      "elapsed_s_total": 14.2
+    },
+    "fluxtool_interference": {
+      "runs": 1,
+      "pass_count": 1,
+      "fail_count": 0,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_steps": 3.0,
+      "mean_tool_errors": 0.0,
+      "lesson_activations_total": 0,
+      "elapsed_s_total": 17.71
+    },
+    "shell_excel_interference": {
+      "runs": 1,
+      "pass_count": 1,
+      "fail_count": 0,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_steps": 6.0,
+      "mean_tool_errors": 1.0,
+      "lesson_activations_total": 0,
+      "elapsed_s_total": 17.07
+    },
+    "sqlite_interference": {
+      "runs": 1,
+      "pass_count": 1,
+      "fail_count": 0,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_steps": 6.0,
+      "mean_tool_errors": 0.0,
+      "lesson_activations_total": 0,
+      "elapsed_s_total": 9.28
+    },
+    "grid_retention": {
+      "runs": 1,
+      "pass_count": 1,
+      "fail_count": 0,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_steps": 3.0,
+      "mean_tool_errors": 0.0,
+      "lesson_activations_total": 0,
+      "elapsed_s_total": 15.57
+    }
+  },
+  "overall_summary": {
+    "runs": 5,
+    "pass_count": 5,
+    "fail_count": 0,
+    "pass_rate": 1.0,
+    "mean_score": 1.0,
+    "mean_steps": 4.2,
+    "mean_tool_errors": 0.2,
+    "lesson_activations_total": 0,
+    "elapsed_s_total": 73.83
+  },
+  "retention_delta": {
+    "pass_rate_delta": 0.0,
+    "mean_score_delta": 0.0,
+    "mean_steps_delta": 0.0,
+    "mean_tool_errors_delta": 0.0
+  },
+  "runs": [
+    {
+      "phase": "grid_warmup",
+      "domain": "gridtool",
+      "task_id": "aggregate_report",
+      "run": 1,
+      "session_id": 27101,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lessons_loaded": 0,
+      "lessons_generated": 0,
+      "lesson_activations": 0,
+      "elapsed_s": 14.2
+    },
+    {
+      "phase": "fluxtool_interference",
+      "domain": "fluxtool",
+      "task_id": "aggregate_report_holdout",
+      "run": 1,
+      "session_id": 27102,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lessons_loaded": 0,
+      "lessons_generated": 0,
+      "lesson_activations": 0,
+      "elapsed_s": 17.71
+    },
+    {
+      "phase": "shell_excel_interference",
+      "domain": "shell",
+      "task_id": "shell_excel_build_report",
+      "run": 1,
+      "session_id": 27103,
+      "passed": true,
+      "score": 1.0,
+      "steps": 6,
+      "tool_errors": 1,
+      "lessons_loaded": 0,
+      "lessons_generated": 0,
+      "lesson_activations": 0,
+      "elapsed_s": 17.07
+    },
+    {
+      "phase": "sqlite_interference",
+      "domain": "sqlite",
+      "task_id": "import_aggregate",
+      "run": 1,
+      "session_id": 27104,
+      "passed": true,
+      "score": 1.0,
+      "steps": 6,
+      "tool_errors": 0,
+      "lessons_loaded": 4,
+      "lessons_generated": 0,
+      "lesson_activations": 0,
+      "elapsed_s": 9.28
+    },
+    {
+      "phase": "grid_retention",
+      "domain": "gridtool",
+      "task_id": "aggregate_report",
+      "run": 1,
+      "session_id": 27105,
+      "passed": true,
+      "score": 1.0,
+      "steps": 3,
+      "tool_errors": 0,
+      "lessons_loaded": 0,
+      "lessons_generated": 0,
+      "lesson_activations": 0,
+      "elapsed_s": 15.57
+    }
+  ]
+}
