@@ -1,0 +1,135 @@
+{
+  "task_id": "incremental_reconcile",
+  "session_range": [
+    147200,
+    147209
+  ],
+  "run_count": 10,
+  "pass_rate": 0.1,
+  "last5_pass_rate": 0.2,
+  "median_steps_to_success": 6,
+  "mean_lesson_activations": 4.8,
+  "mean_retrieval_help_ratio": 0.8,
+  "runs": [
+    {
+      "session_id": 147200,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "score": 0.917
+    },
+    {
+      "session_id": 147201,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 4,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.917
+    },
+    {
+      "session_id": 147202,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 6,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.833
+    },
+    {
+      "session_id": 147203,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 4,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.917
+    },
+    {
+      "session_id": 147204,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "score": 0.917
+    },
+    {
+      "session_id": 147205,
+      "passed": true,
+      "steps": 6,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 1.0,
+      "score": 1.0
+    },
+    {
+      "session_id": 147206,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 10,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.833
+    },
+    {
+      "session_id": 147207,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 8,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.833
+    },
+    {
+      "session_id": 147208,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 6,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.917
+    },
+    {
+      "session_id": 147209,
+      "passed": false,
+      "steps": 6,
+      "lesson_activations": 8,
+      "retrieval_help_ratio": 1.0,
+      "score": 0.833
+    }
+  ],
+  "failure_taxonomy": {
+    "reason_code_counts": {
+      "too_many_errors": 8,
+      "matched_forbidden_pattern": 3,
+      "missing_required_pattern": 1,
+      "required_query_mismatch": 1
+    },
+    "gap_type_counts": {
+      "error_budget": 8,
+      "forbidden_sql_pattern": 3,
+      "required_query": 1,
+      "required_sql_pattern": 1
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|(?is)delete\\s+from\\s+ledger",
+        "count": 3
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        "count": 3
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+        "count": 3
+      },
+      {
+        "gap_signature": "too_many_errors|error_budget|error_count=4 max_error_count=1",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+        "count": 1
+      },
+      {
+        "gap_signature": "required_query_mismatch|required_query|reject_count",
+        "count": 1
+      }
+    ]
+  }
+}

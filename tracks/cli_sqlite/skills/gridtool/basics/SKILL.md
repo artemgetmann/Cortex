@@ -1,7 +1,7 @@
 ---
 name: gridtool-basics
 description: Complete reference for the gridtool data processing CLI
-version: 1
+version: 3
 ---
 
 # gridtool Command Reference
@@ -122,3 +122,10 @@ SHOW
 ## Tool Reference
 
 Use `run_gridtool` to execute gridtool commands. Pass all commands as a single string in the `commands` parameter.
+
+## Learned Updates
+- [2026-02-23] After reading skill reference, always execute commands in sequence—reading alone does not complete data processing tasks (evidence steps: 1)
+- [2026-02-23] Use run_gridtool tool with all pipeline commands in a single `commands` string; separate each command with newline (evidence steps: 1)
+- [2026-02-23] For aggregate_report task: LOAD → TALLY region with sum(amount) and count aggregations → RANK total desc → SHOW to display final results (evidence steps: 1)
+- [2026-02-23] EXECUTION RULE: Reading gridtool/basics documentation is prerequisite only. Task completion requires calling run_gridtool with the full command pipeline as a single string with newline separators. (evidence steps: 1)
+- [2026-02-23] For aggregate_report specifically: after LOAD and TALLY steps, RANK total desc (not RANK region) to sort by aggregated amount, then SHOW. Verify all 4 pipeline steps are executed in one run_gridtool call. (evidence steps: 1)

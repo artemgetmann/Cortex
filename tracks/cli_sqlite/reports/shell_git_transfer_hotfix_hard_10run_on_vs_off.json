@@ -1,0 +1,312 @@
+{
+  "experiment": "shell_git_transfer_hotfix_hard_10run_on_vs_off",
+  "settings": {
+    "domain": "shell",
+    "task_id": "shell_git_transfer_hotfix_hard",
+    "sessions": 10,
+    "max_steps": 4,
+    "docs": "on/lossy",
+    "doc_retrieval": "auto",
+    "judge_diagnostic": true,
+    "contract_gap_retry": true,
+    "model_executor": "claude-haiku-4-5",
+    "model_judge": "claude-haiku-4-5",
+    "backend": "anthropic"
+  },
+  "lessons_on": {
+    "run_count": 10,
+    "pass_rate": 0.4,
+    "last5_pass_rate": 0.6,
+    "median_steps_to_success": 4.0,
+    "mean_lesson_activations": 2.6,
+    "mean_retrieval_help_ratio": 0.9,
+    "failure_reason_counts": {
+      "missing_required_event_pattern": 18
+    },
+    "failure_gap_type_counts": {
+      "required_event_pattern": 18
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+checkout\\s+-B\\s+main",
+        "count": 6
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+format-patch\\s+-1\\s+HEAD\\s+--stdout",
+        "count": 6
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_alpha.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_beta.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        "count": 2
+      }
+    ],
+    "runs": [
+      {
+        "session_id": 147710,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147711,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147712,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147713,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147714,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147715,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147716,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147717,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147718,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0
+      },
+      {
+        "session_id": 147719,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0
+      }
+    ]
+  },
+  "lessons_off": {
+    "run_count": 10,
+    "pass_rate": 0.0,
+    "last5_pass_rate": 0.0,
+    "median_steps_to_success": null,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "failure_reason_counts": {
+      "missing_required_event_pattern": 20,
+      "missing_required_file_content_pattern": 6,
+      "matched_forbidden_event_pattern": 4,
+      "missing_required_file": 3
+    },
+    "failure_gap_type_counts": {
+      "required_event_pattern": 20,
+      "required_file_content_pattern": 6,
+      "forbidden_event_pattern": 4,
+      "required_file": 3
+    },
+    "top_gap_signatures": [
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+format-patch\\s+-1\\s+HEAD\\s+--stdout",
+        "count": 7
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+checkout\\s+-B\\s+main",
+        "count": 5
+      },
+      {
+        "gap_signature": "matched_forbidden_event_pattern|forbidden_event_pattern|(?is)\\b/tmp\\b",
+        "count": 4
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_alpha.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_beta.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_gamma.txt::(?is)Retry profile gamma",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_gamma.txt::(?is)Set initial delay to 325ms",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_BRANCH\\s+main$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_PATCHES\\s+1$",
+        "count": 1
+      }
+    ],
+    "runs": [
+      {
+        "session_id": 147810,
+        "passed": false,
+        "score": 0.95,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147811,
+        "passed": false,
+        "score": 0.9,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147812,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147813,
+        "passed": false,
+        "score": 0.7,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147814,
+        "passed": false,
+        "score": 0.9,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147815,
+        "passed": false,
+        "score": 0.95,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147816,
+        "passed": false,
+        "score": 0.9,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147817,
+        "passed": false,
+        "score": 0.8,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147818,
+        "passed": false,
+        "score": 0.55,
+        "steps": 4,
+        "tool_errors": 4,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session_id": 147819,
+        "passed": false,
+        "score": 0.85,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      }
+    ]
+  },
+  "deltas": {
+    "pass_rate_delta": 0.4,
+    "last5_pass_rate_delta": 0.6,
+    "mean_lesson_activations_delta": 2.6,
+    "mean_retrieval_help_ratio_delta": 0.9
+  }
+}

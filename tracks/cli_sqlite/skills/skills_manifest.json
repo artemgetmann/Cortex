@@ -2,20 +2,20 @@
   {
     "confidence": 0.7,
     "description": "Holdout fluxtool syntax reference with remapped command/operator language",
-    "last_updated": "2026-02-15T16:09:38.480101+00:00",
+    "last_updated": "2026-02-23T16:14:41.670990+00:00",
     "path": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/skills/fluxtool/basics/SKILL.md",
     "skill_ref": "fluxtool/basics",
     "title": "fluxtool-basics",
-    "version": 1
+    "version": 2
   },
   {
     "confidence": 0.7,
     "description": "Complete reference for the gridtool data processing CLI",
-    "last_updated": "2026-02-14T17:48:19.502800+00:00",
+    "last_updated": "2026-02-23T11:14:13.490819+00:00",
     "path": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/skills/gridtool/basics/SKILL.md",
     "skill_ref": "gridtool/basics",
     "title": "gridtool-basics",
-    "version": 1
+    "version": 3
   },
   {
     "confidence": 0.7,
@@ -47,7 +47,7 @@
   {
     "confidence": 0.7,
     "description": "Stateful ingest workflow with dedupe, rejects, and checkpoint logging.",
-    "last_updated": "2026-02-14T17:48:19.504714+00:00",
+    "last_updated": "2026-02-21T14:59:15.472379+00:00",
     "path": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/skills/sqlite/incremental-reconcile/SKILL.md",
     "skill_ref": "sqlite/incremental-reconcile",
     "title": "sqlite-incremental-reconcile",

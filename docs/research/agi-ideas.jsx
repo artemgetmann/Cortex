@@ -408,6 +408,46 @@ const STATUS_STYLES = {
 
 const SECTIONS = Object.keys(AGI_DATA);
 
+const JARGON_EXPLANATIONS = [
+  ["sensorimotor grounding", "learning by sensing + acting"],
+  ["grounded", "connected to real-world interaction"],
+  ["grounding", "real-world interaction base"],
+  ["world model", "internal simulation of how things work"],
+  ["orchestrator", "master coordinator"],
+  ["telos", "core purpose or direction"],
+  ["neuromorphic", "brain-like hardware design"],
+  ["embodied cognition", "thinking tied to a body and actions"],
+  ["predictive coding", "predicting what happens next"],
+  ["memory consolidation", "stabilizing memories over time"],
+  ["plasticity", "ability to rewire and adapt"],
+  ["action-perception loops", "act, observe result, update behavior"],
+  ["recurrent cognition", "thinking in loops over time"],
+  ["feed-forward", "one-pass processing with no internal loop"],
+  ["epistemic", "about what can be known"],
+  ["causal", "cause-and-effect based"],
+  ["RAG", "retrieval-augmented generation"],
+  ["sim-to-real", "trained in simulation, then used in reality"],
+  ["cortex", "higher-level reasoning layer"],
+];
+
+function explainJargon(text) {
+  if (!text) return text;
+
+  let explained = text;
+
+  // Add short bracket explanations only where dense terms appear.
+  // We keep this conservative to preserve your original voice and avoid over-noising the text.
+  for (const [term, meaning] of JARGON_EXPLANATIONS) {
+    const pattern = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
+    explained = explained.replace(pattern, (match) => {
+      const alreadyExplained = match.includes("(");
+      return alreadyExplained ? match : `${match} (${meaning})`;
+    });
+  }
+
+  return explained;
+}
+
 export default function AGIIdeas() {
   const [activeSection, setActiveSection] = useState("core");
   const [expandedCard, setExpandedCard] = useState(null);
@@ -534,7 +574,7 @@ export default function AGIIdeas() {
                     {status.label}
                   </span>
                   <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
-                    {idea.name}
+                    {explainJargon(idea.name)}
                   </span>
                 </div>
                 <span style={{
@@ -556,7 +596,7 @@ export default function AGIIdeas() {
                     color: "#94a3b8",
                     marginBottom: 14,
                   }}>
-                    {idea.description}
+                    {explainJargon(idea.description)}
                   </div>
                   <div style={{
                     background: "rgba(74, 222, 128, 0.05)",
@@ -575,7 +615,7 @@ export default function AGIIdeas() {
                       KEY INSIGHT
                     </div>
                     <div style={{ fontSize: 13, lineHeight: 1.6, color: "#cbd5e1" }}>
-                      {idea.insight}
+                      {explainJargon(idea.insight)}
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: "#475569", fontStyle: "italic" }}>
@@ -605,10 +645,10 @@ export default function AGIIdeas() {
           THE THREAD CONNECTING EVERYTHING
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.8, color: "#94a3b8" }}>
-          Memory (MindMirror) → Always-on memory router → Chatless context → World model (simulated environment) → Reward system (synthetic dopamine + goals/telos) → Modular cognitive architecture (specialized transformers + orchestrator) → Knowledge-seeking training → Active/lifelong learning → LLM as cortex assistant, not brain → Embodiment via robotics.
+          {explainJargon("Memory (MindMirror) → Always-on memory router → Chatless context → World model (simulated environment) → Reward system (synthetic dopamine + goals/telos) → Modular cognitive architecture (specialized transformers + orchestrator) → Knowledge-seeking training → Active/lifelong learning → LLM as cortex assistant, not brain → Embodiment via robotics.")}
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.8, color: "#64748b", marginTop: 10 }}>
-          Core conviction: AGI won't come from scaling LLMs. It'll come from grounded world models + goal-driven agents + reward-based learning + persistent memory. The brain is the only existence proof. If it takes more than 10K lines of code, the architecture is wrong. AGI is a being, not a function.
+          {explainJargon("Core conviction: AGI won't come from scaling LLMs. It'll come from grounded world models + goal-driven agents + reward-based learning + persistent memory. The brain is the only existence proof. If it takes more than 10K lines of code, the architecture is wrong. AGI is a being, not a function.")}
         </div>
       </div>
     </div>

@@ -1,0 +1,437 @@
+{
+  "experiment": "shell_git_transfer_hotfix_hard_10run_on_vs_off_steps3_closurefix",
+  "settings": {
+    "task_id": "shell_git_transfer_hotfix_hard",
+    "domain": "shell",
+    "sessions": 10,
+    "max_steps": 3,
+    "backend": "anthropic",
+    "model_executor": "claude-haiku-4-5",
+    "model_judge": "claude-haiku-4-5",
+    "docs": "on/lossy",
+    "doc_retrieval": "auto",
+    "judge_diagnostic": true,
+    "contract_gap_retry": true,
+    "contract_gap_retry_steps": 1,
+    "structured_lessons_required": true,
+    "transfer_retrieval_enabled": true,
+    "on_sessions": [
+      148500,
+      148509
+    ],
+    "off_sessions": [
+      148600,
+      148609
+    ]
+  },
+  "lessons_on": {
+    "run_count": 10,
+    "pass_rate": 0.4,
+    "last5_pass_rate": 0.6,
+    "median_steps_to_success": 3.0,
+    "mean_lesson_activations": 2.3,
+    "mean_retrieval_help_ratio": 0.9,
+    "runs": [
+      {
+        "session_id": 148500,
+        "passed": false,
+        "score": 0.889,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148501,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 2,
+        "lesson_activations": 1,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148502,
+        "passed": false,
+        "score": 0.889,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148503,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148504,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148505,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148506,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148507,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 2,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148508,
+        "passed": false,
+        "score": 0.389,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 1,
+        "contract_closure_check_last_status": "fail"
+      },
+      {
+        "session_id": 148509,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 4,
+        "retrieval_help_ratio": 1.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      }
+    ],
+    "failure_reason_gap_counts": [
+      {
+        "reason_code": "missing_required_event_pattern",
+        "gap_type": "required_event_pattern",
+        "count": 6
+      },
+      {
+        "reason_code": "missing_required_file_content_pattern",
+        "gap_type": "required_file_content_pattern",
+        "count": 6
+      },
+      {
+        "reason_code": "missing_required_file",
+        "gap_type": "required_file",
+        "count": 4
+      },
+      {
+        "reason_code": "matched_forbidden_event_pattern",
+        "gap_type": "forbidden_event_pattern",
+        "count": 2
+      }
+    ],
+    "top_gap_signatures": [
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        "count": 3
+      },
+      {
+        "gap_signature": "matched_forbidden_event_pattern|forbidden_event_pattern|(?is)\\b/tmp\\b",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_beta.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_alpha.patch",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|target_repo/.git",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|hotfix_gamma.patch",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|target_repo/hotfix_gamma.txt",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|target_repo/transfer_summary.txt",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_gamma.txt::(?is)Retry profile gamma",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_gamma.txt::(?is)Set initial delay to 325ms",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_BRANCH\\s+main$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_PATCHES\\s+1$",
+        "count": 1
+      }
+    ]
+  },
+  "lessons_off": {
+    "run_count": 10,
+    "pass_rate": 0.4,
+    "last5_pass_rate": 0.2,
+    "median_steps_to_success": 3.0,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session_id": 148600,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 1,
+        "contract_closure_check_last_status": "fail"
+      },
+      {
+        "session_id": 148601,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 1,
+        "contract_closure_check_last_status": "fail"
+      },
+      {
+        "session_id": 148602,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148603,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148604,
+        "passed": false,
+        "score": 0.889,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148605,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148606,
+        "passed": false,
+        "score": 0.556,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148607,
+        "passed": false,
+        "score": 0.778,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148608,
+        "passed": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      },
+      {
+        "session_id": 148609,
+        "passed": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0,
+        "contract_closure_checks": 1,
+        "contract_closure_check_failures": 0,
+        "contract_closure_check_last_status": "pass"
+      }
+    ],
+    "failure_reason_gap_counts": [
+      {
+        "reason_code": "missing_required_event_pattern",
+        "gap_type": "required_event_pattern",
+        "count": 7
+      },
+      {
+        "reason_code": "missing_required_file_content_pattern",
+        "gap_type": "required_file_content_pattern",
+        "count": 6
+      },
+      {
+        "reason_code": "matched_forbidden_event_pattern",
+        "gap_type": "forbidden_event_pattern",
+        "count": 2
+      },
+      {
+        "reason_code": "missing_required_file",
+        "gap_type": "required_file",
+        "count": 2
+      }
+    ],
+    "top_gap_signatures": [
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_alpha.patch",
+        "count": 3
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        "count": 2
+      },
+      {
+        "gap_signature": "matched_forbidden_event_pattern|forbidden_event_pattern|(?is)\\b/tmp\\b",
+        "count": 2
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|target_repo/hotfix_beta.txt",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file|required_file|target_repo/transfer_summary.txt",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_beta.txt::(?is)Retry profile beta",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/hotfix_beta.txt::(?is)Set initial delay to 300ms",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_BRANCH\\s+main$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_PATCHES\\s+1$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_PATCH_FILE\\s+hotfix_beta.patch$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_file_content_pattern|required_file_content_pattern|target_repo/transfer_summary.txt::(?m)^TRANSFER_VARIANT\\s+beta$",
+        "count": 1
+      },
+      {
+        "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+        "count": 1
+      }
+    ]
+  },
+  "deltas": {
+    "pass_rate_delta": 0.0,
+    "last5_pass_rate_delta": 0.39999999999999997,
+    "mean_lesson_activations_delta": 2.3,
+    "mean_retrieval_help_ratio_delta": 0.9
+  }
+}

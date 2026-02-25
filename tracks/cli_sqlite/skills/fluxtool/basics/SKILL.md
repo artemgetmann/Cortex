@@ -1,7 +1,7 @@
 ---
 name: fluxtool-basics
 description: Holdout fluxtool syntax reference with remapped command/operator language
-version: 1
+version: 2
 ---
 
 # fluxtool Command Reference
@@ -70,3 +70,7 @@ Print output.
 DISPLAY
 DISPLAY 5
 ```
+
+## Learned Updates
+- [2026-02-23] SKILL_MISMATCH: fluxtool/basics is for pipeline data processing (IMPORT, FILTER, GROUP, SORT). Task shell_git_transfer_hotfix requires git command execution in bash, not data transformation. (evidence steps: 2)
+- [2026-02-23] This skill should not be routed for shell git tasks. Verify routing logic excludes non-shell skills for domain=shell tasks. (evidence steps: 2)

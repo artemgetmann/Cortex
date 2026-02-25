@@ -6,7 +6,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_STATE="${OPENCLAW_SOURCE_STATE:-$HOME/.openclaw}"
-TARGET_STATE="${OPENCLAW_TARGET_STATE:-$HOME/.openclaw-agi}"
+DEFAULT_TARGET_STATE="$HOME/.cloudcode-telegrambot-cortex-agi"
+LEGACY_TARGET_STATE="$HOME/.openclaw-agi"
+if [[ -n "${OPENCLAW_TARGET_STATE:-}" ]]; then
+  TARGET_STATE="$OPENCLAW_TARGET_STATE"
+elif [[ -d "$LEGACY_TARGET_STATE" && ! -d "$DEFAULT_TARGET_STATE" ]]; then
+  # Backward-compatible default for existing installs.
+  TARGET_STATE="$LEGACY_TARGET_STATE"
+else
+  TARGET_STATE="$DEFAULT_TARGET_STATE"
+fi
 WORKSPACE_DIR="${OPENCLAW_AGI_WORKSPACE:-$ROOT_DIR/integrations/openclaw-agi/workspace}"
 TARGET_CONFIG="${OPENCLAW_TARGET_CONFIG:-$TARGET_STATE/openclaw.json}"
 TARGET_PORT="${OPENCLAW_AGI_PORT:-18889}"
