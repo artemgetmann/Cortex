@@ -70,7 +70,7 @@ The learning loop closes.
 ### Tier 1: Architecture Twins
 | Paper | Year | Key Idea | Results |
 |---|---|---|---|
-| [Voyager](voyager/) | 2023 | Skill library + auto-curriculum + iterative prompting in Minecraft | 3.3x more items, 15.3x faster milestones |
+| [Voyager](voyager/) <span style="color:red"><u>READ</u></span> | 2023 | Skill library + auto-curriculum + iterative prompting in Minecraft | 3.3x more items, 15.3x faster milestones |
 | [SICA](sica/) | 2025 | Agent edits its own orchestration code via reflection | 17-53% gains on SWE-bench |
 
 ### Tier 2: Interesting Mechanisms (RL-based, different camp but useful ideas)
