@@ -1829,6 +1829,204 @@ def _anthropic_tools_to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[s
     return converted
 
 
+def _openai_use_chat_completions() -> bool:
+    raw = str(os.getenv("OPENAI_USE_CHAT_COMPLETIONS", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _openai_base_url() -> str:
+    base_url = str(os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip().rstrip("/")
+    if not base_url:
+        return "https://api.openai.com/v1"
+    return base_url
+
+
+def _anthropic_messages_to_openai_responses_input(
+    *,
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    converted = _anthropic_messages_to_openai_messages(messages=messages, system_prompt="")
+    input_items: list[dict[str, Any]] = []
+    for msg in converted:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role", "")).strip().lower()
+        if role in {"system", "user", "assistant"}:
+            content_text = _openai_message_content_to_text(msg.get("content"))
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls", [])
+                if isinstance(tool_calls, list):
+                    for call in tool_calls:
+                        if not isinstance(call, dict):
+                            continue
+                        function = call.get("function", {})
+                        if not isinstance(function, dict):
+                            continue
+                        tool_name = str(function.get("name", "")).strip()
+                        raw_arguments = str(function.get("arguments", "")).strip()
+                        call_id = str(call.get("id", "")).strip()
+                        if not tool_name:
+                            continue
+                        # Preserve previous tool-call state in plain text so Responses
+                        # input stays compatible across providers/versions.
+                        call_line = f"[tool_call id={call_id or 'unknown'} name={tool_name}] {raw_arguments or '{}'}"
+                        content_text = f"{content_text}\n{call_line}".strip() if content_text else call_line
+            if not content_text:
+                continue
+            input_items.append(
+                {
+                    "role": role,
+                    "content": [{"type": "input_text", "text": content_text}],
+                }
+            )
+            continue
+        if role != "tool":
+            continue
+        tool_call_id = str(msg.get("tool_call_id", "")).strip() or "unknown"
+        tool_content = _openai_message_content_to_text(msg.get("content"))
+        if not tool_content:
+            tool_content = "(empty tool result)"
+        # Keep tool outputs as text items instead of function_call_output inputs.
+        # This avoids schema drift between OpenAI-compatible Responses endpoints.
+        input_items.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": f"[tool_result id={tool_call_id}]\n{tool_content}",
+                    }
+                ],
+            }
+        )
+    return input_items
+
+
+def _anthropic_tools_to_openai_responses_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        converted.append(
+            {
+                "type": "function",
+                "name": name,
+                "description": str(tool.get("description", "")).strip(),
+                "parameters": tool.get("input_schema", {}),
+                "strict": True,
+            }
+        )
+    return converted
+
+
+def _openai_responses_output_to_text(payload: dict[str, Any]) -> str:
+    output_text = str(payload.get("output_text", "")).strip()
+    if output_text:
+        return output_text
+    output_items = payload.get("output", [])
+    if not isinstance(output_items, list):
+        return ""
+    parts: list[str] = []
+    for item in output_items:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).strip().lower()
+        if item_type == "message":
+            content = item.get("content", [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = str(block.get("type", "")).strip().lower()
+                if block_type in {"output_text", "text"}:
+                    text = str(block.get("text", "")).strip()
+                    if text:
+                        parts.append(text)
+        elif item_type in {"output_text", "text"}:
+            text = str(item.get("text", "")).strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _openai_responses_request(
+    *,
+    api_key: str,
+    model: str,
+    input_items: list[dict[str, Any]],
+    instructions: str,
+    tools: list[dict[str, Any]] | None,
+    max_tokens: int,
+    temperature: float | None,
+) -> dict[str, Any]:
+    url = f"{_openai_base_url()}/responses"
+    base_payload: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+    }
+    instructions_text = str(instructions or "").strip()
+    if instructions_text:
+        base_payload["instructions"] = instructions_text
+    if tools:
+        base_payload["tools"] = tools
+        base_payload["tool_choice"] = "auto"
+    if int(max_tokens) > 0:
+        base_payload["max_output_tokens"] = int(max_tokens)
+    if temperature is not None:
+        base_payload["temperature"] = float(temperature)
+
+    temperature_options: list[float | None] = [None]
+    if temperature is not None:
+        # Keep deterministic settings when supported; fallback when rejected.
+        temperature_options = [float(temperature), None]
+
+    last_error: Exception | None = None
+    for maybe_temperature in temperature_options:
+        payload = dict(base_payload)
+        if maybe_temperature is None:
+            payload.pop("temperature", None)
+        else:
+            payload["temperature"] = maybe_temperature
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        request = urllib.request.Request(url=url, data=body, method="POST")
+        request.add_header("Authorization", f"Bearer {api_key}")
+        request.add_header("Content-Type", "application/json")
+        request.add_header("Accept", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=max(15, int(os.getenv("OPENAI_TIMEOUT_S", "120")))) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            last_error = RuntimeError(
+                f"OpenAI responses request failed ({exc.code}): {_clip_text(error_body, max_chars=800)}"
+            )
+            continue
+        except urllib.error.URLError as exc:
+            last_error = RuntimeError(f"OpenAI responses request error: {type(exc).__name__}: {exc}")
+            continue
+        except Exception as exc:
+            last_error = RuntimeError(f"OpenAI responses request failed: {type(exc).__name__}: {exc}")
+            continue
+        try:
+            payload_obj = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"OpenAI responses returned invalid JSON: {_clip_text(raw, max_chars=800)}"
+            ) from exc
+        if not isinstance(payload_obj, dict):
+            raise RuntimeError(
+                f"OpenAI responses returned non-object payload: {_clip_text(raw, max_chars=800)}"
+            )
+        return payload_obj
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("OpenAI responses request failed with unknown error.")
+
+
 def _openai_chat_completions_request(
     *,
     api_key: str,
@@ -1838,10 +2036,7 @@ def _openai_chat_completions_request(
     max_tokens: int,
     temperature: float | None,
 ) -> dict[str, Any]:
-    base_url = str(os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip().rstrip("/")
-    if not base_url:
-        base_url = "https://api.openai.com/v1"
-    url = f"{base_url}/chat/completions"
+    url = f"{_openai_base_url()}/chat/completions"
 
     base_payload: dict[str, Any] = {
         "model": model,
@@ -1946,28 +2141,43 @@ class _OpenAICompatMessagesAPI:
         temperature: float | None = None,
         **_: Any,
     ) -> _OpenAICompatResponse:
-        payload = _openai_chat_completions_request(
-            api_key=self._api_key,
-            model=model,
-            messages=_anthropic_messages_to_openai_messages(
-                messages=messages or [],
-                system_prompt=_extract_system_prompt_text(system),
-            ),
-            tools=None,
-            max_tokens=max(0, int(max_tokens)),
-            temperature=temperature,
-        )
-        choices = payload.get("choices", [])
-        if not (isinstance(choices, list) and choices):
-            raise RuntimeError("OpenAI chat completion returned no choices.")
-        first_choice = choices[0] if isinstance(choices[0], dict) else {}
-        message = first_choice.get("message", {})
-        if not isinstance(message, dict):
-            raise RuntimeError("OpenAI chat completion choice missing message object.")
-        raw_text = _openai_message_content_to_text(message.get("content"))
-        if not raw_text:
-            refusal = str(message.get("refusal", "")).strip()
-            raw_text = refusal or ""
+        system_prompt = _extract_system_prompt_text(system)
+        if _openai_use_chat_completions():
+            payload = _openai_chat_completions_request(
+                api_key=self._api_key,
+                model=model,
+                messages=_anthropic_messages_to_openai_messages(
+                    messages=messages or [],
+                    system_prompt=system_prompt,
+                ),
+                tools=None,
+                max_tokens=max(0, int(max_tokens)),
+                temperature=temperature,
+            )
+            choices = payload.get("choices", [])
+            if not (isinstance(choices, list) and choices):
+                raise RuntimeError("OpenAI chat completion returned no choices.")
+            first_choice = choices[0] if isinstance(choices[0], dict) else {}
+            message = first_choice.get("message", {})
+            if not isinstance(message, dict):
+                raise RuntimeError("OpenAI chat completion choice missing message object.")
+            raw_text = _openai_message_content_to_text(message.get("content"))
+            if not raw_text:
+                refusal = str(message.get("refusal", "")).strip()
+                raw_text = refusal or ""
+            api_variant = "chat_completions"
+        else:
+            payload = _openai_responses_request(
+                api_key=self._api_key,
+                model=model,
+                input_items=_anthropic_messages_to_openai_responses_input(messages=messages or []),
+                instructions=system_prompt,
+                tools=None,
+                max_tokens=max(0, int(max_tokens)),
+                temperature=temperature,
+            )
+            raw_text = _openai_responses_output_to_text(payload)
+            api_variant = "responses"
         usage_raw = payload.get("usage", {})
         usage = usage_raw if isinstance(usage_raw, dict) else {}
         response_id = str(payload.get("id", "")).strip()
@@ -1975,6 +2185,7 @@ class _OpenAICompatMessagesAPI:
             "backend": "openai",
             "model": model,
             "response_id": response_id,
+            "api": api_variant,
             **usage,
         }
         return _OpenAICompatResponse(
@@ -2118,70 +2329,128 @@ def _create_executor_response_via_openai(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
     allowed_tool_names = {name for name in tool_names if name}
-    payload = _openai_chat_completions_request(
-        api_key=api_key,
-        model=model,
-        messages=_anthropic_messages_to_openai_messages(
-            messages=messages,
-            system_prompt=system_prompt,
-        ),
-        tools=_anthropic_tools_to_openai_tools(tools),
-        max_tokens=1800,
-        temperature=temperature,
-    )
-    choices = payload.get("choices", [])
-    if not (isinstance(choices, list) and choices):
-        raise RuntimeError("OpenAI executor response did not contain choices.")
-    first_choice = choices[0] if isinstance(choices[0], dict) else {}
-    message = first_choice.get("message", {})
-    if not isinstance(message, dict):
-        raise RuntimeError("OpenAI executor response missing message object.")
-
     assistant_blocks: list[dict[str, Any]] = []
-    assistant_text = _openai_message_content_to_text(message.get("content"))
-    if assistant_text:
-        assistant_blocks.append({"type": "text", "text": assistant_text})
-
-    tool_calls = message.get("tool_calls", [])
-    if tool_calls is None:
-        tool_calls = []
-    if not isinstance(tool_calls, list):
-        raise RuntimeError(f"OpenAI executor tool_calls must be list, got {type(tool_calls).__name__}")
-    for idx, call in enumerate(tool_calls):
-        if not isinstance(call, dict):
-            raise RuntimeError(f"OpenAI executor tool call at index {idx} must be object.")
-        function = call.get("function", {})
-        if not isinstance(function, dict):
-            raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function object.")
-        name = str(function.get("name", "")).strip()
-        if not name:
-            raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function name.")
-        if name not in allowed_tool_names:
-            raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
-        raw_arguments = function.get("arguments", "{}")
-        if isinstance(raw_arguments, dict):
-            tool_input = raw_arguments
-        else:
-            raw_arguments_text = str(raw_arguments or "").strip() or "{}"
-            try:
-                parsed = json.loads(raw_arguments_text)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"OpenAI tool call '{name}' arguments were not valid JSON: "
-                    f"{_clip_text(raw_arguments_text, max_chars=500)}"
-                ) from exc
-            if not isinstance(parsed, dict):
-                raise RuntimeError(f"OpenAI tool call '{name}' arguments must decode to an object.")
-            tool_input = parsed
-        tool_call_id = str(call.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
-        assistant_blocks.append(
-            {
-                "type": "tool_use",
-                "id": tool_call_id,
-                "name": name,
-                "input": tool_input,
-            }
+    if _openai_use_chat_completions():
+        payload = _openai_chat_completions_request(
+            api_key=api_key,
+            model=model,
+            messages=_anthropic_messages_to_openai_messages(
+                messages=messages,
+                system_prompt=system_prompt,
+            ),
+            tools=_anthropic_tools_to_openai_tools(tools),
+            max_tokens=1800,
+            temperature=temperature,
         )
+        choices = payload.get("choices", [])
+        if not (isinstance(choices, list) and choices):
+            raise RuntimeError("OpenAI executor response did not contain choices.")
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = first_choice.get("message", {})
+        if not isinstance(message, dict):
+            raise RuntimeError("OpenAI executor response missing message object.")
+        assistant_text = _openai_message_content_to_text(message.get("content"))
+        if assistant_text:
+            assistant_blocks.append({"type": "text", "text": assistant_text})
+
+        tool_calls = message.get("tool_calls", [])
+        if tool_calls is None:
+            tool_calls = []
+        if not isinstance(tool_calls, list):
+            raise RuntimeError(f"OpenAI executor tool_calls must be list, got {type(tool_calls).__name__}")
+        for idx, call in enumerate(tool_calls):
+            if not isinstance(call, dict):
+                raise RuntimeError(f"OpenAI executor tool call at index {idx} must be object.")
+            function = call.get("function", {})
+            if not isinstance(function, dict):
+                raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function object.")
+            name = str(function.get("name", "")).strip()
+            if not name:
+                raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function name.")
+            if name not in allowed_tool_names:
+                raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
+            raw_arguments = function.get("arguments", "{}")
+            if isinstance(raw_arguments, dict):
+                tool_input = raw_arguments
+            else:
+                raw_arguments_text = str(raw_arguments or "").strip() or "{}"
+                try:
+                    parsed = json.loads(raw_arguments_text)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"OpenAI tool call '{name}' arguments were not valid JSON: "
+                        f"{_clip_text(raw_arguments_text, max_chars=500)}"
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise RuntimeError(f"OpenAI tool call '{name}' arguments must decode to an object.")
+                tool_input = parsed
+            tool_call_id = str(call.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
+            assistant_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": tool_call_id,
+                    "name": name,
+                    "input": tool_input,
+                }
+            )
+        api_variant = "chat_completions"
+    else:
+        payload = _openai_responses_request(
+            api_key=api_key,
+            model=model,
+            input_items=_anthropic_messages_to_openai_responses_input(messages=messages),
+            instructions=system_prompt,
+            tools=_anthropic_tools_to_openai_responses_tools(tools),
+            max_tokens=1800,
+            temperature=temperature,
+        )
+        assistant_text = _openai_responses_output_to_text(payload)
+        if assistant_text:
+            assistant_blocks.append({"type": "text", "text": assistant_text})
+        output_items = payload.get("output", [])
+        if output_items is None:
+            output_items = []
+        if not isinstance(output_items, list):
+            raise RuntimeError(f"OpenAI executor output must be list, got {type(output_items).__name__}")
+        call_index = 0
+        for idx, item in enumerate(output_items):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type", "")).strip().lower() != "function_call":
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                raise RuntimeError(f"OpenAI function_call at output index {idx} missing name.")
+            if name not in allowed_tool_names:
+                raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
+            raw_arguments = item.get("arguments", "{}")
+            if isinstance(raw_arguments, dict):
+                tool_input = raw_arguments
+            else:
+                raw_arguments_text = str(raw_arguments or "").strip() or "{}"
+                try:
+                    parsed = json.loads(raw_arguments_text)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"OpenAI function_call '{name}' arguments were not valid JSON: "
+                        f"{_clip_text(raw_arguments_text, max_chars=500)}"
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise RuntimeError(f"OpenAI function_call '{name}' arguments must decode to an object.")
+                tool_input = parsed
+            # Responses API uses call_id for tool correlation; normalize it to
+            # existing tool_use.id expected by the rest of the runtime.
+            tool_call_id = str(item.get("call_id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{call_index}"
+            call_index += 1
+            assistant_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": tool_call_id,
+                    "name": name,
+                    "input": tool_input,
+                }
+            )
+        api_variant = "responses"
 
     usage_raw = payload.get("usage", {})
     usage = usage_raw if isinstance(usage_raw, dict) else {}
@@ -2189,6 +2458,7 @@ def _create_executor_response_via_openai(
         "backend": "openai",
         "model": model,
         "response_id": str(payload.get("id", "")).strip(),
+        "api": api_variant,
         **usage,
     }
     return assistant_blocks, usage_payload
