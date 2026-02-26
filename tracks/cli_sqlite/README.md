@@ -163,6 +163,21 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --output-md tracks/cli_sqlite/reports/sqlite_transfer_nano_10run.md
 ```
 
+Run SAGE self-edit ON/OFF compare (same setup, two passes + combined verdict report):
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_sage_on_off_benchmark.py \
+  --sessions 5 \
+  --start-session 93001 \
+  --max-steps 6 \
+  --suite sqlite \
+  --arm docs_on__mode_lossy__lessons_on \
+  --benchmark-deterministic \
+  --benchmark-promoted-only \
+  --output-json tracks/cli_sqlite/reports/sage_self_edit_on_off_compare.json \
+  --output-md tracks/cli_sqlite/reports/sage_self_edit_on_off_compare.md
+```
+
 Run a deeper pass (10+ sessions per arm):
 
 ```bash
