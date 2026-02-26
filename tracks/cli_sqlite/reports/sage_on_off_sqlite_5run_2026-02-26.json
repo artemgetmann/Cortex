@@ -1,0 +1,163 @@
+{
+  "config": {
+    "sessions": 5,
+    "start_session_off": 160001,
+    "start_session_on": 160106,
+    "max_steps": 6,
+    "learning_mode": "strict",
+    "posttask_mode": "direct",
+    "llm_backend": "anthropic",
+    "cost_profile": "cheap",
+    "benchmark_deterministic": true,
+    "benchmark_promoted_only": true,
+    "judge_diagnostic": true,
+    "suites": [
+      "sqlite"
+    ],
+    "arms": [
+      "docs_on__mode_lossy__lessons_on"
+    ],
+    "self_edit_off_json": "/Users/user/Programming_Projects/Cortex/.worktree/sage-experiment/tracks/cli_sqlite/reports/sage_self_edit_off.json",
+    "self_edit_on_json": "/Users/user/Programming_Projects/Cortex/.worktree/sage-experiment/tracks/cli_sqlite/reports/sage_self_edit_on.json"
+  },
+  "self_edit_on": {
+    "summary": {
+      "did_learning_improve": false,
+      "overall_pass_rate": 0.0,
+      "overall_median_steps_to_success": null,
+      "transfer_pass_rate": 0.0,
+      "transfer_median_steps_to_success": null,
+      "transfer_median_repeated_error_delta": -0.5,
+      "transfer_mean_lesson_activations": 0.0,
+      "transfer_mean_retrieval_help_ratio": 0.0
+    },
+    "source_did_learning_improve": false,
+    "source_transfer": {
+      "run_count": 2,
+      "pass_rate": 0.0,
+      "success_rate_by_session": {
+        "2": 0.0,
+        "4": 0.0
+      },
+      "median_steps_to_success": null,
+      "median_repeated_error_delta": -0.5,
+      "mean_lesson_activations": 0.0,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_lesson_activations_by_step": {},
+      "activation_nonzero_run_count": 0,
+      "by_suite": {
+        "sqlite": {
+          "run_count": 2,
+          "pass_rate": 0.0,
+          "success_rate_by_session": {
+            "2": 0.0,
+            "4": 0.0
+          },
+          "median_steps_to_success": null,
+          "median_repeated_error_delta": -0.5,
+          "mean_lesson_activations": 0.0,
+          "mean_retrieval_help_ratio": 0.0,
+          "mean_lesson_activations_by_step": {},
+          "activation_nonzero_run_count": 0
+        }
+      }
+    },
+    "source_overall": {
+      "run_count": 5,
+      "pass_rate": 0.0,
+      "success_rate_by_session": {
+        "1": 0.0,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 0.0,
+        "5": 0.0
+      },
+      "median_steps_to_success": null,
+      "median_repeated_error_delta": 0.0,
+      "mean_lesson_activations": 0.0,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_lesson_activations_by_step": {},
+      "activation_nonzero_run_count": 0
+    }
+  },
+  "self_edit_off": {
+    "summary": {
+      "did_learning_improve": false,
+      "overall_pass_rate": 0.0,
+      "overall_median_steps_to_success": null,
+      "transfer_pass_rate": 0.0,
+      "transfer_median_steps_to_success": null,
+      "transfer_median_repeated_error_delta": -0.5,
+      "transfer_mean_lesson_activations": 3.0,
+      "transfer_mean_retrieval_help_ratio": 0.3333
+    },
+    "source_did_learning_improve": false,
+    "source_transfer": {
+      "run_count": 2,
+      "pass_rate": 0.0,
+      "success_rate_by_session": {
+        "2": 0.0,
+        "4": 0.0
+      },
+      "median_steps_to_success": null,
+      "median_repeated_error_delta": -0.5,
+      "mean_lesson_activations": 3.0,
+      "mean_retrieval_help_ratio": 0.3333,
+      "mean_lesson_activations_by_step": {
+        "5": 1.0,
+        "6": 2.0
+      },
+      "activation_nonzero_run_count": 1,
+      "by_suite": {
+        "sqlite": {
+          "run_count": 2,
+          "pass_rate": 0.0,
+          "success_rate_by_session": {
+            "2": 0.0,
+            "4": 0.0
+          },
+          "median_steps_to_success": null,
+          "median_repeated_error_delta": -0.5,
+          "mean_lesson_activations": 3.0,
+          "mean_retrieval_help_ratio": 0.3333,
+          "mean_lesson_activations_by_step": {
+            "5": 1.0,
+            "6": 2.0
+          },
+          "activation_nonzero_run_count": 1
+        }
+      }
+    },
+    "source_overall": {
+      "run_count": 5,
+      "pass_rate": 0.0,
+      "success_rate_by_session": {
+        "1": 0.0,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 0.0,
+        "5": 0.0
+      },
+      "median_steps_to_success": null,
+      "median_repeated_error_delta": 0.0,
+      "mean_lesson_activations": 1.2,
+      "mean_retrieval_help_ratio": 0.1333,
+      "mean_lesson_activations_by_step": {
+        "5": 0.4,
+        "6": 0.8
+      },
+      "activation_nonzero_run_count": 1
+    }
+  },
+  "deltas": {
+    "did_learning_improve_delta": 0,
+    "overall_pass_rate_delta": 0.0,
+    "transfer_pass_rate_delta": 0.0,
+    "transfer_median_steps_to_success_improvement": null,
+    "transfer_median_repeated_error_improvement": 0.0,
+    "transfer_mean_lesson_activations_delta": -3.0,
+    "transfer_mean_retrieval_help_ratio_delta": -0.3333
+  },
+  "verdict": "no_improvement",
+  "verdict_reason": "self-edit ON did not beat OFF on transfer-first criteria"
+}
