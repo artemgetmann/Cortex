@@ -745,6 +745,17 @@ class PromotionV2Tests(unittest.TestCase):
         self.assertAlmostEqual(a, 0.395)
         self.assertAlmostEqual(b, 0.39)
 
+    def test_compute_utility_includes_usage_reward_and_rollout_signal(self) -> None:
+        value = compute_utility(
+            error_reduction=0.5,
+            step_efficiency_gain=0.2,
+            referee_score_gain=0.4,
+            lesson_usage_reward=0.6,
+            rollout_signal=0.5,
+        )
+        # Base utility 0.39 + usage (0.09) + rollout (0.05) = 0.53.
+        self.assertAlmostEqual(value, 0.53)
+
     def test_promote_after_three_positive_outcomes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "lessons_v2.jsonl"
@@ -754,6 +765,26 @@ class PromotionV2Tests(unittest.TestCase):
                 LessonOutcome(lesson_id=rec.lesson_id, error_reduction=0.4, step_efficiency_gain=0.2),
                 LessonOutcome(lesson_id=rec.lesson_id, error_reduction=0.5, step_efficiency_gain=0.3),
                 LessonOutcome(lesson_id=rec.lesson_id, error_reduction=0.6, step_efficiency_gain=0.3),
+            ]
+            result = apply_outcomes(path=path, outcomes=outcomes)
+            promoted = load_lesson_records(path)[0]
+            self.assertEqual(result["promoted"], 1)
+            self.assertEqual(promoted.status, "promoted")
+
+    def test_usage_reward_and_rollout_signal_can_push_candidate_over_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            rec = _record(session_id=1602, rule_text="Retry failed operation with bounded backoff.")
+            upsert_lesson_records(path, [rec])
+            outcomes = [
+                LessonOutcome(
+                    lesson_id=rec.lesson_id,
+                    error_reduction=0.2,
+                    step_efficiency_gain=0.0,
+                    lesson_usage_reward=0.6,
+                    rollout_signal=0.5,
+                )
+                for _ in range(3)
             ]
             result = apply_outcomes(path=path, outcomes=outcomes)
             promoted = load_lesson_records(path)[0]

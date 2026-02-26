@@ -20,6 +20,8 @@ class LessonOutcome:
     lesson_id: str
     error_reduction: float
     step_efficiency_gain: float
+    lesson_usage_reward: float = 0.0
+    rollout_signal: float = 0.0
     referee_score_gain: float | None = None
     major_regression: bool = False
     contradiction_lost: bool = False
@@ -30,22 +32,29 @@ def compute_utility(
     *,
     error_reduction: float,
     step_efficiency_gain: float,
+    lesson_usage_reward: float = 0.0,
+    rollout_signal: float = 0.0,
     referee_score_gain: float | None = None,
 ) -> float:
     """Compute utility using the exact weighting in the V2 plan."""
     if referee_score_gain is None:
-        return (0.65 * float(error_reduction)) + (0.35 * float(step_efficiency_gain))
-    return (
+        base = (0.65 * float(error_reduction)) + (0.35 * float(step_efficiency_gain))
+    else:
+        base = (
         (0.50 * float(error_reduction))
         + (0.30 * float(step_efficiency_gain))
         + (0.20 * float(referee_score_gain))
-    )
+        )
+    # SAGE-lite shaping: reward lessons that are used and runs that improve vs neighbors.
+    return base + (0.15 * float(lesson_usage_reward)) + (0.10 * float(rollout_signal))
 
 
 def _update_record(record: LessonRecord, outcome: LessonOutcome) -> LessonRecord:
     utility = compute_utility(
         error_reduction=outcome.error_reduction,
         step_efficiency_gain=outcome.step_efficiency_gain,
+        lesson_usage_reward=outcome.lesson_usage_reward,
+        rollout_signal=outcome.rollout_signal,
         referee_score_gain=outcome.referee_score_gain,
     )
     history = tuple(list(record.utility_history[-29:]) + [utility])

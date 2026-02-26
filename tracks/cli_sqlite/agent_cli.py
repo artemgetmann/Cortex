@@ -3005,14 +3005,14 @@ def _select_high_signal_prerun_matches(
     return selected
 
 
-def _load_recent_eval_scores(
+def _load_recent_eval_neighbors(
     *,
     sessions_root: Path,
     task_id: str,
     domain: str,
     limit: int = 6,
-) -> list[float]:
-    scores: list[float] = []
+) -> list[dict[str, Any]]:
+    neighbors: list[dict[str, Any]] = []
     candidates = sorted(
         [path for path in sessions_root.glob("session-*/metrics.json") if path.is_file()],
         key=lambda path: path.stat().st_mtime,
@@ -3033,10 +3033,87 @@ def _load_recent_eval_scores(
             score = float(row.get("eval_score", 0.0) or 0.0)
         except (TypeError, ValueError):
             continue
-        scores.append(score)
-        if len(scores) >= limit:
+        neighbors.append(
+            {
+                "eval_score": score,
+                "eval_passed": bool(row.get("eval_passed", row.get("passed", False))),
+            }
+        )
+        if len(neighbors) >= limit:
             break
-    return list(reversed(scores))
+    return list(reversed(neighbors))
+
+
+def _load_recent_eval_scores(
+    *,
+    sessions_root: Path,
+    task_id: str,
+    domain: str,
+    limit: int = 6,
+) -> list[float]:
+    neighbors = _load_recent_eval_neighbors(
+        sessions_root=sessions_root,
+        task_id=task_id,
+        domain=domain,
+        limit=limit,
+    )
+    return [float(row.get("eval_score", 0.0) or 0.0) for row in neighbors]
+
+
+def _compute_rollout_signal_from_neighbors(
+    *,
+    current_score: float,
+    current_passed: bool,
+    neighbors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Compute a bounded rollout signal from immediate neighbors in run history.
+
+    Signal is positive when the run improves vs the previous run and recent
+    moving average, with an extra pass/fail transition term.
+    """
+    if not neighbors:
+        return {
+            "prev_score": None,
+            "prev_passed": None,
+            "window_mean_score": None,
+            "window_size": 0,
+            "score_delta_prev": 0.0,
+            "score_delta_window_mean": 0.0,
+            "pass_transition": 0.0,
+            "rollout_signal": 0.0,
+        }
+
+    scores = [float(row.get("eval_score", 0.0) or 0.0) for row in neighbors]
+    prev_score = scores[-1] if scores else None
+    prev_passed = bool(neighbors[-1].get("eval_passed", False))
+    window_mean_score = (sum(scores) / float(len(scores))) if scores else None
+    score_delta_prev = 0.0 if prev_score is None else float(current_score) - float(prev_score)
+    score_delta_window_mean = (
+        0.0 if window_mean_score is None else float(current_score) - float(window_mean_score)
+    )
+    if (not prev_passed) and bool(current_passed):
+        pass_transition = 1.0
+    elif prev_passed and (not bool(current_passed)):
+        pass_transition = -1.0
+    else:
+        pass_transition = 0.0
+
+    rollout_signal = _clamp(
+        (0.50 * score_delta_prev) + (0.30 * score_delta_window_mean) + (0.20 * pass_transition),
+        -1.0,
+        1.0,
+    )
+    return {
+        "prev_score": prev_score,
+        "prev_passed": prev_passed,
+        "window_mean_score": window_mean_score,
+        "window_size": len(scores),
+        "score_delta_prev": score_delta_prev,
+        "score_delta_window_mean": score_delta_window_mean,
+        "pass_transition": pass_transition,
+        "rollout_signal": rollout_signal,
+    }
 
 
 def _load_skill_snapshots(
@@ -4017,6 +4094,23 @@ def _run_cli_agent_impl(
         "v2_suppressed": 0,
         "v2_fingerprint_recurrence_before": 0,
         "v2_fingerprint_recurrence_after": 0,
+        "v2_neighbor_prev_score": None,
+        "v2_neighbor_prev_passed": None,
+        "v2_neighbor_window_mean_score": None,
+        "v2_neighbor_window_size": 0,
+        "v2_neighbor_score_delta_prev": 0.0,
+        "v2_neighbor_score_delta_window_mean": 0.0,
+        "v2_rollout_signal": 0.0,
+        "v2_rollout_signal_components": {},
+        "v2_retrieval_quality_mean_error_reduction": 0.0,
+        "v2_retrieval_quality_mean_step_efficiency": 0.0,
+        "v2_retrieval_quality_mean_usage_reward": 0.0,
+        "v2_retrieval_quality_coverage": 0.0,
+        "v2_retrieval_quality_intensity": 0.0,
+        "v2_retrieval_quality_recurrence_rate": 0.0,
+        "v2_retrieval_quality_helped_records": 0,
+        "v2_retrieval_quality_effective_records": 0,
+        "v2_retrieval_quality_score": 0.0,
         "lessons_generated": 0,
         "v2_lessons_generated": 0,
         "posttask_patch_attempted": False,
@@ -5502,9 +5596,35 @@ def _run_cli_agent_impl(
         metrics["v2_fingerprint_recurrence"] = sum(1 for count in fingerprint_counts.values() if count > 1)
         metrics["v2_fingerprint_recurrence_before"] = metrics["v2_fingerprint_recurrence"]
 
-        recent_scores = _load_recent_eval_scores(sessions_root=SESSIONS_ROOT, task_id=task_id, domain=domain)
+        recent_neighbors = _load_recent_eval_neighbors(
+            sessions_root=SESSIONS_ROOT,
+            task_id=task_id,
+            domain=domain,
+        )
+        recent_scores = [float(row.get("eval_score", 0.0) or 0.0) for row in recent_neighbors]
         baseline_score = (sum(recent_scores) / float(len(recent_scores))) if recent_scores else None
         referee_gain = None if baseline_score is None else float(metrics.get("eval_score", 0.0) or 0.0) - baseline_score
+        rollout_context = _compute_rollout_signal_from_neighbors(
+            current_score=float(metrics.get("eval_score", 0.0) or 0.0),
+            current_passed=bool(metrics.get("eval_passed", False)),
+            neighbors=recent_neighbors,
+        )
+        rollout_signal = float(rollout_context.get("rollout_signal", 0.0) or 0.0)
+        metrics["v2_neighbor_prev_score"] = rollout_context.get("prev_score")
+        metrics["v2_neighbor_prev_passed"] = rollout_context.get("prev_passed")
+        metrics["v2_neighbor_window_mean_score"] = rollout_context.get("window_mean_score")
+        metrics["v2_neighbor_window_size"] = int(rollout_context.get("window_size", 0) or 0)
+        metrics["v2_neighbor_score_delta_prev"] = round(float(rollout_context.get("score_delta_prev", 0.0) or 0.0), 4)
+        metrics["v2_neighbor_score_delta_window_mean"] = round(
+            float(rollout_context.get("score_delta_window_mean", 0.0) or 0.0),
+            4,
+        )
+        metrics["v2_rollout_signal"] = round(rollout_signal, 4)
+        metrics["v2_rollout_signal_components"] = {
+            "score_delta_prev": float(rollout_context.get("score_delta_prev", 0.0) or 0.0),
+            "score_delta_window_mean": float(rollout_context.get("score_delta_window_mean", 0.0) or 0.0),
+            "pass_transition": float(rollout_context.get("pass_transition", 0.0) or 0.0),
+        }
 
         activations_by_lesson: dict[str, dict[str, float]] = defaultdict(lambda: {"error": 0.0, "eff": 0.0, "count": 0.0})
         helped = 0
@@ -5537,6 +5657,9 @@ def _run_cli_agent_impl(
                 bucket["count"] += 1.0
 
         outcomes: list[LessonOutcome] = []
+        lesson_error_values: list[float] = []
+        lesson_efficiency_values: list[float] = []
+        lesson_usage_rewards: list[float] = []
         current_records_by_id = {row.lesson_id: row for row in load_lesson_records(LESSONS_V2_PATH)}
         unresolved_reason_codes = {
             str(row.get("reason_code", "")).strip()
@@ -5550,6 +5673,18 @@ def _run_cli_agent_impl(
         }
         for lesson_id, bucket in activations_by_lesson.items():
             count = max(1.0, bucket["count"])
+            lesson_error_reduction = bucket["error"] / count
+            lesson_step_efficiency_gain = bucket["eff"] / count
+            # Reward lessons that were repeatedly used in this run, normalized
+            # by effective activations so sparse runs stay backward compatible.
+            lesson_usage_reward = _clamp(
+                float(bucket["count"]) / float(max(1.0, float(effective_activation_records))),
+                0.0,
+                1.0,
+            )
+            lesson_error_values.append(lesson_error_reduction)
+            lesson_efficiency_values.append(lesson_step_efficiency_gain)
+            lesson_usage_rewards.append(lesson_usage_reward)
             current_record = current_records_by_id.get(lesson_id)
             gap_resolved: bool | None = None
             if current_record is not None and (
@@ -5566,8 +5701,10 @@ def _run_cli_agent_impl(
             outcomes.append(
                 LessonOutcome(
                     lesson_id=lesson_id,
-                    error_reduction=bucket["error"] / count,
-                    step_efficiency_gain=bucket["eff"] / count,
+                    error_reduction=lesson_error_reduction,
+                    step_efficiency_gain=lesson_step_efficiency_gain,
+                    lesson_usage_reward=lesson_usage_reward,
+                    rollout_signal=rollout_signal,
                     referee_score_gain=referee_gain,
                     major_regression=bool(metrics.get("eval_score", 0.0) < 0.2 and metrics.get("tool_errors", 0) > 0),
                     contradiction_lost=False,
@@ -5584,6 +5721,8 @@ def _run_cli_agent_impl(
                     lesson_id=lesson_id,
                     error_reduction=0.0,
                     step_efficiency_gain=0.0,
+                    lesson_usage_reward=0.0,
+                    rollout_signal=rollout_signal,
                     referee_score_gain=referee_gain,
                     contradiction_lost=True,
                     gap_resolved=False,
@@ -5613,6 +5752,57 @@ def _run_cli_agent_impl(
             4,
         )
         metrics["v2_retrieval_help_ratio_effective"] = metrics["v2_retrieval_help_ratio"]
+        mean_error_reduction = (
+            sum(lesson_error_values) / float(len(lesson_error_values))
+            if lesson_error_values
+            else 0.0
+        )
+        mean_step_efficiency = (
+            sum(lesson_efficiency_values) / float(len(lesson_efficiency_values))
+            if lesson_efficiency_values
+            else 0.0
+        )
+        mean_usage_reward = (
+            sum(lesson_usage_rewards) / float(len(lesson_usage_rewards))
+            if lesson_usage_rewards
+            else 0.0
+        )
+        # Retrieval quality is activation-derived only: coverage + stability +
+        # usefulness. Keep each term bounded for safe default behavior.
+        retrieval_coverage = _clamp(
+            float(len(activations_by_lesson)) / float(max(1, effective_activation_records)),
+            0.0,
+            1.0,
+        )
+        total_lesson_uses = sum(float(bucket.get("count", 0.0) or 0.0) for bucket in activations_by_lesson.values())
+        retrieval_intensity = _clamp(
+            total_lesson_uses / float(max(1.0, float(effective_activation_records) * 2.0)),
+            0.0,
+            1.0,
+        )
+        recurrence_rate = _clamp(
+            float(len(fingerprints_recur_after)) / float(max(1, effective_activation_records)),
+            0.0,
+            1.0,
+        )
+        retrieval_quality_score = _clamp(
+            (0.45 * float(metrics["v2_retrieval_help_ratio"]))
+            + (0.20 * _clamp((mean_error_reduction + 1.0) / 2.0, 0.0, 1.0))
+            + (0.15 * _clamp((mean_step_efficiency + 1.0) / 2.0, 0.0, 1.0))
+            + (0.10 * mean_usage_reward)
+            + (0.10 * (1.0 - recurrence_rate)),
+            0.0,
+            1.0,
+        )
+        metrics["v2_retrieval_quality_mean_error_reduction"] = round(mean_error_reduction, 4)
+        metrics["v2_retrieval_quality_mean_step_efficiency"] = round(mean_step_efficiency, 4)
+        metrics["v2_retrieval_quality_mean_usage_reward"] = round(mean_usage_reward, 4)
+        metrics["v2_retrieval_quality_coverage"] = round(retrieval_coverage, 4)
+        metrics["v2_retrieval_quality_intensity"] = round(retrieval_intensity, 4)
+        metrics["v2_retrieval_quality_recurrence_rate"] = round(recurrence_rate, 4)
+        metrics["v2_retrieval_quality_helped_records"] = int(helped)
+        metrics["v2_retrieval_quality_effective_records"] = int(effective_activation_records)
+        metrics["v2_retrieval_quality_score"] = round(retrieval_quality_score, 4)
         activation_by_step: dict[str, int] = {}
         activation_lane_counts: Counter[str] = Counter()
         activation_by_step_effective: dict[str, int] = {}

@@ -11,6 +11,7 @@ from unittest import mock
 
 from tracks.cli_sqlite.agent_cli import (
     _canonicalize_hotfix_transfer_eval_events,
+    _compute_rollout_signal_from_neighbors,
     _is_skill_gate_satisfied,
     _required_skill_refs_for_domain,
     _run_shell_hotfix_transfer_closure_check,
@@ -137,6 +138,34 @@ class SkillRoutingTests(unittest.TestCase):
             self.assertIsNone(err)
             assert content is not None
             self.assertIn("Import Aggregate", content)
+
+
+class RolloutSignalTests(unittest.TestCase):
+    def test_rollout_signal_uses_prev_and_window_neighbors(self) -> None:
+        neighbors = [
+            {"eval_score": 0.25, "eval_passed": False},
+            {"eval_score": 0.50, "eval_passed": True},
+        ]
+        result = _compute_rollout_signal_from_neighbors(
+            current_score=0.80,
+            current_passed=True,
+            neighbors=neighbors,
+        )
+        self.assertEqual(result["prev_score"], 0.50)
+        self.assertEqual(result["prev_passed"], True)
+        self.assertAlmostEqual(float(result["window_mean_score"]), 0.375)
+        self.assertGreater(float(result["rollout_signal"]), 0.0)
+
+    def test_rollout_signal_defaults_when_no_neighbors(self) -> None:
+        result = _compute_rollout_signal_from_neighbors(
+            current_score=0.40,
+            current_passed=False,
+            neighbors=[],
+        )
+        self.assertIsNone(result["prev_score"])
+        self.assertIsNone(result["prev_passed"])
+        self.assertEqual(result["window_size"], 0)
+        self.assertEqual(result["rollout_signal"], 0.0)
 
 
 class EvalTests(unittest.TestCase):
