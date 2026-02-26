@@ -68,4 +68,5 @@ tracks/cli_sqlite/reports/_tmp_learning_state_backup_*/
 tracks/cli_sqlite/reports/smoke_capability_*.log
 tracks/cli_sqlite/reports/sqlite_transfer_nano_smoke.*
 tracks/cli_sqlite/reports/*_rerun.log
+tracks/cli_sqlite/reports/*_refactor.log
 tracks/cli_sqlite/skills/**/*.bak
