@@ -1,0 +1,82 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=5  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/5 (session 164500, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] no tool call; model stopped.
+  [PASS] score=1.00  steps=5  errors=0  lessons_in=0  lessons_out=0  (60.5s)
+  [variant-scoreboard] variant=default score=0.6968 quality=1.0000 speed=0.2914 cost=0.1594
+
+--- Run 2/5 (session 164501, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (69.9s)
+  [variant-scoreboard] variant=default score=0.6857 quality=1.0000 speed=0.2610 cost=0.1363
+
+--- Run 3/5 (session 164502, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] no tool call; model stopped.
+  [PASS] score=1.00  steps=5  errors=0  lessons_in=0  lessons_out=0  (62.1s)
+  [variant-scoreboard] variant=default score=0.6957 quality=1.0000 speed=0.2869 cost=0.1601
+
+--- Run 4/5 (session 164503, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (70.6s)
+  [variant-scoreboard] variant=default score=0.6847 quality=1.0000 speed=0.2595 cost=0.1325
+
+--- Run 5/5 (session 164504, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed.csv'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 003] tool=show_fixture ok=True error=None
+[step 004] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=1  lessons_in=0  lessons_out=0  (86.3s)
+  [variant-scoreboard] variant=default score=0.6768 quality=1.0000 speed=0.2285 cost=0.1308
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   164500   1.00     Y      5     0       0        0  60.5s
+   2   164501   1.00     Y      6     0       0        0  69.9s
+   3   164502   1.00     Y      5     0       0        0  62.1s
+   4   164503   1.00     Y      6     0       0        0  70.6s
+   5   164504   1.00     Y      6     1       0        0  86.3s
+
+Score trajectory: 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00
+Improvement: 1.00 -> 1.00 (delta=+0.00)
+Variant scoreboard rows written: 5
+

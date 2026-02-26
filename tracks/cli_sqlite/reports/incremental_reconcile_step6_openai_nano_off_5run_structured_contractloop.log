@@ -1,0 +1,85 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=5  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/5 (session 164200, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 14: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 14: table rejects has no column named amount\nRuntime error near line 23: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)'
+[step 005] tool=read_skill ok=True error=None
+[step 006] tool=run_sqlite ok=False error='Runtime error near line 4: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 13: table rejects has no column named batch_id'
+  [FAIL] score=0.83  steps=6  errors=3  lessons_in=0  lessons_out=0  (85.0s)
+  [variant-scoreboard] variant=default score=0.4749 quality=0.6664 speed=0.2307 cost=0.1158
+
+--- Run 2/5 (session 164201, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 13: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 14: table rejects has no column named batch_id\nRuntime error near line 25: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)'
+[step 005] tool=run_sqlite ok=False error='Parse error near line 15: table rejects has no column named category'
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=6  errors=3  lessons_in=0  lessons_out=0  (76.3s)
+  [variant-scoreboard] variant=default score=0.4796 quality=0.6664 speed=0.2474 cost=0.1195
+
+--- Run 3/5 (session 164202, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 12: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 12: table rejects has no column named amount\nRuntime error near line 21: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)'
+[step 005] tool=run_sqlite ok=False error='Parse error near line 12: table rejects has no column named category'
+[step 006] tool=run_sqlite ok=False error='Parse error near line 14: table rejects has no column named amount'
+[step 006] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 006] tool=read_skill ok=True error=None
+  [FAIL] score=0.83  steps=6  errors=4  lessons_in=0  lessons_out=0  (65.5s)
+  [variant-scoreboard] variant=default score=0.4856 quality=0.6664 speed=0.2716 cost=0.1194
+
+--- Run 4/5 (session 164203, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 2: NOT NULL constraint failed: ledger.checkpoint_tag (19)'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nRuntime error near line 11: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)'
+[step 005] no tool call; model stopped.
+  [FAIL] score=0.67  steps=5  errors=2  lessons_in=0  lessons_out=0  (65.8s)
+  [variant-scoreboard] variant=default score=0.4117 quality=0.5336 speed=0.2769 cost=0.1484
+
+--- Run 5/5 (session 164204, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 7: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=False error='Parse error near line 13: table rejects has no column named amount'
+  [FAIL] score=0.83  steps=6  errors=2  lessons_in=0  lessons_out=0  (72.6s)
+  [variant-scoreboard] variant=default score=0.4831 quality=0.6664 speed=0.2552 cost=0.1301
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   164200   0.83     N      6     3       0        0  85.0s
+   2   164201   0.83     N      6     3       0        0  76.3s
+   3   164202   0.83     N      6     4       0        0  65.5s
+   4   164203   0.67     N      5     2       0        0  65.8s
+   5   164204   0.83     N      6     2       0        0  72.6s
+
+Score trajectory: 0.83 -> 0.83 -> 0.83 -> 0.67 -> 0.83
+Improvement: 0.83 -> 0.83 (delta=+0.00)
+Variant scoreboard rows written: 5
+
