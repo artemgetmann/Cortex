@@ -632,6 +632,7 @@ def _build_reflection_prompt(
 def _format_contract_gap_retry_prompt(
     *,
     unresolved_gaps: list[dict[str, Any]],
+    deterministic_recipes: list[str] | None = None,
     injected_hints: list[str] | None = None,
     validator_evidence: list[str] | None = None,
     max_items: int = 5,
@@ -682,6 +683,14 @@ def _format_contract_gap_retry_prompt(
         lines.append("Deterministic validator evidence:")
         for row in validator_rows[:4]:
             lines.append(f"- {row}")
+    deterministic_rows = [str(row).strip() for row in (deterministic_recipes or []) if str(row).strip()]
+    if deterministic_rows:
+        # Keep deterministic repair instructions in a dedicated section so the
+        # executor can prioritize machine-like closure steps before free-form hints.
+        lines.append("Deterministic repair block (execute exactly):")
+        for row in deterministic_rows[:2]:
+            lines.append(f"- {row}")
+        lines.append("No alternate plan: run the listed steps exactly before stopping.")
     extra = [str(row).strip() for row in (injected_hints or []) if str(row).strip()]
     if extra:
         lines.append("Prior lessons matching these gaps:")
@@ -4290,6 +4299,23 @@ def _run_cli_agent_impl(
             )
 
         latest_unresolved_gaps = unresolved_gaps
+        # Prioritize query-mismatch gaps before pattern-only gaps so retry
+        # prompts and deterministic recipes focus on state-correction first.
+        gap_priority = {
+            "required_query_mismatch": 0,
+            "missing_required_pattern": 1,
+            "too_many_errors": 2,
+            "matched_forbidden_pattern": 3,
+        }
+        unresolved_gaps = sorted(
+            unresolved_gaps,
+            key=lambda row: (
+                int(gap_priority.get(str(row.get("reason_code", "")).strip(), 9)),
+                str(row.get("gap_type", "")).strip(),
+                str(row.get("detail", "")).strip(),
+            ),
+        )
+        latest_unresolved_gaps = unresolved_gaps
         metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
         prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
         prestop_artifact_path.write_text(
@@ -4436,7 +4462,6 @@ def _run_cli_agent_impl(
             max_items=3,
         )
         metrics["contract_gap_deterministic_hint_count"] = len(deterministic_gap_hints)
-        injected_retry_hints = deterministic_gap_hints + gap_hints
         if gap_matches:
             gap_lanes: dict[str, str] = {}
             for match in gap_matches:
@@ -4472,7 +4497,8 @@ def _run_cli_agent_impl(
                 metrics["v2_lesson_activations_effective"] += len(gap_lanes)
         retry_prompt = _format_contract_gap_retry_prompt(
             unresolved_gaps=unresolved_gaps,
-            injected_hints=injected_retry_hints,
+            deterministic_recipes=deterministic_gap_hints,
+            injected_hints=gap_hints,
             validator_evidence=validator_evidence,
         )
         messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})

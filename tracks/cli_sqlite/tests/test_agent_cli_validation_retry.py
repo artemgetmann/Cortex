@@ -608,6 +608,7 @@ def test_contract_gap_retry_injects_deterministic_recipe_hints(
         if "Deterministic contract gap check found unresolved requirements." in text
     ]
     assert retry_prompts
+    assert "Deterministic repair block (execute exactly):" in retry_prompts[0]
     assert "[deterministic_recipe domain=sqlite task_id=retry_task]" in retry_prompts[0]
     assert result.metrics["contract_gap_retry_attempts"] == 1
     assert result.metrics["contract_gap_deterministic_hint_count"] >= 1
