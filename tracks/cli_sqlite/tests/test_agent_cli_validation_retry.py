@@ -612,10 +612,16 @@ def test_contract_gap_retry_injects_deterministic_recipe_hints(
     assert result.metrics["contract_gap_retry_attempts"] == 1
     assert result.metrics["contract_gap_deterministic_hint_count"] >= 1
     assert len(adapter.execute_calls) >= 2
+    # First deterministic validator run happens before retry and the post-repair
+    # validator runs again after one executor action to verify closure progress.
     assert any("SELECT COUNT(*) AS c FROM rejects;" in str(row.get("sql", "")) for row in adapter.execute_calls)
-    assert adapter.execute_calls[-1] == {"sql": "SELECT 1;"}
+    assert any(row == {"sql": "SELECT 1;"} for row in adapter.execute_calls)
+    assert result.metrics["contract_validator_postretry_runs"] == 1
+    assert result.metrics["contract_validator_postretry_last_trigger"] == "post_retry_after_repair"
+    assert result.metrics["contract_retry_repair_observed"] is True
     events = read_events(sessions_root / "session-607" / "events.jsonl")
     assert any(str(event.get("tool", "")) == "contract_gap_retry" for event in events)
+    assert any(str(event.get("tool", "")) == "contract_validator_postretry" for event in events)
 
 
 def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:

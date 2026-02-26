@@ -4046,6 +4046,11 @@ def _run_cli_agent_impl(
         "contract_gap_unresolved_count_prestop": 0,
         "contract_gap_unresolved_count_final": 0,
         "contract_gap_deterministic_hint_count": 0,
+        "contract_retry_repair_observed": False,
+        "contract_retry_repair_steps": [],
+        "contract_validator_postretry_runs": 0,
+        "contract_validator_postretry_last_status": "not_run",
+        "contract_validator_postretry_last_trigger": "",
         "contract_closure_checks": 0,
         "contract_closure_check_failures": 0,
         "contract_closure_check_last_status": "not_run",
@@ -4176,6 +4181,10 @@ def _run_cli_agent_impl(
     contract_gap_retries_used = 0
     contract_gap_prestop_artifacts: list[str] = []
     latest_unresolved_gaps: list[dict[str, Any]] = []
+    contract_retry_validator_sql = ""
+    contract_retry_validator_query_ids: list[str] = []
+    contract_retry_post_validation_pending = False
+    contract_retry_repair_observed = False
     dependency_setup_retries: Counter[str] = Counter()
     dependency_setup_reflections: set[str] = set()
     hard_failure_count = 0
@@ -4202,6 +4211,8 @@ def _run_cli_agent_impl(
 
     def _maybe_inject_contract_gap_retry(*, current_step: int, trigger: str) -> bool:
         nonlocal contract_gap_retries_used, latest_unresolved_gaps
+        nonlocal contract_retry_validator_sql, contract_retry_validator_query_ids
+        nonlocal contract_retry_post_validation_pending, contract_retry_repair_observed
         if (
             not has_contract
             or not bool(contract_gap_retry)
@@ -4318,6 +4329,10 @@ def _run_cli_agent_impl(
         ]
         # Deterministic sqlite validator run (machine-executed) before retry.
         # This provides concrete state evidence to the agent, not just prose.
+        contract_retry_validator_sql = ""
+        contract_retry_validator_query_ids = []
+        contract_retry_post_validation_pending = False
+        contract_retry_repair_observed = False
         if domain == "sqlite":
             required_queries = prestop_eval.get("evidence", {}).get("required_queries", [])
             if isinstance(required_queries, list):
@@ -4339,6 +4354,9 @@ def _run_cli_agent_impl(
                     validator_sql = ";\n".join(query_sqls)
                     if not validator_sql.endswith(";"):
                         validator_sql += ";"
+                    contract_retry_validator_sql = validator_sql
+                    contract_retry_validator_query_ids = list(query_ids)
+                    contract_retry_post_validation_pending = True
                     validator_result = adapter.execute(
                         adapter.executor_tool_name,
                         {"sql": validator_sql},
@@ -4493,6 +4511,41 @@ def _run_cli_agent_impl(
                 flush=True,
             )
         return True
+
+    def _run_contract_postretry_validator(*, current_step: int, trigger: str) -> None:
+        nonlocal contract_retry_post_validation_pending
+        if not contract_retry_post_validation_pending:
+            return
+        validator_sql = str(contract_retry_validator_sql or "").strip()
+        if not validator_sql:
+            contract_retry_post_validation_pending = False
+            return
+        validator_result = adapter.execute(
+            adapter.executor_tool_name,
+            {"sql": validator_sql},
+            workspace,
+        )
+        metrics["contract_validator_postretry_runs"] = int(metrics.get("contract_validator_postretry_runs", 0) or 0) + 1
+        metrics["contract_validator_postretry_last_status"] = "ok" if not validator_result.is_error() else "error"
+        metrics["contract_validator_postretry_last_trigger"] = str(trigger)
+        metrics["contract_retry_repair_observed"] = bool(contract_retry_repair_observed)
+        write_event(
+            paths.events_path,
+            {
+                "step": current_step,
+                "tool": "contract_validator_postretry",
+                "tool_input": {
+                    "query_ids": list(contract_retry_validator_query_ids),
+                    "sql": validator_sql,
+                    "trigger": trigger,
+                    "repair_observed": bool(contract_retry_repair_observed),
+                },
+                "ok": not validator_result.is_error(),
+                "error": validator_result.error,
+                "output": validator_result.output,
+            },
+        )
+        contract_retry_post_validation_pending = False
 
     step = 1
     validation_retries_this_step = 0
@@ -4658,6 +4711,15 @@ def _run_cli_agent_impl(
                     result = adapter.execute(canonical_name, tool_input, workspace)
                     if not result.is_error():
                         result = ToolResult(output=_clip_text(result.output or "(ok)"))
+                    if contract_retry_post_validation_pending:
+                        contract_retry_repair_observed = True
+                        repair_steps = list(metrics.get("contract_retry_repair_steps", []) or [])
+                        repair_steps.append(int(step))
+                        metrics["contract_retry_repair_steps"] = sorted(set(repair_steps))
+                        _run_contract_postretry_validator(
+                            current_step=step,
+                            trigger="post_retry_after_repair",
+                        )
             else:
                 result = ToolResult(error=f"Unknown tool requested: {tool_name_raw!r}")
             if not is_validation_failure:
@@ -4954,6 +5016,11 @@ def _run_cli_agent_impl(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
+            if contract_retry_post_validation_pending:
+                _run_contract_postretry_validator(
+                    current_step=step,
+                    trigger="no_tool_call",
+                )
             if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
                 continue
             if verbose:
@@ -4970,15 +5037,27 @@ def _run_cli_agent_impl(
                     flush=True,
                 )
             continue
-        if step >= max_steps and _maybe_inject_contract_gap_retry(current_step=step, trigger="step_cap"):
-            # Retry executes at the same logical step so the deterministic gap
-            # close does not consume additional user-visible step budget.
-            validation_retries_this_step = 0
-            validation_retry_capped_this_step = False
-            continue
+        if step >= max_steps:
+            if contract_retry_post_validation_pending:
+                _run_contract_postretry_validator(
+                    current_step=step,
+                    trigger="step_cap",
+                )
+            if _maybe_inject_contract_gap_retry(current_step=step, trigger="step_cap"):
+                # Retry executes at the same logical step so the deterministic gap
+                # close does not consume additional user-visible step budget.
+                validation_retries_this_step = 0
+                validation_retry_capped_this_step = False
+                continue
         step += 1
         validation_retries_this_step = 0
         validation_retry_capped_this_step = False
+
+    if contract_retry_post_validation_pending:
+        _run_contract_postretry_validator(
+            current_step=int(metrics.get("steps", step) or step),
+            trigger="loop_exit",
+        )
 
     # --- Evaluation ---
     events = read_events(paths.events_path)
