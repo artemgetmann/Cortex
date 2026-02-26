@@ -154,6 +154,7 @@ DEFAULT_CONTRACT_GAP_RETRY = True
 DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
 DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES = True
 DEFAULT_STRUCTURED_LESSONS_REQUIRED = True
+DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE = False
 DEFAULT_VERIFIER_STACK_ENABLED = False
 DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
 DEFAULT_CLARIFY_ON_LOW_CONFIDENCE = True
@@ -834,6 +835,60 @@ def _parse_action_tool_name(action_template: str) -> str:
     return str(match.group(1)).strip()
 
 
+def _action_template_is_placeholder_like(action_template: str) -> bool:
+    text = str(action_template or "").strip().lower()
+    if not text:
+        return True
+    placeholder_tokens = (
+        "...",
+        "<",
+        ">",
+        "todo",
+        "tbd",
+        "placeholder",
+        "example",
+        "fill_here",
+    )
+    return any(token in text for token in placeholder_tokens)
+
+
+def _action_template_has_named_args(action_template: str) -> bool:
+    text = str(action_template or "").strip()
+    match = re.match(r"^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\((.*)\)\s*$", text, re.DOTALL)
+    if not match:
+        return False
+    inner = str(match.group(1)).strip()
+    if not inner:
+        return False
+    # Require at least one named argument to avoid vague "tool()" templates.
+    return "=" in inner
+
+
+def _expected_evidence_is_anchored(
+    *,
+    expected_evidence: str,
+    resolved_signature: str,
+    resolved_reason: str,
+    resolved_gap_type: str,
+    matched_row: dict[str, Any],
+) -> bool:
+    text = str(expected_evidence or "").strip().lower()
+    if not text:
+        return False
+    anchors = {
+        str(resolved_signature or "").strip().lower(),
+        str(resolved_reason or "").strip().lower(),
+        str(resolved_gap_type or "").strip().lower(),
+        str(matched_row.get("query_id", "")).strip().lower(),
+        str(matched_row.get("detail", "")).strip().lower(),
+    }
+    # Keep only meaningful anchors and avoid tiny noise tokens.
+    clean_anchors = {anchor for anchor in anchors if len(anchor) >= 3}
+    if not clean_anchors:
+        return True
+    return any(anchor in text for anchor in clean_anchors)
+
+
 def _allowed_action_tools_for_adapter(*, adapter: DomainAdapter, opaque_tools: bool) -> set[str]:
     alias_map = adapter.build_alias_map(opaque=opaque_tools)
     allowed = {
@@ -892,8 +947,12 @@ def _validate_structured_model_lesson(
 
     if not action_template:
         return False, "missing_action_template", {}
+    if _action_template_is_placeholder_like(action_template):
+        return False, "invalid_action_template_placeholder", {}
     tool_name = _parse_action_tool_name(action_template)
     if not tool_name:
+        return False, "invalid_action_template_shape", {}
+    if not _action_template_has_named_args(action_template):
         return False, "invalid_action_template_shape", {}
     if tool_name not in allowed_action_tools:
         return False, "invalid_action_template_tool", {}
@@ -906,6 +965,14 @@ def _validate_structured_model_lesson(
     resolved_signature = str(trigger_gap_signature or matched_row.get("gap_signature", "")).strip()
     if not (resolved_reason and resolved_gap_type and resolved_signature):
         return False, "missing_structured_gap_fields", {}
+    if not _expected_evidence_is_anchored(
+        expected_evidence=expected_evidence,
+        resolved_signature=resolved_signature,
+        resolved_reason=resolved_reason,
+        resolved_gap_type=resolved_gap_type,
+        matched_row=matched_row,
+    ):
+        return False, "expected_evidence_unanchored", {}
 
     return True, "", {
         "trigger_gap_signature": resolved_signature,
@@ -3503,6 +3570,7 @@ def run_cli_agent(
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
     benchmark_placebo: bool = DEFAULT_BENCHMARK_PLACEBO,
+    watchdog_allow_posttask_in_safe_mode: bool = DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
 ) -> CliRunResult:
     normalized_learning_mode = _normalize_learning_mode(learning_mode)
@@ -3601,6 +3669,7 @@ def run_cli_agent(
             benchmark_deterministic=benchmark_deterministic,
             benchmark_promoted_only=benchmark_promoted_only,
             benchmark_placebo=benchmark_placebo,
+            watchdog_allow_posttask_in_safe_mode=watchdog_allow_posttask_in_safe_mode,
             on_step=on_step,
             run_id=run_id,
             run_started_at=run_started_at,
@@ -3706,6 +3775,7 @@ def _run_cli_agent_impl(
     benchmark_deterministic: bool = DEFAULT_BENCHMARK_DETERMINISTIC,
     benchmark_promoted_only: bool = DEFAULT_BENCHMARK_PROMOTED_ONLY,
     benchmark_placebo: bool = DEFAULT_BENCHMARK_PLACEBO,
+    watchdog_allow_posttask_in_safe_mode: bool = DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
     on_step: Callable[[int, str, bool, str | None], Any] | None = None,
     run_id: str | None = None,
     run_started_at: str | None = None,
@@ -4102,9 +4172,11 @@ def _run_cli_agent_impl(
             "missing_trigger_gap_signature": 0,
             "unbound_trigger_gap_signature": 0,
             "missing_action_template": 0,
+            "invalid_action_template_placeholder": 0,
             "invalid_action_template_shape": 0,
             "invalid_action_template_tool": 0,
             "missing_expected_evidence": 0,
+            "expected_evidence_unanchored": 0,
             "missing_structured_gap_fields": 0,
         },
         "v2_dependency_fallback_checks": 0,
@@ -4165,6 +4237,8 @@ def _run_cli_agent_impl(
         "loop_watchdog_failure_signals": [],
         "loop_watchdog_disable_self_edit": False,
         "loop_watchdog_disable_posttask_patching": False,
+        "loop_watchdog_disable_posttask_patching_effective": False,
+        "watchdog_allow_posttask_in_safe_mode": bool(watchdog_allow_posttask_in_safe_mode),
         "loop_watchdog_stop_flag": bool(loop_watchdog_stop_flag),
         "loop_watchdog_repeated_hard_failure_signatures": 0,
         "loop_watchdog_contract_gap_unresolved_count": 0,
@@ -5449,6 +5523,10 @@ def _run_cli_agent_impl(
     metrics["loop_watchdog_failure_signals"] = list(loop_watchdog_failure_signals)
     metrics["loop_watchdog_disable_self_edit"] = bool(loop_watchdog_decision.disable_self_edit)
     metrics["loop_watchdog_disable_posttask_patching"] = bool(loop_watchdog_decision.disable_posttask_patching)
+    watchdog_disable_posttask_effective = bool(loop_watchdog_decision.disable_posttask_patching) and (
+        not bool(watchdog_allow_posttask_in_safe_mode)
+    )
+    metrics["loop_watchdog_disable_posttask_patching_effective"] = bool(watchdog_disable_posttask_effective)
     metrics["loop_watchdog_stop_flag"] = bool(loop_watchdog_stop_flag)
     metrics["loop_watchdog_repeated_hard_failure_signatures"] = int(loop_watchdog_snapshot.repeated_hard_failure_signatures)
     metrics["loop_watchdog_contract_gap_unresolved_count"] = int(loop_watchdog_snapshot.contract_gap_unresolved_count)
@@ -5530,7 +5608,7 @@ def _run_cli_agent_impl(
         # Demo mode keeps Memory V2 lesson generation/promotion active while
         # suppressing legacy skill patching hooks/events for cleaner demos.
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
-        if bool(loop_watchdog_decision) and bool(loop_watchdog_decision.disable_posttask_patching):
+        if bool(loop_watchdog_decision) and bool(watchdog_disable_posttask_effective):
             patching_enabled = False
             metrics["posttask_skill_patching_skipped_by_mode"] = True
             metrics["posttask_skill_patching_skip_reason"] = "loop_watchdog_safe_mode"
@@ -5642,9 +5720,10 @@ def _run_cli_agent_impl(
         allowed_action_tools = _allowed_action_tools_for_adapter(adapter=adapter, opaque_tools=opaque_tools)
         fallback_rules: list[str] = []
         source_lesson_rows: list[dict[str, Any]] = []
-        if structured_lessons_required and structured_gap_rows:
-            # Deterministic recipes are always included for unresolved gaps so
-            # small models receive executable guidance, not only prose advice.
+        if structured_lessons_required and structured_gap_rows and bool(contract_gap_deterministic_recipes):
+            # Deterministic fallback recipes are optional and controlled by
+            # contract_gap_deterministic_recipes so benchmark arms can isolate
+            # pure model-generated lesson behavior when needed.
             deterministic_rules = _deterministic_gap_fix_recipes(
                 adapter=adapter,
                 domain=domain,

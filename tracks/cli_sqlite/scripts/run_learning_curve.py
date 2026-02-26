@@ -36,6 +36,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_LEARNING_MODE,
     DEFAULT_SELF_EDIT_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
+    DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
     LEARNING_MODES,
     LLM_BACKENDS,
     OPENAI_DEFAULT_MODEL,
@@ -157,6 +158,12 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_BENCHMARK_PLACEBO,
         help="Replace injected lesson text with deterministic placebo hints while keeping retrieval mechanics active.",
+    )
+    ap.add_argument(
+        "--watchdog-allow-posttask-in-safe-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
+        help="Allow posttask learning writes even when loop watchdog enters safe mode (benchmark override).",
     )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -297,6 +304,7 @@ def main() -> int:
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
             benchmark_placebo=bool(args.benchmark_placebo),
+            watchdog_allow_posttask_in_safe_mode=bool(args.watchdog_allow_posttask_in_safe_mode),
         )
 
         m = result.metrics

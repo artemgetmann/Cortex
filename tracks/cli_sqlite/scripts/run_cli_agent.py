@@ -20,6 +20,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
     DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
+    DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
     DEFAULT_VERIFIER_STACK_ENABLED,
     DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
@@ -240,6 +241,12 @@ def main() -> int:
         default=DEFAULT_BENCHMARK_PLACEBO,
         help="Keep retrieval structure but replace injected lesson text with deterministic generic placebo hints.",
     )
+    ap.add_argument(
+        "--watchdog-allow-posttask-in-safe-mode",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_WATCHDOG_ALLOW_POSTTASK_IN_SAFE_MODE,
+        help="Allow posttask learning writes even when loop watchdog enters safe mode (benchmark override).",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -361,6 +368,7 @@ def main() -> int:
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
             benchmark_placebo=bool(args.benchmark_placebo),
+            watchdog_allow_posttask_in_safe_mode=bool(args.watchdog_allow_posttask_in_safe_mode),
             on_step=_on_step,
         )
     except _RunCancelled as exc:

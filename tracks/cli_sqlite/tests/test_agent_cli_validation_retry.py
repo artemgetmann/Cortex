@@ -625,6 +625,67 @@ def test_contract_gap_retry_injects_deterministic_recipe_hints(
     assert any(str(event.get("tool", "")) == "contract_validator_postretry" for event in events)
 
 
+def test_posttask_structured_fallback_respects_det_recipe_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _FakeResponse([{"type": "text", "text": "done"}]),
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    sessions_root, _adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-query-gap-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [
+                {
+                    "id": "reject_count",
+                    "sql": "SELECT COUNT(*) AS c FROM rejects;",
+                    "expected_rows": [["1"]],
+                }
+            ],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+    monkeypatch.setattr(
+        agent_cli,
+        "generate_lessons",
+        lambda **kwargs: SimpleNamespace(raw_lessons=[], filtered_lessons=[]),
+    )
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=608,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=True,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=True,
+        contract_gap_retry_steps=1,
+        contract_gap_deterministic_recipes=False,
+    )
+
+    assert result.metrics["contract_gap_deterministic_hint_count"] == 0
+    assert result.metrics["v2_structured_fallback_lessons"] == 0
+    assert result.metrics["v2_lessons_generated"] == 0
+    learning_artifacts = json.loads(
+        (sessions_root / "session-608" / "learning_artifacts.json").read_text(encoding="utf-8")
+    )
+    assert learning_artifacts.get("lesson_candidates") == []
+
+
 def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:
     unresolved = [
         {
@@ -667,10 +728,42 @@ def test_validate_structured_model_lesson_requires_trigger_action_and_evidence()
     assert reason2 == "invalid_action_template_tool"
     assert payload2 == {}
 
+    placeholder_action = SimpleNamespace(
+        trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+        action_template='run_sqlite(sql="...")',
+        expected_evidence='required_query_mismatch|required_query|reject_count',
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok_placeholder, reason_placeholder, payload_placeholder = agent_cli._validate_structured_model_lesson(
+        lesson=placeholder_action,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok_placeholder is False
+    assert reason_placeholder == "invalid_action_template_placeholder"
+    assert payload_placeholder == {}
+
+    unanchored_evidence = SimpleNamespace(
+        trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+        action_template='run_sqlite(sql="SELECT COUNT(*) FROM rejects;")',
+        expected_evidence="looks good now",
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok_unanchored, reason_unanchored, payload_unanchored = agent_cli._validate_structured_model_lesson(
+        lesson=unanchored_evidence,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok_unanchored is False
+    assert reason_unanchored == "expected_evidence_unanchored"
+    assert payload_unanchored == {}
+
     valid = SimpleNamespace(
         trigger_gap_signature="required_query_mismatch|required_query|reject_count",
         action_template='run_sqlite(sql="SELECT COUNT(*) FROM rejects;")',
-        expected_evidence='required_query:reject_count == [["1"]]',
+        expected_evidence='required_query_mismatch|required_query|reject_count == [["1"]]',
         reason_code="required_query_mismatch",
         gap_type="required_query",
     )
