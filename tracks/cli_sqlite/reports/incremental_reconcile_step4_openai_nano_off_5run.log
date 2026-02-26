@@ -1,0 +1,63 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=5  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/5 (session 141200, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 001] tool=read_skill ok=True error=None
+[step 002] no tool call; model stopped.
+  [FAIL] score=0.25  steps=2  errors=0  lessons_in=0  lessons_out=0  (47.1s)
+  [variant-scoreboard] variant=default score=0.3613 quality=0.2000 speed=0.3653 cost=1.0000
+
+--- Run 2/5 (session 141201, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] no tool call; model stopped.
+  [FAIL] score=0.25  steps=2  errors=0  lessons_in=0  lessons_out=0  (43.2s)
+  [variant-scoreboard] variant=default score=0.3659 quality=0.2000 speed=0.3836 cost=1.0000
+
+--- Run 3/5 (session 141202, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] no tool call; model stopped.
+  [FAIL] score=0.25  steps=2  errors=0  lessons_in=0  lessons_out=0  (48.4s)
+  [variant-scoreboard] variant=default score=0.3599 quality=0.2000 speed=0.3597 cost=1.0000
+
+--- Run 4/5 (session 141203, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] no tool call; model stopped.
+  [FAIL] score=0.25  steps=2  errors=0  lessons_in=0  lessons_out=0  (54.2s)
+  [variant-scoreboard] variant=default score=0.3541 quality=0.2000 speed=0.3364 cost=1.0000
+
+--- Run 5/5 (session 141204, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 001] no tool call; model stopped.
+  [FAIL] score=0.25  steps=1  errors=0  lessons_in=0  lessons_out=0  (31.8s)
+  [variant-scoreboard] variant=default score=0.3866 quality=0.2000 speed=0.4665 cost=1.0000
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   141200   0.25     N      2     0       0        0  47.1s
+   2   141201   0.25     N      2     0       0        0  43.2s
+   3   141202   0.25     N      2     0       0        0  48.4s
+   4   141203   0.25     N      2     0       0        0  54.2s
+   5   141204   0.25     N      1     0       0        0  31.8s
+
+Score trajectory: 0.25 -> 0.25 -> 0.25 -> 0.25 -> 0.25
+Improvement: 0.25 -> 0.25 (delta=+0.00)
+Variant scoreboard rows written: 5
+
