@@ -43,6 +43,8 @@ DEFAULT_BENCHMARK_DETERMINISTIC = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_DET
 DEFAULT_BENCHMARK_PROMOTED_ONLY = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PROMOTED_ONLY", False))
 DEFAULT_BENCHMARK_PLACEBO = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PLACEBO", False))
 DEFAULT_SELF_EDIT_MODE = bool(getattr(agent_cli, "DEFAULT_SELF_EDIT_MODE", False))
+COST_PROFILES = ("default", "cheap")
+CHEAP_EXECUTOR_MODEL = "claude-3-haiku-20240307"
 
 run_cli_agent = agent_cli.run_cli_agent
 LESSONS_PATH = Path(getattr(agent_cli, "LESSONS_PATH", DEFAULT_LESSONS_PATH))
@@ -507,6 +509,12 @@ def main() -> int:
     ap.add_argument("--doc-retriever-model", default="")
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
     ap.add_argument(
+        "--cost-profile",
+        default="default",
+        choices=COST_PROFILES,
+        help="Cost preset. cheap pins executor/judge to Claude 3 Haiku and disables judge diagnostics.",
+    )
+    ap.add_argument(
         "--benchmark-deterministic",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_BENCHMARK_DETERMINISTIC,
@@ -563,6 +571,14 @@ def main() -> int:
     # Keep critic aligned with executor and disable escalation for reproducibility.
     model_critic = model_executor
     model_judge = args.model_judge.strip() if args.model_judge else model_executor
+    llm_backend = args.llm_backend
+    judge_diagnostic = bool(args.judge_diagnostic)
+    if args.cost_profile == "cheap":
+        model_executor = CHEAP_EXECUTOR_MODEL
+        model_critic = CHEAP_EXECUTOR_MODEL
+        model_judge = CHEAP_EXECUTOR_MODEL
+        llm_backend = "anthropic"
+        judge_diagnostic = False
     doc_retriever_model = str(args.doc_retriever_model).strip() or None
     auto_escalate_critic = False
     initial_hotfix_variant_override = os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV)
@@ -609,7 +625,7 @@ def main() -> int:
     print(
         f"  arms={len(arms)} sessions_per_arm={args.sessions} max_steps={args.max_steps} "
         f"learning_mode={args.learning_mode} model_executor={model_executor} "
-        f"critic=executor(locked) judge_diagnostic={bool(args.judge_diagnostic)}"
+        f"cost_profile={args.cost_profile} critic=executor(locked) judge_diagnostic={judge_diagnostic}"
     )
     print(f"{'=' * 96}\n")
 
@@ -707,8 +723,8 @@ def main() -> int:
                 doc_retriever_model=doc_retriever_model,
                 judge_docs=judge_docs,
                 executor_docs=executor_docs,
-                judge_diagnostic=bool(args.judge_diagnostic),
-                llm_backend=args.llm_backend,
+                judge_diagnostic=judge_diagnostic,
+                llm_backend=llm_backend,
                 benchmark_deterministic=bool(args.benchmark_deterministic),
                 benchmark_promoted_only=bool(args.benchmark_promoted_only),
                 benchmark_placebo=bool(args.benchmark_placebo),
@@ -823,12 +839,13 @@ def main() -> int:
             "doc_budget_tokens": int(args.doc_budget_tokens),
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,
-            "llm_backend": args.llm_backend,
+            "llm_backend": llm_backend,
+            "cost_profile": args.cost_profile,
             "benchmark_deterministic": bool(args.benchmark_deterministic),
             "benchmark_promoted_only": bool(args.benchmark_promoted_only),
             "benchmark_placebo": bool(args.benchmark_placebo),
             "auto_escalate_critic": False,
-            "judge_diagnostic": bool(args.judge_diagnostic),
+            "judge_diagnostic": judge_diagnostic,
         },
         "task_schedule": task_schedule,
         "overall": _summarize(all_rows),

@@ -43,6 +43,10 @@ class _RunCancelled(RuntimeError):
     """Raised when an external transport requests cancellation mid-run."""
 
 
+COST_PROFILES = ("default", "cheap")
+CHEAP_EXECUTOR_MODEL = "claude-3-haiku-20240307"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task-id", required=True)
@@ -111,6 +115,12 @@ def main() -> int:
         default=DEFAULT_LLM_BACKEND,
         choices=LLM_BACKENDS,
         help="Executor transport: anthropic (API) or claude_print (`claude -p` subscription path).",
+    )
+    ap.add_argument(
+        "--cost-profile",
+        default="default",
+        choices=COST_PROFILES,
+        help="Cost preset. cheap pins executor/judge to Claude 3 Haiku and disables judge diagnostics.",
     )
     ap.add_argument(
         "--documentation",
@@ -222,6 +232,18 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
+    effective_executor_model = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
+    effective_critic_model = args.model_critic.strip() or DEFAULT_CRITIC_MODEL
+    effective_judge_model = args.model_judge.strip() if args.model_judge else None
+    effective_backend = args.llm_backend
+    effective_judge_diagnostic = bool(args.judge_diagnostic)
+    if args.cost_profile == "cheap":
+        effective_executor_model = CHEAP_EXECUTOR_MODEL
+        effective_critic_model = CHEAP_EXECUTOR_MODEL
+        effective_judge_model = CHEAP_EXECUTOR_MODEL
+        effective_backend = "anthropic"
+        effective_judge_diagnostic = False
+
     try:
         cfg = load_config()
     except RuntimeError:
@@ -239,7 +261,8 @@ def main() -> int:
         metadata={
             "source": "run_cli_agent.py",
             "max_steps": int(args.max_steps),
-            "llm_backend": str(args.llm_backend),
+            "llm_backend": str(effective_backend),
+            "cost_profile": str(args.cost_profile),
             "self_edit_mode": bool(args.self_edit_mode),
         },
     )
@@ -272,9 +295,9 @@ def main() -> int:
             domain=args.domain,
             learning_mode=args.learning_mode,
             architecture_mode=args.architecture_mode,
-            model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
-            model_critic=args.model_critic.strip() or DEFAULT_CRITIC_MODEL,
-            model_judge=args.model_judge.strip() if args.model_judge else None,
+            model_executor=effective_executor_model,
+            model_critic=effective_critic_model,
+            model_judge=effective_judge_model,
             posttask_mode=args.posttask_mode,
             posttask_learn=not args.no_posttask_learn,
             self_edit_mode=bool(args.self_edit_mode),
@@ -299,7 +322,7 @@ def main() -> int:
             doc_retriever_model=str(args.doc_retriever_model).strip() or None,
             judge_docs=args.judge_docs == "on",
             executor_docs=args.executor_docs == "on",
-            judge_diagnostic=bool(args.judge_diagnostic),
+            judge_diagnostic=effective_judge_diagnostic,
             contract_gap_retry=bool(args.contract_gap_retry),
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
             structured_lessons_required=bool(args.structured_lessons_required),
@@ -307,7 +330,7 @@ def main() -> int:
             low_confidence_threshold=max(0.0, min(1.0, float(args.low_confidence_threshold))),
             clarify_on_low_confidence=bool(args.clarify_on_low_confidence),
             max_low_confidence_probes=max(1, int(args.max_low_confidence_probes)),
-            llm_backend=args.llm_backend,
+            llm_backend=effective_backend,
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
             benchmark_placebo=bool(args.benchmark_placebo),

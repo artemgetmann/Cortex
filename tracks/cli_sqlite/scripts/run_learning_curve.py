@@ -52,6 +52,8 @@ from tracks.cli_sqlite.variant_scoreboard import (
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 TRACK_ROOT = Path(__file__).resolve().parents[1]
 SESSIONS_ROOT = TRACK_ROOT / "sessions"
+COST_PROFILES = ("default", "cheap")
+CHEAP_EXECUTOR_MODEL = "claude-3-haiku-20240307"
 
 
 def _is_hotfix_hard_variant_task(*, domain: str, task_id: str) -> bool:
@@ -79,6 +81,12 @@ def main() -> int:
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
+    ap.add_argument(
+        "--cost-profile",
+        default="default",
+        choices=COST_PROFILES,
+        help="Cost preset. cheap pins executor/judge to Claude 3 Haiku and disables judge diagnostics.",
+    )
     ap.add_argument("--posttask-mode", choices=["candidate", "direct"], default="direct")
     ap.add_argument("--no-posttask-learn", action="store_true")
     ap.add_argument(
@@ -139,6 +147,16 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
+    effective_executor_model = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
+    effective_judge_model = args.model_judge.strip() or effective_executor_model
+    effective_backend = args.llm_backend
+    effective_judge_diagnostic = bool(args.judge_diagnostic)
+    if args.cost_profile == "cheap":
+        effective_executor_model = CHEAP_EXECUTOR_MODEL
+        effective_judge_model = CHEAP_EXECUTOR_MODEL
+        effective_backend = "anthropic"
+        effective_judge_diagnostic = False
+
     cfg = load_config()
     curriculum_planner = create_curriculum_planner(
         mode=args.curriculum_mode,
@@ -162,8 +180,8 @@ def main() -> int:
     )
     print(
         f"  cryptic_errors={args.cryptic_errors}  semi_helpful={args.semi_helpful_errors}  mixed_errors={args.mixed_errors}  "
-        f"sessions={args.sessions}  executor_model={args.model_executor} judge_model={args.model_judge} "
-        f"backend={args.llm_backend} critic=executor(locked)"
+        f"sessions={args.sessions}  executor_model={effective_executor_model} judge_model={effective_judge_model} "
+        f"backend={effective_backend} cost_profile={args.cost_profile} critic=executor(locked)"
     )
     print(
         f"  docs mode={args.doc_mode} retrieval={args.doc_retrieval} "
@@ -219,9 +237,9 @@ def main() -> int:
             max_steps=args.max_steps,
             domain=schedule.domain,
             learning_mode=args.learning_mode,
-            model_executor=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
-            model_critic=args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL,
-            model_judge=args.model_judge.strip() if args.model_judge else (args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL),
+            model_executor=effective_executor_model,
+            model_critic=effective_executor_model,
+            model_judge=effective_judge_model,
             posttask_mode=args.posttask_mode,
             posttask_learn=not bool(args.no_posttask_learn),
             self_edit_mode=bool(args.self_edit_mode),
@@ -242,11 +260,11 @@ def main() -> int:
             doc_retriever_model=str(args.doc_retriever_model).strip() or None,
             judge_docs=args.judge_docs == "on",
             executor_docs=args.executor_docs == "on",
-            judge_diagnostic=bool(args.judge_diagnostic),
+            judge_diagnostic=effective_judge_diagnostic,
             contract_gap_retry=bool(args.contract_gap_retry),
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
             structured_lessons_required=bool(args.structured_lessons_required),
-            llm_backend=args.llm_backend,
+            llm_backend=effective_backend,
             benchmark_deterministic=bool(args.benchmark_deterministic),
             benchmark_promoted_only=bool(args.benchmark_promoted_only),
             benchmark_placebo=bool(args.benchmark_placebo),
