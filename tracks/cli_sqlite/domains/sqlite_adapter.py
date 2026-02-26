@@ -1,6 +1,7 @@
 """SQLite domain adapter — wraps existing executor.py into the DomainAdapter protocol."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -69,6 +70,89 @@ def _get_tool_description(canonical: str, opaque: bool) -> str:
     if alias is None:
         return ""
     return alias.opaque_description if opaque else alias.canonical_description
+
+
+def _sqlite_gap_fix_recipe(gap: dict[str, Any]) -> str:
+    """Build one sqlite-specific deterministic repair recipe from one gap row.
+
+    Intent:
+    - Keep this domain logic in the adapter, not in the core orchestrator.
+    - Return command-oriented hints that weaker models can execute directly.
+    """
+    reason = str(gap.get("reason_code", "")).strip()
+    detail = str(gap.get("detail", "")).strip()
+    query_id = str(gap.get("query_id", "")).strip()
+    query_sql = str(gap.get("query_sql", "")).strip()
+    expected_rows = gap.get("expected_rows", [])
+    expected_suffix = (
+        f" expected_rows={json.dumps(expected_rows, ensure_ascii=True)}"
+        if isinstance(expected_rows, list)
+        else ""
+    )
+
+    if reason == "required_query_mismatch" and query_id == "reject_count":
+        return (
+            "Deterministic sqlite recipe (reject_count): run_sqlite(sql=\"PRAGMA table_info(rejects);\") "
+            "then run_sqlite(sql=\""
+            "INSERT INTO rejects(event_id, reason) "
+            "SELECT fs.event_id, 'duplicate_event' "
+            "FROM fixture_seed fs "
+            "JOIN (SELECT event_id FROM fixture_seed GROUP BY event_id HAVING COUNT(*) > 1) dup "
+            "ON dup.event_id = fs.event_id "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id AND r.reason = 'duplicate_event'"
+            ");\"). "
+            f"Then run validator query exactly: {query_sql}{expected_suffix}"
+        )
+    if reason == "required_query_mismatch" and query_id in {"ledger_aggregate", "ledger_count"}:
+        return (
+            "Deterministic sqlite recipe (ledger): run_sqlite(sql=\""
+            "INSERT INTO ledger(event_id, category, amount, batch_id) "
+            "SELECT fs.event_id, fs.category, fs.amount, fs.batch_id "
+            "FROM fixture_seed fs "
+            "WHERE NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id);"
+            "\"). "
+            f"Then run validator query exactly: {query_sql}{expected_suffix}"
+        )
+    if reason == "missing_required_pattern" and "insert\\s+into\\s+ledger" in detail.lower():
+        return (
+            "Deterministic sqlite recipe: use explicit ledger insert shape "
+            "run_sqlite(sql=\"INSERT INTO ledger(event_id, category, amount, batch_id) "
+            "SELECT fs.event_id, fs.category, fs.amount, fs.batch_id "
+            "FROM fixture_seed fs "
+            "WHERE NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id);\")."
+        )
+    if reason == "missing_required_pattern" and "insert\\s+into\\s+rejects" in detail.lower():
+        return (
+            "Deterministic sqlite recipe: use rejects schema-safe insert "
+            "run_sqlite(sql=\"INSERT INTO rejects(event_id, reason) "
+            "SELECT fs.event_id, 'duplicate_event' "
+            "FROM fixture_seed fs "
+            "JOIN (SELECT event_id FROM fixture_seed GROUP BY event_id HAVING COUNT(*) > 1) dup "
+            "ON dup.event_id = fs.event_id "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id AND r.reason = 'duplicate_event'"
+            ");\")."
+        )
+    if reason == "too_many_errors":
+        return (
+            "Deterministic sqlite recipe (error budget): first run schema probe "
+            "run_sqlite(sql=\"PRAGMA table_info(ledger); PRAGMA table_info(rejects);\") "
+            "then execute one mutating SQL block only, then validator SELECT queries."
+        )
+    if reason == "matched_forbidden_pattern":
+        return (
+            "Deterministic sqlite recipe: avoid forbidden SQL patterns entirely. "
+            "Use INSERT/UPDATE/SELECT only and verify required queries before stop."
+        )
+
+    # Adapter fallback is intentionally lightweight; core orchestrator still has
+    # generic reason_code/gap_type fallback logic for any domain.
+    if query_sql:
+        return f"Run validator query and reconcile data exactly: {query_sql}{expected_suffix}"
+    if detail:
+        return f"Resolve sqlite gap by fixing: {detail}"
+    return "Resolve sqlite contract gap before stopping."
 
 
 class SqliteAdapter:
@@ -194,3 +278,34 @@ class SqliteAdapter:
             )
         ]
         return [doc for doc in docs if doc.path.exists()]
+
+    def deterministic_gap_recipes(
+        self,
+        *,
+        task_id: str,
+        unresolved_gaps: list[dict[str, Any]],
+        max_items: int = 3,
+    ) -> list[str]:
+        """Optional adapter hook: domain-specific deterministic gap recipes.
+
+        This method is consumed via dynamic lookup by the orchestrator so other
+        domains can ignore it. We keep it side-effect free and deterministic.
+        """
+        del task_id
+        recipes: list[str] = []
+        dedup: set[str] = set()
+        for row in unresolved_gaps:
+            if not isinstance(row, dict):
+                continue
+            recipe = _sqlite_gap_fix_recipe(row)
+            text = " ".join(str(recipe).split()).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in dedup:
+                continue
+            dedup.add(key)
+            recipes.append(text)
+            if len(recipes) >= max(1, int(max_items)):
+                break
+        return recipes

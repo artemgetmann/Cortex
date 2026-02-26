@@ -115,6 +115,30 @@ class _RetryAdapter:
     def docs_manifest(self) -> list[Any]:
         return []
 
+    def deterministic_gap_recipes(
+        self,
+        *,
+        task_id: str,
+        unresolved_gaps: list[dict[str, Any]],
+        max_items: int = 3,
+    ) -> list[str]:
+        del task_id
+        # Keep this fake adapter explicit: tests can verify core wiring while
+        # domain-specific recipe content lives outside the orchestrator.
+        rows: list[str] = []
+        for gap in unresolved_gaps:
+            if not isinstance(gap, dict):
+                continue
+            if str(gap.get("reason_code", "")).strip() != "required_query_mismatch":
+                continue
+            sql = str(gap.get("query_sql", "")).strip()
+            if not sql:
+                continue
+            rows.append(f"run_sqlite(sql=\"{sql}\")")
+            if len(rows) >= max(1, int(max_items)):
+                break
+        return rows
+
 
 class _SequencedRetryAdapter(_RetryAdapter):
     def __init__(self, results: list[ToolResult]) -> None:
@@ -499,6 +523,7 @@ def test_contract_gap_retry_counts_gap_lesson_activations(
 
 def test_deterministic_gap_fix_recipes_sqlite_emit_command_recipe() -> None:
     recipes = agent_cli._deterministic_gap_fix_recipes(
+        adapter=_RetryAdapter(),
         domain="sqlite",
         task_id="retry_task",
         unresolved_gaps=[
