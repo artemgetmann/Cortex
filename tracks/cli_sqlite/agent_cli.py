@@ -2037,6 +2037,20 @@ def _format_legacy_placebo_lesson_block(
     return "\n".join(lines)
 
 
+def _has_promoted_v2_lesson_for_task(*, path: Path, task_id: str, domain: str) -> bool:
+    normalized_domain = str(domain).strip().lower()
+    for record in load_lesson_records(path):
+        if str(getattr(record, "status", "")).strip().lower() != "promoted":
+            continue
+        if str(getattr(record, "task_id", "")).strip() != task_id:
+            continue
+        record_domain = str(getattr(record, "domain", "")).strip().lower()
+        if record_domain and record_domain != normalized_domain:
+            continue
+        return True
+    return False
+
+
 def _select_high_signal_prerun_matches(
     *,
     matches: list[Any],
@@ -2736,6 +2750,18 @@ def _run_cli_agent_impl(
         if benchmark_promoted_only
         else DEFAULT_RUNTIME_CANDIDATE_POLICY
     )
+    runtime_candidate_policy_effective = runtime_candidate_policy
+    promoted_warmup_fallback = False
+    if runtime_candidate_policy == CANDIDATE_POLICY_PROMOTED_ONLY and not _has_promoted_v2_lesson_for_task(
+        path=LESSONS_V2_PATH,
+        task_id=task_id,
+        domain=domain,
+    ):
+        # Cold-start guard: promoted-only retrieval has no signal until at least
+        # one promoted lesson exists. Fall back to anchored retrieval to bootstrap.
+        runtime_candidate_policy_effective = DEFAULT_RUNTIME_CANDIDATE_POLICY
+        promoted_warmup_fallback = True
+    legacy_lessons_enabled = not benchmark_promoted_only
     runtime_temperature: float | None = 0.0 if benchmark_deterministic else None
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
@@ -2812,14 +2838,17 @@ def _run_cli_agent_impl(
         )
         skills_text = manifest_summaries_text(routed_entries)
     domain_keywords = adapter.quality_keywords()
-    lessons_text, lessons_loaded = load_relevant_lessons(
-        path=LESSONS_PATH,
-        task_id=task_id,
-        task=task_text,
-        max_lessons=12,
-        max_sessions=8,
-        domain_keywords=domain_keywords,
-    )
+    if legacy_lessons_enabled:
+        lessons_text, lessons_loaded = load_relevant_lessons(
+            path=LESSONS_PATH,
+            task_id=task_id,
+            task=task_text,
+            max_lessons=12,
+            max_sessions=8,
+            domain_keywords=domain_keywords,
+        )
+    else:
+        lessons_text, lessons_loaded = "No prior lessons loaded.", 0
     # Keep V2 backward-compatible with legacy lessons by migrating legacy rows
     # into the v2 store before retrieval. The migration is idempotent.
     migrate_legacy_lessons(legacy_path=LESSONS_PATH, v2_path=LESSONS_V2_PATH)
@@ -2829,7 +2858,7 @@ def _run_cli_agent_impl(
         domain=domain,
         task_text=task_text,
         max_results=8,
-        candidate_policy=runtime_candidate_policy,
+        candidate_policy=runtime_candidate_policy_effective,
     )
     prerun_v2_matches = _select_high_signal_prerun_matches(
         matches=prerun_v2_matches,
@@ -2849,7 +2878,7 @@ def _run_cli_agent_impl(
         path=LESSONS_PATH,
         task_id=task_id,
         domain_keywords=domain_keywords,
-    )
+    ) if legacy_lessons_enabled else []
     if benchmark_placebo and lessons_loaded > 0:
         lessons_text = _format_legacy_placebo_lesson_block(
             lessons=loaded_lesson_objects,
@@ -3062,6 +3091,9 @@ def _run_cli_agent_impl(
         "benchmark_promoted_only": bool(benchmark_promoted_only),
         "benchmark_placebo": bool(benchmark_placebo),
         "runtime_candidate_policy": runtime_candidate_policy,
+        "runtime_candidate_policy_effective": runtime_candidate_policy_effective,
+        "runtime_promoted_warmup_fallback": bool(promoted_warmup_fallback),
+        "legacy_lessons_enabled": bool(legacy_lessons_enabled),
         "runtime_temperature": runtime_temperature,
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
@@ -3355,7 +3387,7 @@ def _run_cli_agent_impl(
             transfer_max_results=transfer_retrieval_max_results,
             transfer_score_weight=transfer_retrieval_score_weight,
             unresolved_gaps=unresolved_gaps,
-            candidate_policy=runtime_candidate_policy,
+            candidate_policy=runtime_candidate_policy_effective,
         )
         gap_hints: list[str] = []
         for match in gap_matches:
@@ -3749,7 +3781,7 @@ def _run_cli_agent_impl(
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
                     unresolved_gaps=latest_unresolved_gaps,
-                    candidate_policy=runtime_candidate_policy,
+                    candidate_policy=runtime_candidate_policy_effective,
                 )
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
