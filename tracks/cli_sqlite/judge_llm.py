@@ -10,6 +10,7 @@ tokens). If it fails or doesn't exist, use LLM judge as primary signal.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -52,15 +53,58 @@ def _extract_json_object(raw: str) -> dict[str, Any] | None:
     text = raw.strip()
     if not text:
         return None
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
     try:
-        parsed = json.loads(text[start : end + 1])
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
     except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        pass
+
+    # Prefer fenced JSON blocks when present.
+    for fenced in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.IGNORECASE | re.DOTALL):
+        try:
+            parsed = json.loads(fenced)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    # Fallback: scan for the first balanced JSON object and parse candidates.
+    n = len(text)
+    for start in (i for i, ch in enumerate(text) if ch == "{"):
+        depth = 0
+        in_string = False
+        escape = False
+        for idx in range(start, n):
+            ch = text[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "{":
+                depth += 1
+                continue
+            if ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : idx + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break
+                    if isinstance(parsed, dict):
+                        return parsed
+                    break
+    return None
 
 
 def llm_judge(

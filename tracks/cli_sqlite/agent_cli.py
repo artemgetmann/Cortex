@@ -1948,7 +1948,11 @@ def _openai_responses_output_to_text(payload: dict[str, Any]) -> str:
                     continue
                 block_type = str(block.get("type", "")).strip().lower()
                 if block_type in {"output_text", "text"}:
-                    text = str(block.get("text", "")).strip()
+                    text_value = block.get("text", "")
+                    if isinstance(text_value, dict):
+                        text = str(text_value.get("value", "")).strip()
+                    else:
+                        text = str(text_value).strip()
                     if text:
                         parts.append(text)
         elif item_type in {"output_text", "text"}:
@@ -1981,6 +1985,14 @@ def _openai_responses_request(
         base_payload["tool_choice"] = "auto"
     if int(max_tokens) > 0:
         base_payload["max_output_tokens"] = int(max_tokens)
+    reasoning_effort = str(os.getenv("OPENAI_RESPONSES_REASONING_EFFORT", "low")).strip().lower()
+    if reasoning_effort in {"low", "medium", "high"}:
+        # GPT-5 models can consume the full token budget in hidden reasoning
+        # unless effort is reduced. Default to low for tool-loop determinism.
+        base_payload["reasoning"] = {"effort": reasoning_effort}
+    text_verbosity = str(os.getenv("OPENAI_RESPONSES_TEXT_VERBOSITY", "low")).strip().lower()
+    if text_verbosity in {"low", "medium", "high"}:
+        base_payload["text"] = {"verbosity": text_verbosity}
     if temperature is not None:
         base_payload["temperature"] = float(temperature)
 
@@ -1990,43 +2002,53 @@ def _openai_responses_request(
         temperature_options = [float(temperature), None]
 
     last_error: Exception | None = None
-    for maybe_temperature in temperature_options:
-        payload = dict(base_payload)
-        if maybe_temperature is None:
-            payload.pop("temperature", None)
-        else:
-            payload["temperature"] = maybe_temperature
-        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        request = urllib.request.Request(url=url, data=body, method="POST")
-        request.add_header("Authorization", f"Bearer {api_key}")
-        request.add_header("Content-Type", "application/json")
-        request.add_header("Accept", "application/json")
-        try:
-            with urllib.request.urlopen(request, timeout=max(15, int(os.getenv("OPENAI_TIMEOUT_S", "120")))) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            last_error = RuntimeError(
-                f"OpenAI responses request failed ({exc.code}): {_clip_text(error_body, max_chars=800)}"
-            )
-            continue
-        except urllib.error.URLError as exc:
-            last_error = RuntimeError(f"OpenAI responses request error: {type(exc).__name__}: {exc}")
-            continue
-        except Exception as exc:
-            last_error = RuntimeError(f"OpenAI responses request failed: {type(exc).__name__}: {exc}")
-            continue
-        try:
-            payload_obj = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"OpenAI responses returned invalid JSON: {_clip_text(raw, max_chars=800)}"
-            ) from exc
-        if not isinstance(payload_obj, dict):
-            raise RuntimeError(
-                f"OpenAI responses returned non-object payload: {_clip_text(raw, max_chars=800)}"
-            )
-        return payload_obj
+    tuning_attempts = [
+        (True, True),
+        (True, False),
+        (False, False),
+    ]
+    for include_reasoning, include_text in tuning_attempts:
+        for maybe_temperature in temperature_options:
+            payload = dict(base_payload)
+            if maybe_temperature is None:
+                payload.pop("temperature", None)
+            else:
+                payload["temperature"] = maybe_temperature
+            if not include_reasoning:
+                payload.pop("reasoning", None)
+            if not include_text:
+                payload.pop("text", None)
+            body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+            request = urllib.request.Request(url=url, data=body, method="POST")
+            request.add_header("Authorization", f"Bearer {api_key}")
+            request.add_header("Content-Type", "application/json")
+            request.add_header("Accept", "application/json")
+            try:
+                with urllib.request.urlopen(request, timeout=max(15, int(os.getenv("OPENAI_TIMEOUT_S", "120")))) as response:
+                    raw = response.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                last_error = RuntimeError(
+                    f"OpenAI responses request failed ({exc.code}): {_clip_text(error_body, max_chars=800)}"
+                )
+                continue
+            except urllib.error.URLError as exc:
+                last_error = RuntimeError(f"OpenAI responses request error: {type(exc).__name__}: {exc}")
+                continue
+            except Exception as exc:
+                last_error = RuntimeError(f"OpenAI responses request failed: {type(exc).__name__}: {exc}")
+                continue
+            try:
+                payload_obj = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"OpenAI responses returned invalid JSON: {_clip_text(raw, max_chars=800)}"
+                ) from exc
+            if not isinstance(payload_obj, dict):
+                raise RuntimeError(
+                    f"OpenAI responses returned non-object payload: {_clip_text(raw, max_chars=800)}"
+                )
+            return payload_obj
     if last_error is not None:
         raise last_error
     raise RuntimeError("OpenAI responses request failed with unknown error.")
