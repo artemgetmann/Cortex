@@ -34,8 +34,19 @@ class _FakeResponse:
 
 
 class _FakeRetrievalMatch:
-    def __init__(self, *, lesson_id: str, rule_text: str, lane: str = "strict") -> None:
-        self.lesson = SimpleNamespace(lesson_id=lesson_id, rule_text=rule_text)
+    def __init__(
+        self,
+        *,
+        lesson_id: str,
+        rule_text: str,
+        lane: str = "strict",
+        gap_signature: str = "",
+    ) -> None:
+        self.lesson = SimpleNamespace(
+            lesson_id=lesson_id,
+            rule_text=rule_text,
+            gap_signature=gap_signature,
+        )
         self.lane = lane
 
 
@@ -489,16 +500,17 @@ def test_contract_gap_retry_counts_gap_lesson_activations(
         agent_cli,
         "retrieve_on_error",
         lambda **kwargs: (
-            [
-                _FakeRetrievalMatch(
-                    lesson_id="lsn_gap_1",
-                    rule_text="When contract gap remains, run one corrective write then verify output.",
-                    lane="strict",
-                )
-            ],
-            [],
-        ),
-    )
+                [
+                    _FakeRetrievalMatch(
+                        lesson_id="lsn_gap_1",
+                        rule_text="When contract gap remains, run one corrective write then verify output.",
+                        lane="strict",
+                        gap_signature="missing_required_event_pattern|required_event_pattern|tool=run_sqlite",
+                    )
+                ],
+                [],
+            ),
+        )
     cfg = SimpleNamespace(anthropic_api_key="test-key")
 
     result = agent_cli.run_cli_agent(
@@ -604,3 +616,63 @@ def test_contract_gap_retry_injects_deterministic_recipe_hints(
     assert adapter.execute_calls[-1] == {"sql": "SELECT 1;"}
     events = read_events(sessions_root / "session-607" / "events.jsonl")
     assert any(str(event.get("tool", "")) == "contract_gap_retry" for event in events)
+
+
+def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:
+    unresolved = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+        }
+    ]
+    allowed_tools = {"run_sqlite", "read_skill", "show_fixture"}
+
+    missing_trigger = SimpleNamespace(
+        trigger_gap_signature="",
+        action_template='run_sqlite(sql="SELECT 1;")',
+        expected_evidence='required_query:reject_count == [["1"]]',
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok, reason, payload = agent_cli._validate_structured_model_lesson(
+        lesson=missing_trigger,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok is False
+    assert reason == "missing_trigger_gap_signature"
+    assert payload == {}
+
+    invalid_action = SimpleNamespace(
+        trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+        action_template='rm_rf(sql="DROP TABLE ledger;")',
+        expected_evidence='required_query:reject_count == [["1"]]',
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok2, reason2, payload2 = agent_cli._validate_structured_model_lesson(
+        lesson=invalid_action,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok2 is False
+    assert reason2 == "invalid_action_template_tool"
+    assert payload2 == {}
+
+    valid = SimpleNamespace(
+        trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+        action_template='run_sqlite(sql="SELECT COUNT(*) FROM rejects;")',
+        expected_evidence='required_query:reject_count == [["1"]]',
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok3, reason3, payload3 = agent_cli._validate_structured_model_lesson(
+        lesson=valid,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok3 is True
+    assert reason3 == ""
+    assert payload3["trigger_gap_signature"] == "required_query_mismatch|required_query|reject_count"
+    assert payload3["action_template"].startswith("run_sqlite(")

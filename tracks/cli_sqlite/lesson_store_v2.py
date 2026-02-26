@@ -92,6 +92,8 @@ class LessonRecord:
     reason_code: str
     gap_type: str
     gap_signature: str
+    action_template: str
+    expected_evidence: str
     source_session_ids: tuple[int, ...]
     reliability: float
     retrieval_count: int
@@ -120,6 +122,8 @@ class LessonRecord:
         reason_code: str = "",
         gap_type: str = "",
         gap_signature: str = "",
+        action_template: str = "",
+        expected_evidence: str = "",
     ) -> "LessonRecord":
         normalized = normalize_rule_text(rule_text)
         fingerprints = tuple(sorted({str(fp).strip() for fp in trigger_fingerprints if str(fp).strip()}))
@@ -143,6 +147,8 @@ class LessonRecord:
             reason_code=str(reason_code).strip(),
             gap_type=str(gap_type).strip(),
             gap_signature=str(gap_signature).strip(),
+            action_template=" ".join(str(action_template).split())[:420],
+            expected_evidence=" ".join(str(expected_evidence).split())[:420],
             source_session_ids=(int(session_id),) if int(session_id) > 0 else (),
             reliability=0.5,
             retrieval_count=0,
@@ -198,6 +204,8 @@ class LessonRecord:
                 reason_code=str(row.get("reason_code", "")).strip(),
                 gap_type=str(row.get("gap_type", "")).strip(),
                 gap_signature=str(row.get("gap_signature", "")).strip(),
+                action_template=" ".join(str(row.get("action_template", "")).split())[:420],
+                expected_evidence=" ".join(str(row.get("expected_evidence", "")).split())[:420],
                 source_session_ids=source_ids,
                 reliability=_clamp(float(row.get("reliability", 0.5) or 0.5), 0.0, 1.0),
                 retrieval_count=max(0, int(row.get("retrieval_count", 0) or 0)),
@@ -243,6 +251,8 @@ class LessonRecord:
             reason_code="",
             gap_type="",
             gap_signature="",
+            action_template="",
+            expected_evidence="",
             source_session_ids=(session_id,) if session_id > 0 else (),
             reliability=reliability,
             retrieval_count=0,
@@ -289,6 +299,8 @@ class LessonRecord:
             "reason_code": self.reason_code,
             "gap_type": self.gap_type,
             "gap_signature": self.gap_signature,
+            "action_template": self.action_template,
+            "expected_evidence": self.expected_evidence,
             "source_session_ids": list(self.source_session_ids),
             "reliability": round(float(self.reliability), 4),
             "retrieval_count": int(self.retrieval_count),
@@ -443,6 +455,8 @@ def _merge_records(existing: LessonRecord, incoming: LessonRecord) -> LessonReco
         reason_code=existing.reason_code or incoming.reason_code,
         gap_type=existing.gap_type or incoming.gap_type,
         gap_signature=existing.gap_signature or incoming.gap_signature,
+        action_template=existing.action_template or incoming.action_template,
+        expected_evidence=existing.expected_evidence or incoming.expected_evidence,
         source_session_ids=source_ids,
         reliability=_clamp(reliability, 0.0, 1.0),
         retrieval_count=max(existing.retrieval_count, incoming.retrieval_count),

@@ -67,6 +67,11 @@ class Lesson:
     eval_score: float
     skill_refs_used: list[str]
     timestamp: str
+    trigger_gap_signature: str = ""
+    action_template: str = ""
+    expected_evidence: str = ""
+    reason_code: str = ""
+    gap_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +85,11 @@ class Lesson:
             "eval_score": self.eval_score,
             "skill_refs_used": self.skill_refs_used,
             "timestamp": self.timestamp,
+            "trigger_gap_signature": self.trigger_gap_signature,
+            "action_template": self.action_template,
+            "expected_evidence": self.expected_evidence,
+            "reason_code": self.reason_code,
+            "gap_type": self.gap_type,
         }
 
 
@@ -135,6 +145,11 @@ def load_lessons(path: Path) -> list[Lesson]:
                 eval_score=eval_score,
                 skill_refs_used=refs,
                 timestamp=str(row.get("timestamp", "")) or datetime.now(timezone.utc).isoformat(),
+                trigger_gap_signature=str(row.get("trigger_gap_signature", "")).strip(),
+                action_template=str(row.get("action_template", "")).strip(),
+                expected_evidence=str(row.get("expected_evidence", "")).strip(),
+                reason_code=str(row.get("reason_code", "")).strip(),
+                gap_type=str(row.get("gap_type", "")).strip(),
             )
         )
     return lessons
@@ -515,6 +530,8 @@ def generate_lessons(
     critic_context: str = "",
     domain_keywords: re.Pattern[str] | None = None,
     temperature: float | None = None,
+    unresolved_gaps: list[dict[str, Any]] | None = None,
+    structured_fields_required: bool = False,
 ) -> LessonGenerationResult:
     mode = _normalize_learning_mode(learning_mode)
     passed = bool(eval_result.get("passed", False))
@@ -523,34 +540,69 @@ def generate_lessons(
     except (TypeError, ValueError):
         score = 0.0
 
+    gap_rows = [row for row in (unresolved_gaps or []) if isinstance(row, dict)]
     if mode == "strict":
         # Strict critic contract: schema-only instructions + retrieved context.
         # No domain-specific exemplars here by design.
         if passed and score >= 1.0:
-            system = (
-                "You are a post-run learning critic analyzing a SUCCESSFUL CLI run.\n"
-                "Return STRICT JSON array only. Each item must match:\n"
-                '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
-                "Rules:\n"
-                "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
-                "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
-                "- Include exact command/operator/function tokens that actually appeared.\n"
-                "- Reject generic advice and motivational text.\n"
-                "- 2 to 5 lessons total.\n"
-            )
+            if structured_fields_required:
+                system = (
+                    "You are a post-run learning critic analyzing a SUCCESSFUL CLI run.\n"
+                    "Return STRICT JSON array only. Each item must match:\n"
+                    '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2],'
+                    '"trigger_gap_signature":"...","reason_code":"...","gap_type":"...",'
+                    '"action_template":"...","expected_evidence":"..."}\n'
+                    "Rules:\n"
+                    "- Use only evidence from EVENTS_TAIL, EVAL, UNRESOLVED_GAPS, and RETRIEVED_CONTEXT.\n"
+                    "- trigger_gap_signature MUST match one row in UNRESOLVED_GAPS when gaps are present.\n"
+                    "- action_template MUST be executable and tool-shaped (example: run_sqlite(sql=\"...\")).\n"
+                    "- expected_evidence MUST be concrete and verifiable (query rows, file pattern, or exact line).\n"
+                    "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
+                    "- Reject generic advice and motivational text.\n"
+                    "- 2 to 5 lessons total.\n"
+                )
+            else:
+                system = (
+                    "You are a post-run learning critic analyzing a SUCCESSFUL CLI run.\n"
+                    "Return STRICT JSON array only. Each item must match:\n"
+                    '{"category":"shortcut|domain_detail","lesson":"...","evidence_steps":[1,2]}\n'
+                    "Rules:\n"
+                    "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
+                    "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
+                    "- Include exact command/operator/function tokens that actually appeared.\n"
+                    "- Reject generic advice and motivational text.\n"
+                    "- 2 to 5 lessons total.\n"
+                )
         else:
-            system = (
-                "You are a post-run learning critic analyzing a FAILED or PARTIAL CLI run.\n"
-                "Return STRICT JSON array only. Each item must match:\n"
-                '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
-                "Rules:\n"
-                "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
-                "- Prefer category='negative' for correction rules with explicit contrast.\n"
-                "- For category='negative', format as:\n"
-                "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
-                "- Every lesson must include the concrete correction, not generic process advice.\n"
-                "- 2 to 5 lessons total.\n"
-            )
+            if structured_fields_required:
+                system = (
+                    "You are a post-run learning critic analyzing a FAILED or PARTIAL CLI run.\n"
+                    "Return STRICT JSON array only. Each item must match:\n"
+                    '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2],'
+                    '"trigger_gap_signature":"...","reason_code":"...","gap_type":"...",'
+                    '"action_template":"...","expected_evidence":"..."}\n'
+                    "Rules:\n"
+                    "- Use only evidence from EVENTS_TAIL, EVAL, UNRESOLVED_GAPS, and RETRIEVED_CONTEXT.\n"
+                    "- trigger_gap_signature MUST match one row in UNRESOLVED_GAPS when gaps are present.\n"
+                    "- Prefer category='negative' for correction rules with explicit contrast.\n"
+                    "- action_template MUST be executable and tool-shaped (example: run_sqlite(sql=\"...\")).\n"
+                    "- expected_evidence MUST be concrete and verifiable (query rows, file pattern, or exact line).\n"
+                    "- Every lesson must include the concrete correction, not generic process advice.\n"
+                    "- 2 to 5 lessons total.\n"
+                )
+            else:
+                system = (
+                    "You are a post-run learning critic analyzing a FAILED or PARTIAL CLI run.\n"
+                    "Return STRICT JSON array only. Each item must match:\n"
+                    '{"category":"mistake|insight|shortcut|domain_detail|negative","lesson":"...","evidence_steps":[1,2]}\n'
+                    "Rules:\n"
+                    "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
+                    "- Prefer category='negative' for correction rules with explicit contrast.\n"
+                    "- For category='negative', format as:\n"
+                    "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
+                    "- Every lesson must include the concrete correction, not generic process advice.\n"
+                    "- 2 to 5 lessons total.\n"
+                )
     else:
         # Legacy critic contract preserves the existing domain-tuned guidance.
         # This keeps demo baselines and historical behavior stable.
@@ -601,6 +653,7 @@ def generate_lessons(
         f"TASK:\n{task}\n\n"
         f"EVAL:\n{json.dumps(eval_result, ensure_ascii=True)}\n\n"
         f"EVENTS_TAIL:\n{json.dumps(events_tail, ensure_ascii=True)}\n\n"
+        f"UNRESOLVED_GAPS:\n{json.dumps(gap_rows, ensure_ascii=True)}\n\n"
         f"RETRIEVED_CONTEXT:\n{critic_context or '(none)'}\n\n"
         f"SKILLS_USED:\n{json.dumps(skill_refs_used, ensure_ascii=True)}"
     )
@@ -650,6 +703,11 @@ def generate_lessons(
                 eval_score=score,
                 skill_refs_used=skill_refs_used[:8],
                 timestamp=now,
+                trigger_gap_signature=str(item.get("trigger_gap_signature", "")).strip(),
+                action_template=" ".join(str(item.get("action_template", "")).split()),
+                expected_evidence=" ".join(str(item.get("expected_evidence", "")).split()),
+                reason_code=str(item.get("reason_code", "")).strip(),
+                gap_type=str(item.get("gap_type", "")).strip(),
             )
         )
     filtered_lessons = filter_lessons(raw_lessons, domain_keywords=domain_keywords)

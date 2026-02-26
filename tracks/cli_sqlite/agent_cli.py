@@ -814,6 +814,98 @@ def _deterministic_gap_fix_recipes(
     return recipes
 
 
+def _parse_action_tool_name(action_template: str) -> str:
+    text = str(action_template or "").strip()
+    if not text:
+        return ""
+    match = re.match(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", text)
+    if not match:
+        return ""
+    return str(match.group(1)).strip()
+
+
+def _allowed_action_tools_for_adapter(*, adapter: DomainAdapter, opaque_tools: bool) -> set[str]:
+    alias_map = adapter.build_alias_map(opaque=opaque_tools)
+    allowed = {
+        str(adapter.executor_tool_name).strip(),
+        "read_skill",
+        "show_fixture",
+    }
+    for api_name, canonical in alias_map.items():
+        api_clean = str(api_name).strip()
+        canonical_clean = str(canonical).strip()
+        if api_clean:
+            allowed.add(api_clean)
+        if canonical_clean:
+            allowed.add(canonical_clean)
+    return {value for value in allowed if value}
+
+
+def _validate_structured_model_lesson(
+    *,
+    lesson: Any,
+    unresolved_gap_rows: list[dict[str, Any]],
+    allowed_action_tools: set[str],
+) -> tuple[bool, str, dict[str, str]]:
+    """
+    Validate structured lesson fields emitted by executor self-reflection.
+
+    Enforced invariants:
+    - trigger must bind to current unresolved gaps
+    - action must be tool-shaped and allowed by domain adapter
+    - expected evidence must be present for deterministic post-run checks
+    """
+    trigger_gap_signature = str(getattr(lesson, "trigger_gap_signature", "")).strip()
+    reason_code = str(getattr(lesson, "reason_code", "")).strip()
+    gap_type = str(getattr(lesson, "gap_type", "")).strip()
+    action_template = " ".join(str(getattr(lesson, "action_template", "")).split()).strip()
+    expected_evidence = " ".join(str(getattr(lesson, "expected_evidence", "")).split()).strip()
+    unresolved_by_signature = {
+        str(row.get("gap_signature", "")).strip(): row
+        for row in unresolved_gap_rows
+        if str(row.get("gap_signature", "")).strip()
+    }
+    unresolved_by_reason_type = {
+        (str(row.get("reason_code", "")).strip(), str(row.get("gap_type", "")).strip()): row
+        for row in unresolved_gap_rows
+        if str(row.get("reason_code", "")).strip() and str(row.get("gap_type", "")).strip()
+    }
+
+    if not trigger_gap_signature:
+        return False, "missing_trigger_gap_signature", {}
+    matched_row = unresolved_by_signature.get(trigger_gap_signature)
+    if matched_row is None:
+        if reason_code and gap_type:
+            matched_row = unresolved_by_reason_type.get((reason_code, gap_type))
+        if matched_row is None:
+            return False, "unbound_trigger_gap_signature", {}
+
+    if not action_template:
+        return False, "missing_action_template", {}
+    tool_name = _parse_action_tool_name(action_template)
+    if not tool_name:
+        return False, "invalid_action_template_shape", {}
+    if tool_name not in allowed_action_tools:
+        return False, "invalid_action_template_tool", {}
+
+    if not expected_evidence:
+        return False, "missing_expected_evidence", {}
+
+    resolved_reason = str(reason_code or matched_row.get("reason_code", "")).strip()
+    resolved_gap_type = str(gap_type or matched_row.get("gap_type", "")).strip()
+    resolved_signature = str(trigger_gap_signature or matched_row.get("gap_signature", "")).strip()
+    if not (resolved_reason and resolved_gap_type and resolved_signature):
+        return False, "missing_structured_gap_fields", {}
+
+    return True, "", {
+        "trigger_gap_signature": resolved_signature,
+        "reason_code": resolved_reason,
+        "gap_type": resolved_gap_type,
+        "action_template": action_template,
+        "expected_evidence": expected_evidence,
+    }
+
+
 def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
     """
     Parse explicit `Print exactly ... verification line(s)` requirements from task text.
@@ -3104,6 +3196,11 @@ def _serialize_lesson(lesson: Any) -> dict[str, Any]:
         "evidence_steps": getattr(lesson, "evidence_steps", []),
         "eval_score": getattr(lesson, "eval_score", 0.0),
         "eval_passed": getattr(lesson, "eval_passed", False),
+        "trigger_gap_signature": getattr(lesson, "trigger_gap_signature", ""),
+        "action_template": getattr(lesson, "action_template", ""),
+        "expected_evidence": getattr(lesson, "expected_evidence", ""),
+        "reason_code": getattr(lesson, "reason_code", ""),
+        "gap_type": getattr(lesson, "gap_type", ""),
     }
 
 
@@ -3982,6 +4079,15 @@ def _run_cli_agent_impl(
         "v2_reflection_prompts": 0,
         "v2_reflection_reasons": [],
         "v2_structured_fallback_lessons": 0,
+        "v2_schema_rejection_counts": {
+            "missing_trigger_gap_signature": 0,
+            "unbound_trigger_gap_signature": 0,
+            "missing_action_template": 0,
+            "invalid_action_template_shape": 0,
+            "invalid_action_template_tool": 0,
+            "missing_expected_evidence": 0,
+            "missing_structured_gap_fields": 0,
+        },
         "v2_dependency_fallback_checks": 0,
         "v2_promoted": 0,
         "v2_suppressed": 0,
@@ -4273,6 +4379,24 @@ def _run_cli_agent_impl(
             unresolved_gaps=unresolved_gaps,
             candidate_policy=runtime_candidate_policy_effective,
         )
+        if structured_lessons_required and latest_unresolved_gaps:
+            unresolved_signatures = {
+                str(row.get("gap_signature", "")).strip()
+                for row in latest_unresolved_gaps
+                if str(row.get("gap_signature", "")).strip()
+            }
+            if unresolved_signatures:
+                before_count = len(gap_matches)
+                gap_matches = [
+                    match
+                    for match in gap_matches
+                    if str(getattr(getattr(match, "lesson", None), "gap_signature", "")).strip() in unresolved_signatures
+                ]
+                dropped = max(0, before_count - len(gap_matches))
+                if dropped > 0:
+                    metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
+                        metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
+                    ) + dropped
         gap_hints: list[str] = []
         for match in gap_matches:
             lesson = getattr(match, "lesson", None)
@@ -4685,6 +4809,25 @@ def _run_cli_agent_impl(
                     unresolved_gaps=latest_unresolved_gaps,
                     candidate_policy=runtime_candidate_policy_effective,
                 )
+                if structured_lessons_required and latest_unresolved_gaps:
+                    unresolved_signatures = {
+                        str(row.get("gap_signature", "")).strip()
+                        for row in latest_unresolved_gaps
+                        if str(row.get("gap_signature", "")).strip()
+                    }
+                    if unresolved_signatures:
+                        before_count = len(v2_matches)
+                        v2_matches = [
+                            match
+                            for match in v2_matches
+                            if str(getattr(getattr(match, "lesson", None), "gap_signature", "")).strip()
+                            in unresolved_signatures
+                        ]
+                        dropped = max(0, before_count - len(v2_matches))
+                        if dropped > 0:
+                            metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
+                                metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
+                            ) + dropped
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
                 if v2_matches:
@@ -5339,6 +5482,8 @@ def _run_cli_agent_impl(
             critic_context=critic_context,
             domain_keywords=domain_keywords,
             temperature=runtime_temperature,
+            unresolved_gaps=final_unresolved_gaps,
+            structured_fields_required=False,
         )
         metrics["critic_raw_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.raw_lessons]
         metrics["critic_filtered_lessons"] = [_serialize_lesson(lesson) for lesson in lesson_result.filtered_lessons]
@@ -5364,6 +5509,8 @@ def _run_cli_agent_impl(
             critic_context=critic_context,
             domain_keywords=domain_keywords,
             temperature=runtime_temperature,
+            unresolved_gaps=final_unresolved_gaps,
+            structured_fields_required=bool(structured_lessons_required),
         )
         hard_events = [event for event in run_error_events if event.channel == "hard_failure"]
         fingerprint_counts = Counter(event.fingerprint for event in hard_events)
@@ -5373,8 +5520,14 @@ def _run_cli_agent_impl(
             repeated_error_signatures = list(recurring_fingerprints)
         v2_candidates: list[LessonRecord] = []
         structured_gap_rows = list(final_unresolved_gaps)
+        structured_gap_by_signature = {
+            str(row.get("gap_signature", "")).strip(): row
+            for row in structured_gap_rows
+            if str(row.get("gap_signature", "")).strip()
+        }
+        allowed_action_tools = _allowed_action_tools_for_adapter(adapter=adapter, opaque_tools=opaque_tools)
         fallback_rules: list[str] = []
-        source_lesson_rows: list[tuple[str, dict[str, Any]]] = []
+        source_lesson_rows: list[dict[str, Any]] = []
         if structured_lessons_required and structured_gap_rows:
             # Deterministic recipes are always included for unresolved gaps so
             # small models receive executable guidance, not only prose advice.
@@ -5387,7 +5540,15 @@ def _run_cli_agent_impl(
             )
             for idx, recipe in enumerate(deterministic_rules):
                 gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)]
-                source_lesson_rows.append((recipe, gap_row))
+                source_lesson_rows.append(
+                    {
+                        "lesson_text": recipe,
+                        "gap_row": gap_row,
+                        "action_template": "",
+                        "expected_evidence": "",
+                        "source_kind": "deterministic",
+                    }
+                )
             fallback_rules = list(deterministic_rules)
             metrics["v2_structured_fallback_lessons"] = len(deterministic_rules)
 
@@ -5397,13 +5558,62 @@ def _run_cli_agent_impl(
             text = str(getattr(lesson, "lesson", "")).strip()
             if not text:
                 continue
+            if structured_lessons_required:
+                valid_structured, rejection_reason, structured_payload = _validate_structured_model_lesson(
+                    lesson=lesson,
+                    unresolved_gap_rows=structured_gap_rows,
+                    allowed_action_tools=allowed_action_tools,
+                )
+                if not valid_structured:
+                    reason_key = str(rejection_reason).strip() or "invalid_structured_lesson"
+                    metrics["v2_schema_rejection_counts"][reason_key] = int(
+                        metrics["v2_schema_rejection_counts"].get(reason_key, 0)
+                    ) + 1
+                    continue
+                trigger_signature = str(structured_payload.get("trigger_gap_signature", "")).strip()
+                gap_row = structured_gap_by_signature.get(trigger_signature, {})
+                action_template = str(structured_payload.get("action_template", "")).strip()
+                expected_evidence = str(structured_payload.get("expected_evidence", "")).strip()
+                normalized_note = " ".join(text.split()).strip()
+                if normalized_note:
+                    lesson_text = (
+                        f"WHEN gap_signature={trigger_signature}: {action_template} "
+                        f"EXPECT: {expected_evidence}. NOTE: {normalized_note}"
+                    )
+                else:
+                    lesson_text = (
+                        f"WHEN gap_signature={trigger_signature}: {action_template} "
+                        f"EXPECT: {expected_evidence}."
+                    )
+                source_lesson_rows.append(
+                    {
+                        "lesson_text": lesson_text,
+                        "gap_row": gap_row,
+                        "action_template": action_template,
+                        "expected_evidence": expected_evidence,
+                        "source_kind": "model_structured",
+                    }
+                )
+                continue
             gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)] if structured_gap_rows else {}
-            source_lesson_rows.append((text, gap_row))
+            source_lesson_rows.append(
+                {
+                    "lesson_text": text,
+                    "gap_row": gap_row,
+                    "action_template": "",
+                    "expected_evidence": "",
+                    "source_kind": "model_legacy",
+                }
+            )
 
         # Deduplicate by normalized text to avoid writing noisy duplicates when
         # model output and deterministic recipe overlap semantically.
         seen_lesson_texts: set[str] = set()
-        for lesson_text, gap_row in source_lesson_rows:
+        for source_row in source_lesson_rows:
+            lesson_text = str(source_row.get("lesson_text", "")).strip()
+            gap_row = source_row.get("gap_row", {}) if isinstance(source_row.get("gap_row", {}), dict) else {}
+            action_template = str(source_row.get("action_template", "")).strip()
+            expected_evidence = str(source_row.get("expected_evidence", "")).strip()
             normalized_text = " ".join(str(lesson_text).lower().split())
             if normalized_text in seen_lesson_texts:
                 continue
@@ -5430,6 +5640,8 @@ def _run_cli_agent_impl(
                     reason_code=reason_code,
                     gap_type=gap_type,
                     gap_signature=gap_signature,
+                    action_template=action_template,
+                    expected_evidence=expected_evidence,
                 )
             )
         v2_candidate_lessons = [
@@ -5441,6 +5653,8 @@ def _run_cli_agent_impl(
                 "reason_code": row.reason_code,
                 "gap_type": row.gap_type,
                 "gap_signature": row.gap_signature,
+                "action_template": row.action_template,
+                "expected_evidence": row.expected_evidence,
             }
             for row in v2_candidates
         ]
