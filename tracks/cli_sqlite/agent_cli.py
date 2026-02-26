@@ -8,6 +8,9 @@ import re
 import sqlite3
 import subprocess
 import time
+import urllib.error
+import urllib.request
+import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +21,7 @@ import anthropic
 from claude_print_client import ClaudePrintClient
 from claude_print_runtime import (
     DEFAULT_LLM_BACKEND,
-    LLM_BACKENDS,
+    LLM_BACKENDS as SHARED_LLM_BACKENDS,
     assistant_blocks_from_claude_print_payload,
     build_claude_print_env,
     clip_text,
@@ -129,6 +132,8 @@ DEFAULT_EXECUTOR_MODEL = "claude-haiku-4-5"
 DEFAULT_CRITIC_MODEL = "claude-haiku-4-5"
 SONNET_MODEL = "claude-sonnet-4-5"
 OPUS_MODEL = "claude-opus-4-6"
+OPENAI_DEFAULT_MODEL = "gpt-5-nano"
+LLM_BACKENDS = tuple((*SHARED_LLM_BACKENDS, "openai"))
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 COMPUTER_TOOL_NAME = "computer"
@@ -1615,7 +1620,372 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
 
 
 def _normalize_llm_backend(value: str) -> str:
-    return normalize_llm_backend(value)
+    normalized = str(value or "").strip().lower()
+    if normalized == "openai":
+        return normalized
+    return normalize_llm_backend(normalized)
+
+
+def _extract_system_prompt_text(system: Any) -> str:
+    if isinstance(system, str):
+        return system.strip()
+    if isinstance(system, list):
+        parts: list[str] = []
+        for block in system:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type", "")).strip().lower() != "text":
+                continue
+            text = str(block.get("text", "")).strip()
+            if text:
+                parts.append(text)
+        return "\n\n".join(parts).strip()
+    return str(system or "").strip()
+
+
+def _tool_result_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return str(content or "").strip()
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = str(part.get("type", "")).strip().lower()
+        if part_type == "text":
+            text = str(part.get("text", "")).strip()
+            if text:
+                parts.append(text)
+        elif part_type == "image":
+            # OpenAI tool role content is text-only; keep signal without payload.
+            parts.append("[image omitted]")
+    return "\n".join(parts).strip()
+
+
+def _openai_message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return str(content or "").strip()
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                parts.append(text)
+            continue
+        if not isinstance(item, dict):
+            continue
+        text_field = item.get("text")
+        if isinstance(text_field, str):
+            text = text_field.strip()
+            if text:
+                parts.append(text)
+            continue
+        if isinstance(text_field, dict):
+            value = str(text_field.get("value", "")).strip()
+            if value:
+                parts.append(value)
+            continue
+        value = str(item.get("content", "")).strip()
+        if value:
+            parts.append(value)
+    return "\n".join(parts).strip()
+
+
+def _anthropic_user_blocks_to_openai_messages(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    pending_text: list[str] = []
+
+    def _flush_pending_text() -> None:
+        if not pending_text:
+            return
+        merged = "\n".join(part for part in pending_text if part).strip()
+        pending_text.clear()
+        if merged:
+            messages.append({"role": "user", "content": merged})
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type", "")).strip().lower()
+        if block_type == "text":
+            text = str(block.get("text", "")).strip()
+            if text:
+                pending_text.append(text)
+            continue
+        if block_type != "tool_result":
+            continue
+        _flush_pending_text()
+        tool_call_id = str(block.get("tool_use_id", "")).strip()
+        if not tool_call_id:
+            continue
+        tool_text = _tool_result_content_to_text(block.get("content"))
+        if bool(block.get("is_error", False)):
+            tool_text = f"[tool_error] {tool_text}".strip()
+        if not tool_text:
+            tool_text = "(empty tool result)"
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": tool_text,
+            }
+        )
+
+    _flush_pending_text()
+    return messages
+
+
+def _anthropic_assistant_blocks_to_openai_message(blocks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for idx, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type", "")).strip().lower()
+        if block_type == "text":
+            text = str(block.get("text", "")).strip()
+            if text:
+                text_parts.append(text)
+            continue
+        if block_type != "tool_use":
+            continue
+        tool_name = str(block.get("name", "")).strip()
+        if not tool_name:
+            continue
+        tool_input = block.get("input", {})
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        tool_call_id = str(block.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
+        tool_calls.append(
+            {
+                "id": tool_call_id,
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": json.dumps(tool_input, ensure_ascii=True, sort_keys=True),
+                },
+            }
+        )
+    if not text_parts and not tool_calls:
+        return None
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "\n".join(text_parts).strip(),
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return message
+
+
+def _anthropic_messages_to_openai_messages(
+    *,
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    system_text = str(system_prompt or "").strip()
+    if system_text:
+        converted.append({"role": "system", "content": system_text})
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role", "")).strip().lower()
+        content = msg.get("content")
+        if not isinstance(content, list):
+            text = str(content or "").strip()
+            if text:
+                converted.append({"role": role or "user", "content": text})
+            continue
+        if role == "assistant":
+            assistant_message = _anthropic_assistant_blocks_to_openai_message(content)
+            if assistant_message is not None:
+                converted.append(assistant_message)
+            continue
+        converted.extend(_anthropic_user_blocks_to_openai_messages(content))
+    return converted
+
+
+def _anthropic_tools_to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        converted.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(tool.get("description", "")).strip(),
+                    "parameters": tool.get("input_schema", {}),
+                },
+            }
+        )
+    return converted
+
+
+def _openai_chat_completions_request(
+    *,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    max_tokens: int,
+    temperature: float | None,
+) -> dict[str, Any]:
+    base_url = str(os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip().rstrip("/")
+    if not base_url:
+        base_url = "https://api.openai.com/v1"
+    url = f"{base_url}/chat/completions"
+
+    base_payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+    }
+    if tools:
+        base_payload["tools"] = tools
+        base_payload["tool_choice"] = "auto"
+    if temperature is not None:
+        base_payload["temperature"] = float(temperature)
+
+    token_fields: list[str | None] = [None]
+    if int(max_tokens) > 0:
+        # GPT-5 family deployments can vary by accepted cap field.
+        token_fields = ["max_completion_tokens", "max_tokens"]
+    temperature_options: list[float | None] = [None]
+    if temperature is not None:
+        # Keep deterministic settings when supported; auto-fallback if endpoint rejects it.
+        temperature_options = [float(temperature), None]
+
+    last_error: Exception | None = None
+    for token_field in token_fields:
+        for maybe_temperature in temperature_options:
+            payload = dict(base_payload)
+            if token_field is not None:
+                payload[token_field] = int(max_tokens)
+                other_field = "max_tokens" if token_field == "max_completion_tokens" else "max_completion_tokens"
+                payload.pop(other_field, None)
+            if maybe_temperature is None:
+                payload.pop("temperature", None)
+            else:
+                payload["temperature"] = maybe_temperature
+            body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+            request = urllib.request.Request(url=url, data=body, method="POST")
+            request.add_header("Authorization", f"Bearer {api_key}")
+            request.add_header("Content-Type", "application/json")
+            request.add_header("Accept", "application/json")
+            try:
+                with urllib.request.urlopen(request, timeout=max(15, int(os.getenv("OPENAI_TIMEOUT_S", "120")))) as response:
+                    raw = response.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                last_error = RuntimeError(
+                    f"OpenAI chat completion failed ({exc.code}): {_clip_text(error_body, max_chars=800)}"
+                )
+                continue
+            except urllib.error.URLError as exc:
+                last_error = RuntimeError(f"OpenAI chat completion request error: {type(exc).__name__}: {exc}")
+                continue
+            except Exception as exc:
+                last_error = RuntimeError(f"OpenAI chat completion request failed: {type(exc).__name__}: {exc}")
+                continue
+            try:
+                payload_obj = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"OpenAI chat completion returned invalid JSON: {_clip_text(raw, max_chars=800)}"
+                ) from exc
+            if not isinstance(payload_obj, dict):
+                raise RuntimeError(
+                    f"OpenAI chat completion returned non-object payload: {_clip_text(raw, max_chars=800)}"
+                )
+            return payload_obj
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("OpenAI chat completion failed with unknown error.")
+
+
+@dataclass(frozen=True)
+class _OpenAIUsageWrapper:
+    payload: dict[str, Any]
+
+    def model_dump(self) -> dict[str, Any]:
+        return dict(self.payload)
+
+
+@dataclass(frozen=True)
+class _OpenAITextBlock:
+    text: str
+
+    def model_dump(self) -> dict[str, Any]:
+        return {"type": "text", "text": self.text}
+
+
+@dataclass(frozen=True)
+class _OpenAICompatResponse:
+    content: list[_OpenAITextBlock]
+    usage: _OpenAIUsageWrapper
+
+
+class _OpenAICompatMessagesAPI:
+    def __init__(self, *, api_key: str) -> None:
+        self._api_key = api_key
+
+    def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int = 0,
+        system: Any = "",
+        messages: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        **_: Any,
+    ) -> _OpenAICompatResponse:
+        payload = _openai_chat_completions_request(
+            api_key=self._api_key,
+            model=model,
+            messages=_anthropic_messages_to_openai_messages(
+                messages=messages or [],
+                system_prompt=_extract_system_prompt_text(system),
+            ),
+            tools=None,
+            max_tokens=max(0, int(max_tokens)),
+            temperature=temperature,
+        )
+        choices = payload.get("choices", [])
+        if not (isinstance(choices, list) and choices):
+            raise RuntimeError("OpenAI chat completion returned no choices.")
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = first_choice.get("message", {})
+        if not isinstance(message, dict):
+            raise RuntimeError("OpenAI chat completion choice missing message object.")
+        raw_text = _openai_message_content_to_text(message.get("content"))
+        if not raw_text:
+            refusal = str(message.get("refusal", "")).strip()
+            raw_text = refusal or ""
+        usage_raw = payload.get("usage", {})
+        usage = usage_raw if isinstance(usage_raw, dict) else {}
+        response_id = str(payload.get("id", "")).strip()
+        usage_payload = {
+            "backend": "openai",
+            "model": model,
+            "response_id": response_id,
+            **usage,
+        }
+        return _OpenAICompatResponse(
+            content=[_OpenAITextBlock(text=raw_text)],
+            usage=_OpenAIUsageWrapper(payload=usage_payload),
+        )
+
+
+class _OpenAICompatClient:
+    def __init__(self, *, api_key: str) -> None:
+        self.messages = _OpenAICompatMessagesAPI(api_key=api_key)
 
 
 def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
@@ -1735,6 +2105,93 @@ def _create_executor_response_via_claude_print(
         "stderr_chars": len(stderr),
     }
     return blocks, usage
+
+
+def _create_executor_response_via_openai(
+    *,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    tools: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    temperature: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
+    allowed_tool_names = {name for name in tool_names if name}
+    payload = _openai_chat_completions_request(
+        api_key=api_key,
+        model=model,
+        messages=_anthropic_messages_to_openai_messages(
+            messages=messages,
+            system_prompt=system_prompt,
+        ),
+        tools=_anthropic_tools_to_openai_tools(tools),
+        max_tokens=1800,
+        temperature=temperature,
+    )
+    choices = payload.get("choices", [])
+    if not (isinstance(choices, list) and choices):
+        raise RuntimeError("OpenAI executor response did not contain choices.")
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get("message", {})
+    if not isinstance(message, dict):
+        raise RuntimeError("OpenAI executor response missing message object.")
+
+    assistant_blocks: list[dict[str, Any]] = []
+    assistant_text = _openai_message_content_to_text(message.get("content"))
+    if assistant_text:
+        assistant_blocks.append({"type": "text", "text": assistant_text})
+
+    tool_calls = message.get("tool_calls", [])
+    if tool_calls is None:
+        tool_calls = []
+    if not isinstance(tool_calls, list):
+        raise RuntimeError(f"OpenAI executor tool_calls must be list, got {type(tool_calls).__name__}")
+    for idx, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
+            raise RuntimeError(f"OpenAI executor tool call at index {idx} must be object.")
+        function = call.get("function", {})
+        if not isinstance(function, dict):
+            raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function object.")
+        name = str(function.get("name", "")).strip()
+        if not name:
+            raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function name.")
+        if name not in allowed_tool_names:
+            raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
+        raw_arguments = function.get("arguments", "{}")
+        if isinstance(raw_arguments, dict):
+            tool_input = raw_arguments
+        else:
+            raw_arguments_text = str(raw_arguments or "").strip() or "{}"
+            try:
+                parsed = json.loads(raw_arguments_text)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"OpenAI tool call '{name}' arguments were not valid JSON: "
+                    f"{_clip_text(raw_arguments_text, max_chars=500)}"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise RuntimeError(f"OpenAI tool call '{name}' arguments must decode to an object.")
+            tool_input = parsed
+        tool_call_id = str(call.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
+        assistant_blocks.append(
+            {
+                "type": "tool_use",
+                "id": tool_call_id,
+                "name": name,
+                "input": tool_input,
+            }
+        )
+
+    usage_raw = payload.get("usage", {})
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
+    usage_payload = {
+        "backend": "openai",
+        "model": model,
+        "response_id": str(payload.get("id", "")).strip(),
+        **usage,
+    }
+    return assistant_blocks, usage_payload
 
 
 def _hash_base64_png(image_b64: str | None) -> str | None:
@@ -2768,12 +3225,17 @@ def _run_cli_agent_impl(
         transfer_retrieval_max_results=transfer_retrieval_max_results,
         transfer_retrieval_score_weight=transfer_retrieval_score_weight,
     )
-    api_key = str(getattr(cfg, "anthropic_api_key", "") or "").strip()
+    anthropic_api_key = str(getattr(cfg, "anthropic_api_key", "") or "").strip()
+    openai_api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
     client: Any | None = None
     if llm_backend == "anthropic":
-        if not api_key:
+        if not anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
-        client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+        client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=3)
+    elif llm_backend == "openai":
+        if not openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required when llm_backend=openai.")
+        client = _OpenAICompatClient(api_key=openai_api_key)
     else:
         client = ClaudePrintClient()
     adapter = _resolve_adapter_with_mode(
@@ -2973,6 +3435,9 @@ def _run_cli_agent_impl(
     # Simplified architecture removes the separate judge model and reuses executor.
     if architecture_mode == "simplified":
         effective_judge_model = model_executor
+    elif llm_backend == "openai":
+        # Keep OpenAI runs self-contained unless caller explicitly overrides judge model.
+        effective_judge_model = model_judge or model_executor
     else:
         effective_judge_model = model_judge or default_judge_model(model_executor)
 
@@ -3521,6 +3986,15 @@ def _run_cli_agent_impl(
                 usage_obj = getattr(response, "usage", None)
                 usage = usage_obj.model_dump() if usage_obj is not None and hasattr(usage_obj, "model_dump") else {}
             assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
+        elif llm_backend == "openai":
+            assistant_blocks, usage = _create_executor_response_via_openai(
+                api_key=openai_api_key,
+                model=model_executor,
+                system_prompt=system_prompt,
+                tools=tools,
+                messages=messages,
+                temperature=runtime_temperature,
+            )
         else:
             assistant_blocks, usage = _create_executor_response_via_claude_print(
                 model=model_executor,

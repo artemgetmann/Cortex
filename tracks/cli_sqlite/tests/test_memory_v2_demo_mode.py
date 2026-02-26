@@ -373,6 +373,36 @@ def test_run_cli_agent_script_forwards_llm_backend_flag(
     capsys.readouterr()
 
 
+def test_run_cli_agent_script_openai_defaults_executor_model(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(run_cli_agent_script, "load_config", lambda: object())
+    monkeypatch.setattr(run_cli_agent_script, "run_cli_agent", lambda **kwargs: captured.update(kwargs) or SimpleNamespace(metrics={}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_agent.py",
+            "--task-id",
+            "aggregate_report",
+            "--session",
+            "42",
+            "--llm-backend",
+            "openai",
+        ],
+    )
+    rc = run_cli_agent_script.main()
+    assert rc == 0
+    assert captured["llm_backend"] == "openai"
+    assert captured["model_executor"] == "gpt-5-nano"
+    assert captured["model_critic"] == "gpt-5-nano"
+    assert captured["model_judge"] == "gpt-5-nano"
+    capsys.readouterr()
+
+
 def test_run_cli_agent_script_forwards_self_edit_mode_flag(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

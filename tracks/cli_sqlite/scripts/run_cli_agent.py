@@ -33,6 +33,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_TRANSFER_RETRIEVAL_MAX_RESULTS,
     DEFAULT_TRANSFER_RETRIEVAL_SCORE_WEIGHT,
     LLM_BACKENDS,
+    OPENAI_DEFAULT_MODEL,
     LEARNING_MODES,
     run_cli_agent,
 )
@@ -45,6 +46,9 @@ class _RunCancelled(RuntimeError):
 
 COST_PROFILES = ("default", "cheap")
 CHEAP_EXECUTOR_MODEL = "claude-3-haiku-20240307"
+
+def _cli_flag_provided(flag: str) -> bool:
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in sys.argv[1:])
 
 
 def main() -> int:
@@ -114,7 +118,7 @@ def main() -> int:
         "--llm-backend",
         default=DEFAULT_LLM_BACKEND,
         choices=LLM_BACKENDS,
-        help="Executor transport: anthropic (API) or claude_print (`claude -p` subscription path).",
+        help="Executor transport: anthropic (API), claude_print (`claude -p`), or openai (Chat Completions API).",
     )
     ap.add_argument(
         "--cost-profile",
@@ -232,10 +236,25 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    effective_executor_model = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
-    effective_critic_model = args.model_critic.strip() or DEFAULT_CRITIC_MODEL
-    effective_judge_model = args.model_judge.strip() if args.model_judge else None
     effective_backend = args.llm_backend
+    default_executor_model = OPENAI_DEFAULT_MODEL if effective_backend == "openai" else DEFAULT_EXECUTOR_MODEL
+    default_critic_model = OPENAI_DEFAULT_MODEL if effective_backend == "openai" else DEFAULT_CRITIC_MODEL
+    effective_executor_model = (
+        (args.model_executor.strip() or default_executor_model)
+        if _cli_flag_provided("--model-executor")
+        else default_executor_model
+    )
+    effective_critic_model = (
+        (args.model_critic.strip() or default_critic_model)
+        if _cli_flag_provided("--model-critic")
+        else default_critic_model
+    )
+    if _cli_flag_provided("--model-judge"):
+        effective_judge_model = args.model_judge.strip() if args.model_judge else None
+    elif effective_backend == "openai":
+        effective_judge_model = effective_executor_model
+    else:
+        effective_judge_model = None
     effective_judge_diagnostic = bool(args.judge_diagnostic)
     if args.cost_profile == "cheap":
         effective_executor_model = CHEAP_EXECUTOR_MODEL
@@ -247,8 +266,8 @@ def main() -> int:
     try:
         cfg = load_config()
     except RuntimeError:
-        # claude_print mode can run without API credentials; keep config shape minimal.
-        if args.llm_backend == "claude_print":
+        # Non-Anthropic transports can run without ANTHROPIC_API_KEY.
+        if effective_backend in {"claude_print", "openai"}:
             cfg = SimpleNamespace(anthropic_api_key="")
         else:
             raise

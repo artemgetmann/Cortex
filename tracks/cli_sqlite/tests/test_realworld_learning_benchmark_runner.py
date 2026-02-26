@@ -162,3 +162,59 @@ def test_learning_gate_reports_numeric_deltas() -> None:
     gate = run_realworld_learning_benchmark._learning_gate(rows)
     assert gate["activation_delta"] > 0.0
     assert gate["retrieval_help_ratio_delta"] > 0.0
+
+
+def test_realworld_learning_benchmark_openai_defaults_executor_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    run_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(run_realworld_learning_benchmark, "load_config", lambda: object())
+    monkeypatch.setattr(run_realworld_learning_benchmark, "SESSIONS_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(run_realworld_learning_benchmark, "_clear_learning_state", lambda: None)
+
+    def _fake_run_cli_agent(**kwargs: Any) -> SimpleNamespace:
+        run_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            metrics={
+                "eval_passed": True,
+                "eval_score": 1.0,
+                "steps": 1,
+                "tool_errors": 0,
+                "lessons_loaded": 0,
+                "lessons_generated": 0,
+                "repeated_error_signatures": [],
+            }
+        )
+
+    monkeypatch.setattr(run_realworld_learning_benchmark, "run_cli_agent", _fake_run_cli_agent)
+    output_json = tmp_path / "realworld_openai.json"
+    output_md = tmp_path / "realworld_openai.md"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_realworld_learning_benchmark.py",
+            "--sessions",
+            "1",
+            "--start-session",
+            "88100",
+            "--max-steps",
+            "2",
+            "--llm-backend",
+            "openai",
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+        ],
+    )
+
+    rc = run_realworld_learning_benchmark.main()
+    assert rc == 0
+    assert run_calls
+    assert all(call["llm_backend"] == "openai" for call in run_calls)
+    assert all(call["model_executor"] == "gpt-5-nano" for call in run_calls)
+    assert all(call["model_critic"] == "gpt-5-nano" for call in run_calls)
+    assert all(call["model_judge"] == "gpt-5-nano" for call in run_calls)

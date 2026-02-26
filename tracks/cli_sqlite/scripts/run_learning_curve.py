@@ -16,6 +16,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -35,6 +36,8 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_SELF_EDIT_MODE,
     DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     LEARNING_MODES,
+    LLM_BACKENDS,
+    OPENAI_DEFAULT_MODEL,
     run_cli_agent,
 )
 from tracks.cli_sqlite.curriculum_planner import (
@@ -60,6 +63,10 @@ def _is_hotfix_hard_variant_task(*, domain: str, task_id: str) -> bool:
     return str(domain).strip() == "shell" and str(task_id).strip() == HOTFIX_HARD_TASK_ID
 
 
+def _cli_flag_provided(flag: str) -> bool:
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in sys.argv[1:])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run N sessions and plot the learning curve")
     ap.add_argument("--task-id", required=True)
@@ -80,7 +87,7 @@ def main() -> int:
     ap.add_argument("--mixed-errors", action="store_true", help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
-    ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
+    ap.add_argument("--llm-backend", default="anthropic", choices=LLM_BACKENDS)
     ap.add_argument(
         "--cost-profile",
         default="default",
@@ -147,9 +154,17 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    effective_executor_model = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
-    effective_judge_model = args.model_judge.strip() or effective_executor_model
     effective_backend = args.llm_backend
+    default_executor_model = OPENAI_DEFAULT_MODEL if effective_backend == "openai" else DEFAULT_EXECUTOR_MODEL
+    effective_executor_model = (
+        (args.model_executor.strip() or default_executor_model)
+        if _cli_flag_provided("--model-executor")
+        else default_executor_model
+    )
+    if _cli_flag_provided("--model-judge"):
+        effective_judge_model = args.model_judge.strip() if args.model_judge else effective_executor_model
+    else:
+        effective_judge_model = effective_executor_model
     effective_judge_diagnostic = bool(args.judge_diagnostic)
     if args.cost_profile == "cheap":
         effective_executor_model = CHEAP_EXECUTOR_MODEL
@@ -157,7 +172,13 @@ def main() -> int:
         effective_backend = "anthropic"
         effective_judge_diagnostic = False
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except RuntimeError:
+        if effective_backend in {"claude_print", "openai"}:
+            cfg = SimpleNamespace(anthropic_api_key="")
+        else:
+            raise
     curriculum_planner = create_curriculum_planner(
         mode=args.curriculum_mode,
         task_id=args.task_id,

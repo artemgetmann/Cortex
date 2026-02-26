@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from statistics import median
+from types import SimpleNamespace
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -39,6 +40,8 @@ DEFAULT_LEARNING_MODE = str(getattr(agent_cli, "DEFAULT_LEARNING_MODE", "strict"
 LEARNING_MODES = tuple(getattr(agent_cli, "LEARNING_MODES", ("legacy", "strict")))
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 DEFAULT_EXECUTOR_MODEL = str(getattr(agent_cli, "DEFAULT_EXECUTOR_MODEL", "claude-haiku-4-5"))
+OPENAI_DEFAULT_MODEL = str(getattr(agent_cli, "OPENAI_DEFAULT_MODEL", "gpt-5-nano"))
+LLM_BACKENDS = tuple(getattr(agent_cli, "LLM_BACKENDS", ("anthropic", "claude_print", "openai")))
 DEFAULT_BENCHMARK_DETERMINISTIC = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_DETERMINISTIC", False))
 DEFAULT_BENCHMARK_PROMOTED_ONLY = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PROMOTED_ONLY", False))
 DEFAULT_BENCHMARK_PLACEBO = bool(getattr(agent_cli, "DEFAULT_BENCHMARK_PLACEBO", False))
@@ -489,6 +492,10 @@ def _learning_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _cli_flag_provided(flag: str) -> bool:
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in sys.argv[1:])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run real-world CLI learning benchmark with docs/persistence ablations")
     ap.add_argument("--sessions", type=int, default=5, help="Runs per arm; use >=10 for stronger curves.")
@@ -507,7 +514,7 @@ def main() -> int:
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
-    ap.add_argument("--llm-backend", default="anthropic", choices=["anthropic", "claude_print"])
+    ap.add_argument("--llm-backend", default="anthropic", choices=LLM_BACKENDS)
     ap.add_argument(
         "--cost-profile",
         default="default",
@@ -565,13 +572,20 @@ def main() -> int:
     if int(args.sessions) <= 0:
         raise ValueError("--sessions must be >= 1")
 
-    cfg = load_config()
-    model_executor = args.model_executor.strip() or DEFAULT_EXECUTOR_MODEL
+    llm_backend = args.llm_backend
+    default_executor_model = OPENAI_DEFAULT_MODEL if llm_backend == "openai" else DEFAULT_EXECUTOR_MODEL
+    model_executor = (
+        (args.model_executor.strip() or default_executor_model)
+        if _cli_flag_provided("--model-executor")
+        else default_executor_model
+    )
     # Benchmark policy: no separate critic tuning surface.
     # Keep critic aligned with executor and disable escalation for reproducibility.
     model_critic = model_executor
-    model_judge = args.model_judge.strip() if args.model_judge else model_executor
-    llm_backend = args.llm_backend
+    if _cli_flag_provided("--model-judge"):
+        model_judge = args.model_judge.strip() if args.model_judge else model_executor
+    else:
+        model_judge = model_executor
     judge_diagnostic = bool(args.judge_diagnostic)
     if args.cost_profile == "cheap":
         model_executor = CHEAP_EXECUTOR_MODEL
@@ -579,6 +593,14 @@ def main() -> int:
         model_judge = CHEAP_EXECUTOR_MODEL
         llm_backend = "anthropic"
         judge_diagnostic = False
+
+    try:
+        cfg = load_config()
+    except RuntimeError:
+        if llm_backend in {"claude_print", "openai"}:
+            cfg = SimpleNamespace(anthropic_api_key="")
+        else:
+            raise
     doc_retriever_model = str(args.doc_retriever_model).strip() or None
     auto_escalate_critic = False
     initial_hotfix_variant_override = os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV)

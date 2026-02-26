@@ -139,3 +139,50 @@ def test_learning_curve_auto_mode_uses_curriculum_planner(monkeypatch: pytest.Mo
     assert all(bool(call.get("benchmark_placebo", False)) is False for call in calls)
     assert recorded_runs == [1, 2]
     assert len(recorded_outcomes) == 2
+
+
+def test_learning_curve_openai_defaults_executor_and_judge(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(run_learning_curve, "load_config", lambda: object())
+
+    def _fake_run_cli_agent(**kwargs: Any) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return SimpleNamespace(
+            metrics={
+                "eval_score": 1.0,
+                "eval_passed": True,
+                "steps": 1,
+                "tool_errors": 0,
+                "lessons_loaded": 0,
+                "lessons_generated": 0,
+                "repeated_error_signatures": [],
+            }
+        )
+
+    monkeypatch.setattr(run_learning_curve, "run_cli_agent", _fake_run_cli_agent)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_learning_curve.py",
+            "--task-id",
+            "aggregate_report",
+            "--domain",
+            "gridtool",
+            "--sessions",
+            "1",
+            "--start-session",
+            "72200",
+            "--llm-backend",
+            "openai",
+        ],
+    )
+
+    rc = run_learning_curve.main()
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0]["llm_backend"] == "openai"
+    assert calls[0]["model_executor"] == "gpt-5-nano"
+    assert calls[0]["model_critic"] == "gpt-5-nano"
+    assert calls[0]["model_judge"] == "gpt-5-nano"
