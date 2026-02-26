@@ -1,0 +1,151 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 165100, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 13: no such table: f'
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=2  lessons_in=0  lessons_out=0  (82.4s)
+  [variant-scoreboard] variant=default score=0.5166 quality=0.7336 speed=0.2354 cost=0.1175
+
+--- Run 2/10 (session 165101, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 7: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=False error='Parse error near line 8: table rejects has no column named category\nRuntime error near line 14: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)'
+[step 006] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=6  errors=2  lessons_in=0  lessons_out=0  (71.8s)
+  [variant-scoreboard] variant=default score=0.4846 quality=0.6664 speed=0.2569 cost=0.1368
+
+--- Run 3/10 (session 165102, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=1  lessons_in=0  lessons_out=0  (76.6s)
+  [variant-scoreboard] variant=default score=0.6790 quality=1.0000 speed=0.2468 cost=0.1153
+
+--- Run 4/10 (session 165103, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (68.1s)
+  [variant-scoreboard] variant=default score=0.6865 quality=1.0000 speed=0.2652 cost=0.1350
+
+--- Run 5/10 (session 165104, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (63.4s)
+  [variant-scoreboard] variant=default score=0.6990 quality=1.0000 speed=0.2900 cost=0.1769
+
+--- Run 6/10 (session 165105, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=1  lessons_in=0  lessons_out=0  (86.1s)
+  [variant-scoreboard] variant=default score=0.6743 quality=1.0000 speed=0.2288 cost=0.1142
+
+--- Run 7/10 (session 165106, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (70.3s)
+  [variant-scoreboard] variant=default score=0.6857 quality=1.0000 speed=0.2603 cost=0.1376
+
+--- Run 8/10 (session 165107, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] no tool call; model stopped.
+  [PASS] score=1.00  steps=5  errors=1  lessons_in=0  lessons_out=0  (66.3s)
+  [variant-scoreboard] variant=default score=0.6896 quality=1.0000 speed=0.2758 cost=0.1381
+
+--- Run 9/10 (session 165108, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 9: table rejects has no column named category\nParse error near line 15: near "DO": syntax error\n   COUNT(*) FROM ledger ON CONFLICT(checkpoint_tag) DO UPDATE SET row_count=excl\n                                      error here ---^\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 005] contract gaps detected (4), trigger=no_tool_call; injecting one retry.
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=2  lessons_in=0  lessons_out=0  (74.2s)
+  [variant-scoreboard] variant=default score=0.5205 quality=0.7336 speed=0.2516 cost=0.1164
+
+--- Run 10/10 (session 165109, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Runtime error near line 2: NOT NULL constraint failed: ledger.batch_id (19)\nParse error near line 10: table rejects has no column named category\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 003] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 004] tool=show_fixture ok=True error=None
+[step 005] tool=run_sqlite ok=False error='Runtime error near line 3: NOT NULL constraint failed: ledger.checkpoint_tag (19)\nParse error near line 13: table rejects has no column named amount\nRuntime error near line 23: UNIQUE constraint failed: checkpoint_log.checkpoint_tag (19)\n\n--- HINT from prior sessions ---\n- [deterministic_recipe domain=sqlite task_id=incremental_reconcile] [forced_repair sqlite_incremental_required_query_mismatch_v1] query_id=reject_count step1=run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT fs.event_id, fs.category, fs.amount, fs.batch_id, \'CKP-APR-01\' FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE'
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=3  lessons_in=0  lessons_out=0  (68.2s)
+  [variant-scoreboard] variant=default score=0.5254 quality=0.7336 speed=0.2650 cost=0.1267
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   165100   0.92     N      6     2       0        0  82.4s
+   2   165101   0.83     N      6     2       0        0  71.8s
+   3   165102   1.00     Y      6     1       0        0  76.6s
+   4   165103   1.00     Y      6     0       0        0  68.1s
+   5   165104   1.00     Y      4     0       0        0  63.4s
+   6   165105   1.00     Y      6     1       0        0  86.1s
+   7   165106   1.00     Y      6     0       0        0  70.3s
+   8   165107   1.00     Y      5     1       0        0  66.3s
+   9   165108   0.92     N      6     2       0        0  74.2s
+  10   165109   0.92     N      6     3       0        0  68.2s
+
+Score trajectory: 0.92 -> 0.83 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 1.00 -> 0.92 -> 0.92
+Improvement: 0.92 -> 0.92 (delta=+0.00)
+Variant scoreboard rows written: 10
+

@@ -1,0 +1,269 @@
+{
+  "on": {
+    "n": 10,
+    "passes": 6,
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.6,
+    "median_steps_success": 6.0,
+    "rows": [
+      {
+        "run": 1,
+        "session": 165100,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 2,
+        "session": 165101,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 3,
+        "session": 165102,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 1
+      },
+      {
+        "run": 4,
+        "session": 165103,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 0
+      },
+      {
+        "run": 5,
+        "session": 165104,
+        "score": 1.0,
+        "pass": true,
+        "steps": 4,
+        "errs": 0
+      },
+      {
+        "run": 6,
+        "session": 165105,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 1
+      },
+      {
+        "run": 7,
+        "session": 165106,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 0
+      },
+      {
+        "run": 8,
+        "session": 165107,
+        "score": 1.0,
+        "pass": true,
+        "steps": 5,
+        "errs": 1
+      },
+      {
+        "run": 9,
+        "session": 165108,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 10,
+        "session": 165109,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 3
+      }
+    ]
+  },
+  "off": {
+    "n": 10,
+    "passes": 6,
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.6,
+    "median_steps_success": 6.0,
+    "rows": [
+      {
+        "run": 1,
+        "session": 165200,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 2,
+        "session": 165201,
+        "score": 1.0,
+        "pass": true,
+        "steps": 5,
+        "errs": 0
+      },
+      {
+        "run": 3,
+        "session": 165202,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 0
+      },
+      {
+        "run": 4,
+        "session": 165203,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 5,
+        "session": 165204,
+        "score": 1.0,
+        "pass": true,
+        "steps": 5,
+        "errs": 1
+      },
+      {
+        "run": 6,
+        "session": 165205,
+        "score": 0.92,
+        "pass": false,
+        "steps": 6,
+        "errs": 3
+      },
+      {
+        "run": 7,
+        "session": 165206,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 8,
+        "session": 165207,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 1
+      },
+      {
+        "run": 9,
+        "session": 165208,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 1
+      },
+      {
+        "run": 10,
+        "session": 165209,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 0
+      }
+    ]
+  },
+  "on_nodetrecipe": {
+    "n": 10,
+    "passes": 1,
+    "pass_rate": 0.1,
+    "last5_pass_rate": 0.0,
+    "median_steps_success": 6,
+    "rows": [
+      {
+        "run": 1,
+        "session": 165300,
+        "score": 0.25,
+        "pass": false,
+        "steps": 3,
+        "errs": 0
+      },
+      {
+        "run": 2,
+        "session": 165301,
+        "score": 0.25,
+        "pass": false,
+        "steps": 4,
+        "errs": 1
+      },
+      {
+        "run": 3,
+        "session": 165302,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 4,
+        "session": 165303,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 5
+      },
+      {
+        "run": 5,
+        "session": 165304,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errs": 0
+      },
+      {
+        "run": 6,
+        "session": 165305,
+        "score": 0.75,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 7,
+        "session": 165306,
+        "score": 0.75,
+        "pass": false,
+        "steps": 5,
+        "errs": 2
+      },
+      {
+        "run": 8,
+        "session": 165307,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 5
+      },
+      {
+        "run": 9,
+        "session": 165308,
+        "score": 0.25,
+        "pass": false,
+        "steps": 2,
+        "errs": 0
+      },
+      {
+        "run": 10,
+        "session": 165309,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errs": 5
+      }
+    ]
+  }
+}

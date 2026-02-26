@@ -1,0 +1,149 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 165200, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed.csv'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 003] tool=show_fixture ok=True error=None
+[step 004] tool=run_sqlite ok=False error='Parse error near line 17: table rejects has no column named category'
+[step 005] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 17: table rejects has no column named amount'
+[step 006] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 17: no such table: t'
+[step 006] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=4  lessons_in=0  lessons_out=0  (69.1s)
+  [variant-scoreboard] variant=default score=0.5241 quality=0.7336 speed=0.2630 cost=0.1214
+
+--- Run 2/10 (session 165201, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 002] tool=run_sqlite ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] no tool call; model stopped.
+  [PASS] score=1.00  steps=5  errors=0  lessons_in=0  lessons_out=0  (40.1s)
+  [variant-scoreboard] variant=default score=0.7147 quality=1.0000 speed=0.3634 cost=0.1590
+
+--- Run 3/10 (session 165202, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (45.7s)
+  [variant-scoreboard] variant=default score=0.7041 quality=1.0000 speed=0.3307 cost=0.1428
+
+--- Run 4/10 (session 165203, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Runtime error near line 4: NOT NULL constraint failed: ledger.batch_id (19)'
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 4: UNIQUE constraint failed: ledger.event_id (19)'
+[step 004] contract gaps detected (4), trigger=no_tool_call; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=2  lessons_in=0  lessons_out=0  (46.5s)
+  [variant-scoreboard] variant=default score=0.5408 quality=0.7336 speed=0.3279 cost=0.1241
+
+--- Run 5/10 (session 165204, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 3: table rejects has no column named category\nRuntime error near line 8: UNIQUE constraint failed: ledger.event_id (19)'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] no tool call; model stopped.
+  [PASS] score=1.00  steps=5  errors=1  lessons_in=0  lessons_out=0  (48.6s)
+  [variant-scoreboard] variant=default score=0.7107 quality=1.0000 speed=0.3295 cost=0.1887
+
+--- Run 6/10 (session 165205, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 11: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 14: no such table: ranked'
+[step 006] tool=run_sqlite ok=False error='Parse error near line 11: no such table: ranked'
+[step 006] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.92  steps=6  errors=3  lessons_in=0  lessons_out=0  (56.7s)
+  [variant-scoreboard] variant=default score=0.5334 quality=0.7336 speed=0.2950 cost=0.1302
+
+--- Run 7/10 (session 165206, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 11: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)'
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=6  errors=2  lessons_in=0  lessons_out=0  (59.1s)
+  [variant-scoreboard] variant=default score=0.4912 quality=0.6664 speed=0.2881 cost=0.1288
+
+--- Run 8/10 (session 165207, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)'
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=1  lessons_in=0  lessons_out=0  (64.5s)
+  [variant-scoreboard] variant=default score=0.6867 quality=1.0000 speed=0.2739 cost=0.1216
+
+--- Run 9/10 (session 165208, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed.csv'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 003] tool=show_fixture ok=True error=None
+[step 004] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=6  errors=1  lessons_in=0  lessons_out=0  (44.2s)
+  [variant-scoreboard] variant=default score=0.7055 quality=1.0000 speed=0.3363 cost=0.1428
+
+--- Run 10/10 (session 165209, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (54.2s)
+  [variant-scoreboard] variant=default score=0.6959 quality=1.0000 speed=0.3026 cost=0.1353
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   165200   0.92     N      6     4       0        0  69.1s
+   2   165201   1.00     Y      5     0       0        0  40.1s
+   3   165202   1.00     Y      6     0       0        0  45.7s
+   4   165203   0.92     N      6     2       0        0  46.5s
+   5   165204   1.00     Y      5     1       0        0  48.6s
+   6   165205   0.92     N      6     3       0        0  56.7s
+   7   165206   0.83     N      6     2       0        0  59.1s
+   8   165207   1.00     Y      6     1       0        0  64.5s
+   9   165208   1.00     Y      6     1       0        0  44.2s
+  10   165209   1.00     Y      6     0       0        0  54.2s
+
+Score trajectory: 0.92 -> 1.00 -> 1.00 -> 0.92 -> 1.00 -> 0.92 -> 0.83 -> 1.00 -> 1.00 -> 1.00
+Improvement: 0.92 -> 1.00 (delta=+0.08)
+Variant scoreboard rows written: 10
+
