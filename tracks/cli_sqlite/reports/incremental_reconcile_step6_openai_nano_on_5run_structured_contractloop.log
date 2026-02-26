@@ -1,0 +1,84 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=5  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/5 (session 164100, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (2), trigger=no_tool_call; injecting one retry.
+[step 004] tool=read_skill ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [PASS] score=1.00  steps=6  errors=0  lessons_in=0  lessons_out=0  (68.7s)
+  [variant-scoreboard] variant=default score=0.6879 quality=1.0000 speed=0.2638 cost=0.1465
+
+--- Run 2/5 (session 164101, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 11: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 11: table rejects has no column named amount'
+[step 005] contract gaps detected (2), trigger=no_tool_call; injecting one retry.
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] no tool call; model stopped.
+  [FAIL] score=0.92  steps=6  errors=2  lessons_in=0  lessons_out=0  (72.4s)
+  [variant-scoreboard] variant=default score=0.5233 quality=0.7336 speed=0.2556 cost=0.1280
+
+--- Run 3/5 (session 164102, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 004] tool=show_fixture ok=True error=None
+[step 005] tool=run_sqlite ok=True error=None
+[step 006] tool=run_sqlite ok=True error=None
+[step 006] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=False error='Parse error near line 2: near "(": syntax error\n  (\'e3\',\'lead\',3,\'b1\'), (\'e4\',\'drums\',8,\'b1\')) AS fs(event_id, category, amount,\n                                      error here ---^'
+  [PASS] score=1.00  steps=6  errors=2  lessons_in=0  lessons_out=0  (72.7s)
+  [variant-scoreboard] variant=default score=0.6852 quality=1.0000 speed=0.2549 cost=0.1430
+
+--- Run 4/5 (session 164103, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 15: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 17: table rejects has no column named amount'
+[step 005] tool=run_sqlite ok=False error='Runtime error near line 3: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 17: table rejects has no column named category'
+[step 006] tool=run_sqlite ok=False error='Parse error near line 17: table rejects has no column named amount'
+[step 006] contract gaps detected (2), trigger=step_cap; injecting one retry.
+[step 006] tool=run_sqlite ok=False error='Runtime error near line 4: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 14: table rejects has no column named batch_id'
+  [FAIL] score=0.83  steps=6  errors=5  lessons_in=0  lessons_out=0  (76.6s)
+  [variant-scoreboard] variant=default score=0.4782 quality=0.6664 speed=0.2467 cost=0.1115
+
+--- Run 5/5 (session 164104, task=incremental_reconcile, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=False error="Unknown path_ref: 'fixture_seed'. Allowed: ['bootstrap.sql', 'fixture.csv']"
+[step 003] tool=show_fixture ok=True error=None
+[step 004] contract gaps detected (9), trigger=no_tool_call; injecting one retry.
+[step 004] no tool call; model stopped.
+  [FAIL] score=0.25  steps=4  errors=1  lessons_in=0  lessons_out=0  (70.3s)
+  [variant-scoreboard] variant=default score=0.2161 quality=0.2000 speed=0.2720 cost=0.1875
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   164100   1.00     Y      6     0       0        0  68.7s
+   2   164101   0.92     N      6     2       0        0  72.4s
+   3   164102   1.00     Y      6     2       0        0  72.7s
+   4   164103   0.83     N      6     5       0        0  76.6s
+   5   164104   0.25     N      4     1       0        0  70.3s
+
+Score trajectory: 1.00 -> 0.92 -> 1.00 -> 0.83 -> 0.25
+Improvement: 1.00 -> 0.25 (delta=-0.75)
+Variant scoreboard rows written: 5
+
