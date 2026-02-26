@@ -64,6 +64,8 @@ _DOMAIN_TASKS: dict[str, tuple[CurriculumTask, ...]] = {
     "sqlite": (
         CurriculumTask("import_aggregate", "sqlite", 0.35, ("schema", "import")),
         CurriculumTask("idempotent_rerun", "sqlite", 0.55, ("idempotent", "upsert")),
+        # Nano-friendly bridge task: keeps reconcile shape but relaxes closure surface.
+        CurriculumTask("incremental_reconcile_nano", "sqlite", 0.68, ("incremental", "dedupe")),
         CurriculumTask("incremental_reconcile", "sqlite", 0.80, ("incremental", "reconcile")),
         CurriculumTask("partial_failure_recovery", "sqlite", 0.90, ("recovery", "reconcile")),
     ),

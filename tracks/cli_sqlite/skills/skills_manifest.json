@@ -47,10 +47,19 @@
   {
     "confidence": 0.7,
     "description": "Stateful ingest workflow with dedupe, rejects, and checkpoint logging.",
-    "last_updated": "2026-02-21T14:59:15.472379+00:00",
+    "last_updated": "2026-02-25T22:09:16.174994+00:00",
     "path": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/skills/sqlite/incremental-reconcile/SKILL.md",
     "skill_ref": "sqlite/incremental-reconcile",
     "title": "sqlite-incremental-reconcile",
+    "version": 1
+  },
+  {
+    "confidence": 0.7,
+    "description": "Lightweight dedupe + reject workflow for nano benchmark transfer runs.",
+    "last_updated": "2026-02-26T11:34:34.736031+00:00",
+    "path": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/skills/sqlite/incremental-reconcile-nano/SKILL.md",
+    "skill_ref": "sqlite/incremental-reconcile-nano",
+    "title": "sqlite-incremental-reconcile-nano",
     "version": 1
   },
   {

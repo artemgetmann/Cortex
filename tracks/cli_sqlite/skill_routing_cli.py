@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+TASK_ID_HINT_RE = re.compile(r"(?im)^\s*[a-z0-9 _-]*task:\s*([a-z0-9_-]+)\b")
 
 
 @dataclass(frozen=True)
@@ -154,12 +155,22 @@ def route_manifest_entries(*, task: str, entries: list[SkillManifestEntry], top_
     if not entries or top_k <= 0:
         return []
 
-    task_tokens = set(TOKEN_RE.findall(task.lower()))
+    task_text = str(task or "")
+    task_tokens = set(TOKEN_RE.findall(task_text.lower()))
+    task_hint_match = TASK_ID_HINT_RE.search(task_text)
+    task_id_hint = ""
+    if task_hint_match:
+        task_id_hint = str(task_hint_match.group(1) or "").strip().lower().replace("_", "-")
     scored: list[tuple[float, SkillManifestEntry]] = []
     for entry in entries:
         haystack = f"{entry.title} {entry.description} {entry.skill_ref}".lower()
         overlap = len(task_tokens & set(TOKEN_RE.findall(haystack)))
-        score = float(overlap) + (0.1 * float(entry.confidence))
+        # Hard preference for exact task-family skill refs when task_id hint exists.
+        task_id_bonus = 0.0
+        normalized_ref = str(entry.skill_ref).strip().lower().replace("_", "-")
+        if task_id_hint and task_id_hint in normalized_ref:
+            task_id_bonus = 100.0
+        score = task_id_bonus + float(overlap) + (0.1 * float(entry.confidence))
         scored.append((score, entry))
 
     scored.sort(key=lambda row: (-row[0], row[1].skill_ref))

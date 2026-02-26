@@ -441,6 +441,53 @@ class EvalTests(unittest.TestCase):
             self.assertTrue(result.passed)
             self.assertEqual(result.score, 1.0)
 
+    def test_eval_incremental_reconcile_nano_accepts_insert_or_ignore_flow(self) -> None:
+        track_tasks = Path(__file__).resolve().parents[1] / "tasks"
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "task.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE ledger(event_id TEXT PRIMARY KEY, category TEXT, amount INTEGER, batch_id TEXT)"
+                )
+                conn.execute("CREATE TABLE rejects(event_id TEXT, reason TEXT)")
+                conn.executemany(
+                    "INSERT INTO ledger(event_id, category, amount, batch_id) VALUES (?, ?, ?, ?)",
+                    [
+                        ("e1", "drums", 5, "b1"),
+                        ("e2", "bass", 4, "b1"),
+                        ("e3", "lead", 3, "b1"),
+                        ("e4", "drums", 8, "b1"),
+                    ],
+                )
+                conn.execute("INSERT INTO rejects(event_id, reason) VALUES ('e2', 'duplicate_event')")
+                conn.commit()
+
+            events = [
+                {
+                    "tool": "run_sqlite",
+                    "tool_input": {
+                        "sql": "INSERT OR IGNORE INTO ledger(event_id, category, amount, batch_id) VALUES ('e1','drums',5,'b1');",
+                    },
+                    "ok": True,
+                },
+                {
+                    "tool": "run_sqlite",
+                    "tool_input": {
+                        "sql": "INSERT OR IGNORE INTO rejects(event_id, reason) VALUES ('e2', 'duplicate_event');",
+                    },
+                    "ok": True,
+                },
+            ]
+            result = evaluate_cli_session(
+                task="sqlite incremental reconcile nano dedupe",
+                task_id="incremental_reconcile_nano",
+                events=events,
+                db_path=db_path,
+                tasks_root=track_tasks,
+            )
+            self.assertTrue(result.applicable)
+            self.assertTrue(result.passed)
+
 
 class SkillGateTests(unittest.TestCase):
     def test_skill_gate_requires_intersection(self) -> None:
@@ -456,16 +503,46 @@ class SkillGateTests(unittest.TestCase):
     def test_required_skill_refs_only_gate_active_domain(self) -> None:
         refs = ["sqlite/incremental-reconcile", "shell/git-release-flow"]
         self.assertEqual(
-            _required_skill_refs_for_domain(routed_refs=refs, domain="shell", require_skill_read=True),
+            _required_skill_refs_for_domain(
+                routed_refs=refs,
+                domain="shell",
+                require_skill_read=True,
+                task_id="shell_git_transfer_hotfix",
+            ),
             {"shell/git-release-flow"},
         )
         self.assertEqual(
-            _required_skill_refs_for_domain(routed_refs=refs, domain="artic", require_skill_read=True),
+            _required_skill_refs_for_domain(
+                routed_refs=refs,
+                domain="artic",
+                require_skill_read=True,
+                task_id="artic_search_basic",
+            ),
             set(),
         )
         self.assertEqual(
-            _required_skill_refs_for_domain(routed_refs=refs, domain="shell", require_skill_read=False),
+            _required_skill_refs_for_domain(
+                routed_refs=refs,
+                domain="shell",
+                require_skill_read=False,
+                task_id="shell_git_transfer_hotfix",
+            ),
             set(),
+        )
+
+    def test_required_skill_refs_prefer_task_specific_variant(self) -> None:
+        refs = [
+            "sqlite/incremental-reconcile",
+            "sqlite/incremental-reconcile-nano",
+        ]
+        self.assertEqual(
+            _required_skill_refs_for_domain(
+                routed_refs=refs,
+                domain="sqlite",
+                require_skill_read=True,
+                task_id="incremental_reconcile_nano",
+            ),
+            {"sqlite/incremental-reconcile-nano"},
         )
 
 

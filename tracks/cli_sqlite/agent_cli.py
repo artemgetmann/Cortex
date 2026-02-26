@@ -2357,6 +2357,36 @@ def _create_executor_response_via_openai(
     tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
     allowed_tool_names = {name for name in tool_names if name}
     assistant_blocks: list[dict[str, Any]] = []
+
+    def _decode_tool_arguments(raw_arguments: Any, *, call_kind: str, tool_name: str) -> tuple[dict[str, Any] | None, str | None]:
+        """Best-effort parser for OpenAI tool-call arguments.
+
+        Some Responses turns can return malformed/truncated JSON in `arguments`.
+        We avoid crashing the whole run and let the loop continue with an explicit
+        parse warning so contract-gap retry + lesson extraction can still run.
+        """
+        if isinstance(raw_arguments, dict):
+            return raw_arguments, None
+        raw_arguments_text = str(raw_arguments or "").strip() or "{}"
+        try:
+            parsed = json.loads(raw_arguments_text)
+        except json.JSONDecodeError:
+            # Second pass: tolerate wrappers/noise if a valid JSON object exists.
+            try:
+                parsed = _extract_first_json_object(raw_arguments_text)
+            except Exception:
+                clipped = _clip_text(raw_arguments_text, max_chars=500)
+                return None, (
+                    f"[openai_tool_parse_error] {call_kind} '{tool_name}' arguments were not valid JSON "
+                    f"and were skipped: {clipped}"
+                )
+        if not isinstance(parsed, dict):
+            return None, (
+                f"[openai_tool_parse_error] {call_kind} '{tool_name}' arguments decoded to non-object "
+                f"and were skipped."
+            )
+        return parsed, None
+
     if _openai_use_chat_completions():
         payload = _openai_chat_completions_request(
             api_key=api_key,
@@ -2396,21 +2426,16 @@ def _create_executor_response_via_openai(
                 raise RuntimeError(f"OpenAI executor tool call at index {idx} missing function name.")
             if name not in allowed_tool_names:
                 raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
-            raw_arguments = function.get("arguments", "{}")
-            if isinstance(raw_arguments, dict):
-                tool_input = raw_arguments
-            else:
-                raw_arguments_text = str(raw_arguments or "").strip() or "{}"
-                try:
-                    parsed = json.loads(raw_arguments_text)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(
-                        f"OpenAI tool call '{name}' arguments were not valid JSON: "
-                        f"{_clip_text(raw_arguments_text, max_chars=500)}"
-                    ) from exc
-                if not isinstance(parsed, dict):
-                    raise RuntimeError(f"OpenAI tool call '{name}' arguments must decode to an object.")
-                tool_input = parsed
+            tool_input, parse_warning = _decode_tool_arguments(
+                function.get("arguments", "{}"),
+                call_kind="tool_call",
+                tool_name=name,
+            )
+            if parse_warning:
+                assistant_blocks.append({"type": "text", "text": parse_warning})
+                continue
+            if tool_input is None:
+                continue
             tool_call_id = str(call.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
             assistant_blocks.append(
                 {
@@ -2450,21 +2475,16 @@ def _create_executor_response_via_openai(
                 raise RuntimeError(f"OpenAI function_call at output index {idx} missing name.")
             if name not in allowed_tool_names:
                 raise RuntimeError(f"OpenAI requested unknown tool '{name}'. Allowed: {sorted(allowed_tool_names)}")
-            raw_arguments = item.get("arguments", "{}")
-            if isinstance(raw_arguments, dict):
-                tool_input = raw_arguments
-            else:
-                raw_arguments_text = str(raw_arguments or "").strip() or "{}"
-                try:
-                    parsed = json.loads(raw_arguments_text)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(
-                        f"OpenAI function_call '{name}' arguments were not valid JSON: "
-                        f"{_clip_text(raw_arguments_text, max_chars=500)}"
-                    ) from exc
-                if not isinstance(parsed, dict):
-                    raise RuntimeError(f"OpenAI function_call '{name}' arguments must decode to an object.")
-                tool_input = parsed
+            tool_input, parse_warning = _decode_tool_arguments(
+                item.get("arguments", "{}"),
+                call_kind="function_call",
+                tool_name=name,
+            )
+            if parse_warning:
+                assistant_blocks.append({"type": "text", "text": parse_warning})
+                continue
+            if tool_input is None:
+                continue
             # Responses API uses call_id for tool correlation; normalize it to
             # existing tool_use.id expected by the rest of the runtime.
             tool_call_id = str(item.get("call_id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{call_index}"
@@ -2937,13 +2957,25 @@ def _required_skill_refs_for_domain(
     routed_refs: list[str],
     domain: str,
     require_skill_read: bool,
+    task_id: str,
 ) -> set[str]:
     """Gate only on active-domain skills to prevent cross-domain deadlocks."""
     if not require_skill_read:
         return set()
     domain_prefix = f"{domain}/"
     domain_refs = [ref for ref in routed_refs if ref.startswith(domain_prefix)]
-    return set(domain_refs[:1])
+    if not domain_refs:
+        return set()
+
+    # Prefer the skill whose ref directly matches task_id (underscore/hyphen tolerant).
+    # This keeps near-duplicate families deterministic, e.g.:
+    # incremental_reconcile vs incremental_reconcile_nano.
+    normalized_task = str(task_id).strip().lower().replace("_", "-")
+    if normalized_task:
+        for ref in domain_refs:
+            if normalized_task in ref.lower():
+                return {ref}
+    return {domain_refs[0]}
 
 
 def _is_skill_gate_satisfied(
@@ -3122,6 +3154,7 @@ def prepare_cli_prompt_preview(
             routed_refs=routed_refs,
             domain=domain,
             require_skill_read=require_skill_read,
+            task_id=task_id,
         )
         skills_text = manifest_summaries_text(routed_entries)
 
@@ -3594,6 +3627,7 @@ def _run_cli_agent_impl(
             routed_refs=routed_refs,
             domain=domain,
             require_skill_read=require_skill_read,
+            task_id=task_id,
         )
         skills_text = manifest_summaries_text(routed_entries)
     domain_keywords = adapter.quality_keywords()

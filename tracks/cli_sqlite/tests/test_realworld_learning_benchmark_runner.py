@@ -218,3 +218,64 @@ def test_realworld_learning_benchmark_openai_defaults_executor_model(
     assert all(call["model_executor"] == "gpt-5-nano" for call in run_calls)
     assert all(call["model_critic"] == "gpt-5-nano" for call in run_calls)
     assert all(call["model_judge"] == "gpt-5-nano" for call in run_calls)
+
+
+def test_realworld_learning_benchmark_allows_sqlite_transfer_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    run_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(run_realworld_learning_benchmark, "load_config", lambda: object())
+    monkeypatch.setattr(run_realworld_learning_benchmark, "SESSIONS_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(run_realworld_learning_benchmark, "_clear_learning_state", lambda: None)
+
+    def _fake_run_cli_agent(**kwargs: Any) -> SimpleNamespace:
+        run_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            metrics={
+                "eval_passed": True,
+                "eval_score": 1.0,
+                "steps": 1,
+                "tool_errors": 0,
+                "lessons_loaded": 0,
+                "lessons_generated": 0,
+                "repeated_error_signatures": [],
+            }
+        )
+
+    monkeypatch.setattr(run_realworld_learning_benchmark, "run_cli_agent", _fake_run_cli_agent)
+    output_json = tmp_path / "realworld_sqlite_override.json"
+    output_md = tmp_path / "realworld_sqlite_override.md"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_realworld_learning_benchmark.py",
+            "--sessions",
+            "2",
+            "--start-session",
+            "88300",
+            "--max-steps",
+            "2",
+            "--suite",
+            "sqlite",
+            "--sqlite-transfer-task-id",
+            "incremental_reconcile_nano",
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+        ],
+    )
+
+    rc = run_realworld_learning_benchmark.main()
+    assert rc == 0
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    schedule_task_ids = [str(item["task_id"]) for item in payload["task_schedule"]]
+    assert "import_aggregate" in schedule_task_ids
+    assert "incremental_reconcile_nano" in schedule_task_ids
+    assert "incremental_reconcile" not in schedule_task_ids
+    assert payload["config"]["sqlite_transfer_task_id"] == "incremental_reconcile_nano"
+    assert run_calls
+    assert any(str(call.get("task_id")) == "incremental_reconcile_nano" for call in run_calls)

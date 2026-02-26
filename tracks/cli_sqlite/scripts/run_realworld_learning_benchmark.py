@@ -56,7 +56,7 @@ MEMORY_EVENTS_PATH = Path(getattr(agent_cli, "MEMORY_EVENTS_PATH", DEFAULT_MEMOR
 ESCALATION_STATE_PATH = Path(getattr(agent_cli, "ESCALATION_STATE_PATH", DEFAULT_ESCALATION_PATH))
 
 # Each domain has explicit train and transfer tasks with deterministic CONTRACT checks.
-DOMAIN_SUITES: tuple[dict[str, Any], ...] = (
+BASE_DOMAIN_SUITES: tuple[dict[str, Any], ...] = (
     {
         "suite": "git",
         "train": {"domain": "shell", "task_id": "shell_git_train_release_flow"},
@@ -76,6 +76,30 @@ DOMAIN_SUITES: tuple[dict[str, Any], ...] = (
         "docs": ["tracks/cli_sqlite/domains/docs/shell-xlsx-reference.md"],
     },
 )
+
+
+def _build_domain_suites(
+    *,
+    sqlite_train_task_id: str,
+    sqlite_transfer_task_id: str,
+) -> tuple[dict[str, Any], ...]:
+    """Return benchmark suites with optional sqlite train/transfer overrides.
+
+    We keep defaults stable for existing reports/tests and only mutate sqlite when
+    callers opt in via CLI flags.
+    """
+    normalized_train = str(sqlite_train_task_id).strip() or "import_aggregate"
+    normalized_transfer = str(sqlite_transfer_task_id).strip() or "incremental_reconcile"
+    rows: list[dict[str, Any]] = []
+    for suite in BASE_DOMAIN_SUITES:
+        if str(suite.get("suite", "")).strip() != "sqlite":
+            rows.append(dict(suite))
+            continue
+        updated = dict(suite)
+        updated["train"] = {"domain": "sqlite", "task_id": normalized_train}
+        updated["transfer"] = {"domain": "sqlite", "task_id": normalized_transfer}
+        rows.append(updated)
+    return tuple(rows)
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -121,9 +145,9 @@ def _build_ablations() -> list[dict[str, Any]]:
     return rows
 
 
-def _build_task_schedule() -> list[dict[str, str]]:
+def _build_task_schedule(*, domain_suites: tuple[dict[str, Any], ...]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for suite in DOMAIN_SUITES:
+    for suite in domain_suites:
         rows.append(
             {
                 "suite": str(suite["suite"]),
@@ -560,6 +584,16 @@ def main() -> int:
         help="Optional ablation arm id filter (repeatable).",
     )
     ap.add_argument(
+        "--sqlite-train-task-id",
+        default="import_aggregate",
+        help="Optional sqlite train task override (defaults to import_aggregate).",
+    )
+    ap.add_argument(
+        "--sqlite-transfer-task-id",
+        default="incremental_reconcile",
+        help="Optional sqlite transfer task override (defaults to incremental_reconcile).",
+    )
+    ap.add_argument(
         "--output-json",
         default=str(REPORTS_ROOT / "realworld_learning_benchmark.json"),
     )
@@ -605,9 +639,13 @@ def main() -> int:
     auto_escalate_critic = False
     initial_hotfix_variant_override = os.environ.get(HOTFIX_HARD_VARIANT_OVERRIDE_ENV)
 
+    domain_suites = _build_domain_suites(
+        sqlite_train_task_id=str(args.sqlite_train_task_id).strip(),
+        sqlite_transfer_task_id=str(args.sqlite_transfer_task_id).strip(),
+    )
     selected_suites = {str(item).strip() for item in args.suite if str(item).strip()}
     active_suites = [
-        row for row in DOMAIN_SUITES
+        row for row in domain_suites
         if not selected_suites or str(row["suite"]) in selected_suites
     ]
     if not active_suites:
@@ -619,24 +657,7 @@ def main() -> int:
         if not arms:
             available = ", ".join(sorted(str(row["arm_id"]) for row in _build_ablations()))
             raise ValueError(f"No matching --arm values. Available: {available}")
-    task_schedule: list[dict[str, str]] = []
-    for suite in active_suites:
-        task_schedule.append(
-            {
-                "suite": str(suite["suite"]),
-                "phase": "train",
-                "domain": str(suite["train"]["domain"]),
-                "task_id": str(suite["train"]["task_id"]),
-            }
-        )
-        task_schedule.append(
-            {
-                "suite": str(suite["suite"]),
-                "phase": "transfer",
-                "domain": str(suite["transfer"]["domain"]),
-                "task_id": str(suite["transfer"]["task_id"]),
-            }
-        )
+    task_schedule = _build_task_schedule(domain_suites=tuple(active_suites))
     all_rows: list[dict[str, Any]] = []
     scoreboard_rows: list[dict[str, Any]] = []
     rows_by_arm: dict[str, list[dict[str, Any]]] = {str(arm["arm_id"]): [] for arm in arms}
@@ -664,7 +685,7 @@ def main() -> int:
                 _clear_learning_state()
 
             task_spec = _pick_task_for_run(run_index, task_schedule)
-            suite = next(item for item in DOMAIN_SUITES if str(item["suite"]) == str(task_spec["suite"]))
+            suite = next(item for item in active_suites if str(item["suite"]) == str(task_spec["suite"]))
             docs_enabled = bool(arm["docs_enabled"])
             documentation = list(suite["docs"]) if docs_enabled else []
             doc_mode = str(arm["doc_mode"]) if docs_enabled else "none"
@@ -861,6 +882,8 @@ def main() -> int:
             "doc_budget_tokens": int(args.doc_budget_tokens),
             "doc_retrieval": args.doc_retrieval,
             "doc_retriever_model": doc_retriever_model,
+            "sqlite_train_task_id": str(args.sqlite_train_task_id).strip() or "import_aggregate",
+            "sqlite_transfer_task_id": str(args.sqlite_transfer_task_id).strip() or "incremental_reconcile",
             "llm_backend": llm_backend,
             "cost_profile": args.cost_profile,
             "benchmark_deterministic": bool(args.benchmark_deterministic),

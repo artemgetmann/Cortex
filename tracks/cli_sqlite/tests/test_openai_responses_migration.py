@@ -94,6 +94,53 @@ def test_openai_executor_uses_responses_and_parses_function_calls(
     assert usage["response_id"] == "resp_123"
 
 
+def test_openai_executor_skips_malformed_function_call_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_USE_CHAT_COMPLETIONS", raising=False)
+    monkeypatch.setattr(
+        agent_cli,
+        "_openai_responses_request",
+        lambda **_: {
+            "id": "resp_bad_args",
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "run_sqlite",
+                    "arguments": "{\"sql\":\"SELECT 1",
+                    "call_id": "call_bad",
+                }
+            ],
+            "usage": {"input_tokens": 3, "output_tokens": 2},
+        },
+    )
+
+    blocks, usage = agent_cli._create_executor_response_via_openai(
+        api_key="test-key",
+        model="gpt-5-nano",
+        system_prompt="System policy",
+        tools=[
+            {
+                "name": "run_sqlite",
+                "description": "Run SQL",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"sql": {"type": "string"}},
+                    "required": ["sql"],
+                },
+            }
+        ],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "execute now"}]}],
+        temperature=0.0,
+    )
+
+    assert usage["response_id"] == "resp_bad_args"
+    assert not any(block.get("type") == "tool_use" for block in blocks)
+    parse_blocks = [block for block in blocks if block.get("type") == "text"]
+    assert parse_blocks
+    assert "openai_tool_parse_error" in str(parse_blocks[0].get("text", ""))
+
+
 def test_openai_executor_respects_chat_completions_toggle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

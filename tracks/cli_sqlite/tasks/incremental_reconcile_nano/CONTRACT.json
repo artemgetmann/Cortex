@@ -1,0 +1,72 @@
+{
+  "id": "cli-sqlite-incremental-reconcile-nano-v1",
+  "task_match": {
+    "all": [
+      "sqlite"
+    ],
+    "any": [
+      "reconcile",
+      "incremental",
+      "nano"
+    ]
+  },
+  "setup": {
+    "bootstrap_sql_path": "bootstrap.sql",
+    "fixture_paths": [
+      "fixture.csv"
+    ]
+  },
+  "signals": {
+    "required_sql_patterns": [],
+    "forbidden_sql_patterns": [
+      "(?is)drop\\s+table\\s+ledger",
+      "(?is)delete\\s+from\\s+ledger"
+    ],
+    "required_queries": [
+      {
+        "id": "ledger_aggregate",
+        "sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+        "expected_rows": [
+          [
+            "bass",
+            "4"
+          ],
+          [
+            "drums",
+            "13"
+          ],
+          [
+            "lead",
+            "3"
+          ]
+        ]
+      },
+      {
+        "id": "reject_count",
+        "sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+        "expected_rows": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "id": "ledger_count",
+        "sql": "SELECT COUNT(*) FROM ledger;",
+        "expected_rows": [
+          [
+            "4"
+          ]
+        ]
+      }
+    ],
+    "max_error_count": 2
+  },
+  "pass_rule": "all_required && no_forbidden && required_queries_match && errors_within_budget",
+  "reason_codes": [
+    "missing_required_pattern",
+    "matched_forbidden_pattern",
+    "required_query_mismatch",
+    "too_many_errors"
+  ]
+}

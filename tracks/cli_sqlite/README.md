@@ -29,6 +29,7 @@ For canonical docs index, use `docs/README.md`.
 ## Typical Tasks
 
 - `import_aggregate`
+- `incremental_reconcile_nano` (nano-friendly reconcile transfer slice)
 - `incremental_reconcile`
 - `aggregate_report`
 - `aggregate_report_holdout`
@@ -141,6 +142,25 @@ python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
   --judge-diagnostic \
   --output-json tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.json \
   --output-md tracks/cli_sqlite/reports/realworld_curve_transfer_hard_10run.md
+```
+
+Run sqlite transfer with the nano-friendly reconcile task override:
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_realworld_learning_benchmark.py \
+  --sessions 10 \
+  --start-session 84001 \
+  --suite sqlite \
+  --arm docs_on__mode_lossy__lessons_on \
+  --llm-backend openai \
+  --model-executor gpt-5-nano \
+  --model-judge gpt-5-nano \
+  --sqlite-transfer-task-id incremental_reconcile_nano \
+  --max-steps 4 \
+  --benchmark-deterministic \
+  --benchmark-promoted-only \
+  --output-json tracks/cli_sqlite/reports/sqlite_transfer_nano_10run.json \
+  --output-md tracks/cli_sqlite/reports/sqlite_transfer_nano_10run.md
 ```
 
 Run a deeper pass (10+ sessions per arm):

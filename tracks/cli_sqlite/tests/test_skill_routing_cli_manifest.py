@@ -3,7 +3,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from tracks.cli_sqlite.skill_routing_cli import build_skill_manifest
+from tracks.cli_sqlite.skill_routing_cli import (
+    SkillManifestEntry,
+    build_skill_manifest,
+    route_manifest_entries,
+)
 
 
 def test_build_skill_manifest_skips_noop_rewrite(tmp_path: Path) -> None:
@@ -37,3 +41,30 @@ def test_build_skill_manifest_skips_noop_rewrite(tmp_path: Path) -> None:
 
     assert first_payload == second_payload
     assert second_mtime == first_mtime
+
+
+def test_route_manifest_entries_prefers_task_id_hint_variant() -> None:
+    entries = [
+        SkillManifestEntry(
+            skill_ref="sqlite/incremental-reconcile",
+            title="sqlite-incremental-reconcile",
+            description="Stateful reconcile workflow.",
+            path="/tmp/old",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+        SkillManifestEntry(
+            skill_ref="sqlite/incremental-reconcile-nano",
+            title="sqlite-incremental-reconcile-nano",
+            description="Nano-friendly reconcile workflow.",
+            path="/tmp/nano",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+    ]
+    task_text = "SQLite task: incremental_reconcile_nano.\nGoal: reconcile rows."
+    selected = route_manifest_entries(task=task_text, entries=entries, top_k=1)
+    assert selected
+    assert selected[0].skill_ref == "sqlite/incremental-reconcile-nano"
