@@ -19,6 +19,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_EXECUTOR_MODEL,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
     DEFAULT_VERIFIER_STACK_ENABLED,
     DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     DEFAULT_CLARIFY_ON_LOW_CONFIDENCE,
@@ -186,6 +187,12 @@ def main() -> int:
         help="Maximum targeted retries from contract-gap checker (currently capped to 1).",
     )
     ap.add_argument(
+        "--contract-gap-deterministic-recipes",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
+        help="Enable adapter-provided deterministic repair recipes during contract-gap retry prompts.",
+    )
+    ap.add_argument(
         "--structured-lessons-required",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_STRUCTURED_LESSONS_REQUIRED,
@@ -344,6 +351,7 @@ def main() -> int:
             judge_diagnostic=effective_judge_diagnostic,
             contract_gap_retry=bool(args.contract_gap_retry),
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
+            contract_gap_deterministic_recipes=bool(args.contract_gap_deterministic_recipes),
             structured_lessons_required=bool(args.structured_lessons_required),
             verifier_stack_enabled=bool(args.verifier_stack),
             low_confidence_threshold=max(0.0, min(1.0, float(args.low_confidence_threshold))),

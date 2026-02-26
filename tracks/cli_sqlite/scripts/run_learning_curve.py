@@ -28,6 +28,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_BENCHMARK_PROMOTED_ONLY,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
     DEFAULT_DOC_BUDGET_TOKENS,
     DEFAULT_DOC_MODE,
     DEFAULT_DOC_RETRIEVAL_MODE,
@@ -126,6 +127,12 @@ def main() -> int:
         type=int,
         default=DEFAULT_CONTRACT_GAP_RETRY_STEPS,
         help="Retry budget for contract gap checker (hard-capped to 1 in runtime).",
+    )
+    ap.add_argument(
+        "--contract-gap-deterministic-recipes",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
+        help="Enable adapter-provided deterministic repair recipes during contract-gap retry prompts.",
     )
     ap.add_argument(
         "--structured-lessons-required",
@@ -284,6 +291,7 @@ def main() -> int:
             judge_diagnostic=effective_judge_diagnostic,
             contract_gap_retry=bool(args.contract_gap_retry),
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),
+            contract_gap_deterministic_recipes=bool(args.contract_gap_deterministic_recipes),
             structured_lessons_required=bool(args.structured_lessons_required),
             llm_backend=effective_backend,
             benchmark_deterministic=bool(args.benchmark_deterministic),

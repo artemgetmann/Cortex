@@ -152,6 +152,7 @@ DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
 DEFAULT_CONTRACT_GAP_RETRY = True
 DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
+DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES = True
 DEFAULT_STRUCTURED_LESSONS_REQUIRED = True
 DEFAULT_VERIFIER_STACK_ENABLED = False
 DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
@@ -3491,6 +3492,7 @@ def run_cli_agent(
     judge_diagnostic: bool = False,
     contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
     contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    contract_gap_deterministic_recipes: bool = DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
     structured_lessons_required: bool = DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     verifier_stack_enabled: bool = DEFAULT_VERIFIER_STACK_ENABLED,
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
@@ -3588,6 +3590,7 @@ def run_cli_agent(
             judge_diagnostic=judge_diagnostic,
             contract_gap_retry=contract_gap_retry,
             contract_gap_retry_steps=contract_gap_retry_steps,
+            contract_gap_deterministic_recipes=contract_gap_deterministic_recipes,
             structured_lessons_required=structured_lessons_required,
             verifier_stack_enabled=verifier_stack_enabled,
             low_confidence_threshold=low_confidence_threshold,
@@ -3692,6 +3695,7 @@ def _run_cli_agent_impl(
     judge_diagnostic: bool = False,
     contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
     contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
+    contract_gap_deterministic_recipes: bool = DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
     structured_lessons_required: bool = DEFAULT_STRUCTURED_LESSONS_REQUIRED,
     verifier_stack_enabled: bool = DEFAULT_VERIFIER_STACK_ENABLED,
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
@@ -4027,6 +4031,7 @@ def _run_cli_agent_impl(
         "judge_diagnostic": bool(judge_diagnostic),
         "contract_gap_retry_enabled": bool(contract_gap_retry),
         "contract_gap_retry_steps_budget": int(contract_gap_retry_steps),
+        "contract_gap_deterministic_recipes_enabled": bool(contract_gap_deterministic_recipes),
         "verifier_stack_enabled": bool(verifier_stack_enabled),
         "verifier_low_confidence_threshold": round(float(low_confidence_threshold), 3),
         "verifier_clarify_on_low_confidence": bool(clarify_on_low_confidence),
@@ -4454,12 +4459,16 @@ def _run_cli_agent_impl(
             )
             if hint_text:
                 gap_hints.append(hint_text)
-        deterministic_gap_hints = _deterministic_gap_fix_recipes(
-            adapter=adapter,
-            domain=domain,
-            task_id=task_id,
-            unresolved_gaps=unresolved_gaps,
-            max_items=3,
+        deterministic_gap_hints = (
+            _deterministic_gap_fix_recipes(
+                adapter=adapter,
+                domain=domain,
+                task_id=task_id,
+                unresolved_gaps=unresolved_gaps,
+                max_items=3,
+            )
+            if bool(contract_gap_deterministic_recipes)
+            else []
         )
         metrics["contract_gap_deterministic_hint_count"] = len(deterministic_gap_hints)
         if gap_matches:
@@ -6218,6 +6227,7 @@ def _run_cli_agent_impl(
         "contract_gap_retry": {
             "enabled": bool(contract_gap_retry),
             "steps_budget": int(contract_gap_retry_steps),
+            "deterministic_recipes_enabled": bool(contract_gap_deterministic_recipes),
             "attempts": int(metrics.get("contract_gap_retry_attempts", 0) or 0),
             "triggered": int(metrics.get("contract_gap_retry_triggered", 0) or 0),
             "closure_checks": int(metrics.get("contract_closure_checks", 0) or 0),
