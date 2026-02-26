@@ -495,3 +495,87 @@ def test_contract_gap_retry_counts_gap_lesson_activations(
     assert result.metrics["v2_lesson_activations"] >= 1
     assert result.metrics["lesson_activations"] >= 1
     assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
+
+
+def test_deterministic_gap_fix_recipes_sqlite_emit_command_recipe() -> None:
+    recipes = agent_cli._deterministic_gap_fix_recipes(
+        domain="sqlite",
+        task_id="retry_task",
+        unresolved_gaps=[
+            {
+                "reason_code": "required_query_mismatch",
+                "gap_type": "required_query",
+                "query_id": "reject_count",
+                "query_sql": "SELECT COUNT(*) AS c FROM rejects;",
+                "expected_rows": [["1"]],
+            }
+        ],
+        max_items=3,
+    )
+
+    assert recipes
+    assert recipes[0].startswith("[deterministic_recipe domain=sqlite task_id=retry_task]")
+    assert "run_sqlite(sql=" in recipes[0]
+    assert "SELECT COUNT(*) AS c FROM rejects;" in recipes[0]
+
+
+def test_contract_gap_retry_injects_deterministic_recipe_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _FakeResponse([{"type": "text", "text": "done"}]),
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    sessions_root, adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-query-gap-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [
+                {
+                    "id": "reject_count",
+                    "sql": "SELECT COUNT(*) AS c FROM rejects;",
+                    "expected_rows": [["1"]],
+                }
+            ],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=607,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=True,
+        contract_gap_retry_steps=1,
+    )
+
+    retry_prompts = [
+        text
+        for text in _collect_user_text_messages(result.messages)
+        if "Deterministic contract gap check found unresolved requirements." in text
+    ]
+    assert retry_prompts
+    assert "[deterministic_recipe domain=sqlite task_id=retry_task]" in retry_prompts[0]
+    assert result.metrics["contract_gap_retry_attempts"] == 1
+    assert result.metrics["contract_gap_deterministic_hint_count"] >= 1
+    assert len(adapter.execute_calls) >= 2
+    assert any("SELECT COUNT(*) AS c FROM rejects;" in str(row.get("sql", "")) for row in adapter.execute_calls)
+    assert adapter.execute_calls[-1] == {"sql": "SELECT 1;"}
+    events = read_events(sessions_root / "session-607" / "events.jsonl")
+    assert any(str(event.get("tool", "")) == "contract_gap_retry" for event in events)

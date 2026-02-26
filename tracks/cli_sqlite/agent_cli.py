@@ -728,6 +728,122 @@ def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
     return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."
 
 
+def _sqlite_gap_fix_recipe(gap: dict[str, Any]) -> str:
+    """Return sqlite-specific deterministic fix recipe text for one gap.
+
+    This is intentionally command-oriented so small models can execute concrete
+    repairs instead of converting abstract advice into SQL under pressure.
+    """
+    reason = str(gap.get("reason_code", "")).strip()
+    gap_type = str(gap.get("gap_type", "")).strip()
+    detail = str(gap.get("detail", "")).strip()
+    query_id = str(gap.get("query_id", "")).strip()
+    query_sql = str(gap.get("query_sql", "")).strip()
+    expected_rows = gap.get("expected_rows", [])
+    expected_suffix = (
+        f" expected_rows={json.dumps(expected_rows, ensure_ascii=True)}"
+        if isinstance(expected_rows, list)
+        else ""
+    )
+
+    if reason == "required_query_mismatch" and query_id == "reject_count":
+        return (
+            "Deterministic sqlite recipe (reject_count): run_sqlite(sql=\"PRAGMA table_info(rejects);\") "
+            "then run_sqlite(sql=\""
+            "INSERT INTO rejects(event_id, reason) "
+            "SELECT fs.event_id, 'duplicate_event' "
+            "FROM fixture_seed fs "
+            "JOIN (SELECT event_id FROM fixture_seed GROUP BY event_id HAVING COUNT(*) > 1) dup "
+            "ON dup.event_id = fs.event_id "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id AND r.reason = 'duplicate_event'"
+            ");\"). "
+            f"Then run validator query exactly: {query_sql}{expected_suffix}"
+        )
+    if reason == "required_query_mismatch" and query_id in {"ledger_aggregate", "ledger_count"}:
+        return (
+            "Deterministic sqlite recipe (ledger): run_sqlite(sql=\""
+            "INSERT INTO ledger(event_id, category, amount, batch_id) "
+            "SELECT fs.event_id, fs.category, fs.amount, fs.batch_id "
+            "FROM fixture_seed fs "
+            "WHERE NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id);"
+            "\"). "
+            f"Then run validator query exactly: {query_sql}{expected_suffix}"
+        )
+    if reason == "missing_required_pattern" and "insert\\s+into\\s+ledger" in detail.lower():
+        return (
+            "Deterministic sqlite recipe: use explicit ledger insert shape "
+            "run_sqlite(sql=\"INSERT INTO ledger(event_id, category, amount, batch_id) "
+            "SELECT fs.event_id, fs.category, fs.amount, fs.batch_id "
+            "FROM fixture_seed fs "
+            "WHERE NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id);\")."
+        )
+    if reason == "missing_required_pattern" and "insert\\s+into\\s+rejects" in detail.lower():
+        return (
+            "Deterministic sqlite recipe: use rejects schema-safe insert "
+            "run_sqlite(sql=\"INSERT INTO rejects(event_id, reason) "
+            "SELECT fs.event_id, 'duplicate_event' "
+            "FROM fixture_seed fs "
+            "JOIN (SELECT event_id FROM fixture_seed GROUP BY event_id HAVING COUNT(*) > 1) dup "
+            "ON dup.event_id = fs.event_id "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id AND r.reason = 'duplicate_event'"
+            ");\")."
+        )
+    if reason == "too_many_errors":
+        return (
+            "Deterministic sqlite recipe (error budget): first run schema probe "
+            "run_sqlite(sql=\"PRAGMA table_info(ledger); PRAGMA table_info(rejects);\") "
+            "then execute one mutating SQL block only, then validator SELECT queries."
+        )
+    if reason == "matched_forbidden_pattern":
+        return (
+            "Deterministic sqlite recipe: avoid forbidden SQL patterns entirely. "
+            "Use INSERT/UPDATE/SELECT only and verify required queries before stop."
+        )
+    return _fallback_rule_for_gap(gap)
+
+
+def _deterministic_gap_fix_recipes(
+    *,
+    domain: str,
+    task_id: str,
+    unresolved_gaps: list[dict[str, Any]],
+    max_items: int = 3,
+) -> list[str]:
+    """Build deterministic gap-fix recipes from unresolved contract gaps.
+
+    First-principles split:
+    - generic reason_code/gap_type fallback works for any domain/task.
+    - optional domain-specific recipes provide executable command templates.
+    """
+    normalized_domain = str(domain).strip().lower()
+    normalized_task_id = str(task_id).strip()
+    dedup: set[str] = set()
+    recipes: list[str] = []
+    for row in unresolved_gaps:
+        if not isinstance(row, dict):
+            continue
+        if normalized_domain == "sqlite":
+            recipe = _sqlite_gap_fix_recipe(row)
+        else:
+            recipe = _fallback_rule_for_gap(row)
+        text = " ".join(str(recipe).split()).strip()
+        if not text:
+            continue
+        # Include compact routing context so retrieval matching can anchor by
+        # domain/task without overfitting to one exact task string.
+        payload = f"[deterministic_recipe domain={normalized_domain} task_id={normalized_task_id}] {text}"
+        key = payload.lower()
+        if key in dedup:
+            continue
+        dedup.add(key)
+        recipes.append(payload)
+        if len(recipes) >= max(1, int(max_items)):
+            break
+    return recipes
+
+
 def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
     """
     Parse explicit `Print exactly ... verification line(s)` requirements from task text.
@@ -3862,6 +3978,7 @@ def _run_cli_agent_impl(
         "contract_gap_retry_triggered": 0,
         "contract_gap_unresolved_count_prestop": 0,
         "contract_gap_unresolved_count_final": 0,
+        "contract_gap_deterministic_hint_count": 0,
         "contract_closure_checks": 0,
         "contract_closure_check_failures": 0,
         "contract_closure_check_last_status": "not_run",
@@ -3894,6 +4011,7 @@ def _run_cli_agent_impl(
         "v2_transfer_lane_activations": 0,
         "v2_reflection_prompts": 0,
         "v2_reflection_reasons": [],
+        "v2_structured_fallback_lessons": 0,
         "v2_dependency_fallback_checks": 0,
         "v2_promoted": 0,
         "v2_suppressed": 0,
@@ -4198,6 +4316,14 @@ def _run_cli_agent_impl(
             )
             if hint_text:
                 gap_hints.append(hint_text)
+        deterministic_gap_hints = _deterministic_gap_fix_recipes(
+            domain=domain,
+            task_id=task_id,
+            unresolved_gaps=unresolved_gaps,
+            max_items=3,
+        )
+        metrics["contract_gap_deterministic_hint_count"] = len(deterministic_gap_hints)
+        injected_retry_hints = deterministic_gap_hints + gap_hints
         if gap_matches:
             gap_lanes: dict[str, str] = {}
             for match in gap_matches:
@@ -4233,7 +4359,7 @@ def _run_cli_agent_impl(
                 metrics["v2_lesson_activations_effective"] += len(gap_lanes)
         retry_prompt = _format_contract_gap_retry_prompt(
             unresolved_gaps=unresolved_gaps,
-            injected_hints=gap_hints,
+            injected_hints=injected_retry_hints,
             validator_evidence=validator_evidence,
         )
         messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
@@ -5277,12 +5403,39 @@ def _run_cli_agent_impl(
         v2_candidates: list[LessonRecord] = []
         structured_gap_rows = list(final_unresolved_gaps)
         fallback_rules: list[str] = []
-        if structured_lessons_required and not v2_reflection.filtered_lessons and structured_gap_rows:
-            fallback_rules = [_fallback_rule_for_gap(row) for row in structured_gap_rows[:3]]
-            metrics["v2_structured_fallback_lessons"] = len(fallback_rules)
-        source_lesson_texts = [lesson.lesson for lesson in v2_reflection.filtered_lessons] + fallback_rules
-        for idx, lesson_text in enumerate(source_lesson_texts):
+        source_lesson_rows: list[tuple[str, dict[str, Any]]] = []
+        if structured_lessons_required and structured_gap_rows:
+            # Deterministic recipes are always included for unresolved gaps so
+            # small models receive executable guidance, not only prose advice.
+            deterministic_rules = _deterministic_gap_fix_recipes(
+                domain=domain,
+                task_id=task_id,
+                unresolved_gaps=structured_gap_rows,
+                max_items=3,
+            )
+            for idx, recipe in enumerate(deterministic_rules):
+                gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)]
+                source_lesson_rows.append((recipe, gap_row))
+            fallback_rules = list(deterministic_rules)
+            metrics["v2_structured_fallback_lessons"] = len(deterministic_rules)
+
+        # Model lessons remain active. We append them after deterministic rows
+        # so execution-critical recipes are highest-priority in retrieval.
+        for idx, lesson in enumerate(v2_reflection.filtered_lessons):
+            text = str(getattr(lesson, "lesson", "")).strip()
+            if not text:
+                continue
             gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)] if structured_gap_rows else {}
+            source_lesson_rows.append((text, gap_row))
+
+        # Deduplicate by normalized text to avoid writing noisy duplicates when
+        # model output and deterministic recipe overlap semantically.
+        seen_lesson_texts: set[str] = set()
+        for lesson_text, gap_row in source_lesson_rows:
+            normalized_text = " ".join(str(lesson_text).lower().split())
+            if normalized_text in seen_lesson_texts:
+                continue
+            seen_lesson_texts.add(normalized_text)
             reason_code = str(gap_row.get("reason_code", "")).strip()
             gap_type = str(gap_row.get("gap_type", "")).strip()
             gap_signature = str(gap_row.get("gap_signature", "")).strip()
