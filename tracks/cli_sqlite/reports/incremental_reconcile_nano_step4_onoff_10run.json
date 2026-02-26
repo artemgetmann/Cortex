@@ -1,0 +1,334 @@
+{
+  "config": {
+    "task_id": "incremental_reconcile_nano",
+    "domain": "sqlite",
+    "max_steps": 4,
+    "sessions_per_arm": 10,
+    "llm_backend": "openai",
+    "model": "gpt-5-nano",
+    "docs": "on/lossy",
+    "deterministic": true,
+    "promoted_only": true
+  },
+  "arms": {
+    "on": [
+      {
+        "session_id": 142600,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142601,
+        "passed": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 3,
+        "reasons": [
+          "required_query_mismatch",
+          "too_many_errors"
+        ],
+        "v2_lessons_generated": 2,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142602,
+        "passed": false,
+        "score": 0.5,
+        "steps": 3,
+        "tool_errors": 0,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 3,
+        "v2_lesson_activations": 1,
+        "v2_lesson_activations_effective": 1,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142603,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 2,
+        "v2_lesson_activations_effective": 2,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142604,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142605,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 1,
+        "v2_lesson_activations": 6,
+        "v2_lesson_activations_effective": 6,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142606,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 2,
+        "v2_lesson_activations_effective": 2,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142607,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 6,
+        "v2_lesson_activations_effective": 6,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142608,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 1,
+        "v2_lesson_activations": 6,
+        "v2_lesson_activations_effective": 6,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      },
+      {
+        "session_id": 142609,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 2,
+        "v2_lesson_activations_effective": 2,
+        "v2_retrieval_help_ratio": 1.0,
+        "v2_retrieval_help_ratio_effective": 1.0
+      }
+    ],
+    "off": [
+      {
+        "session_id": 142700,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142701,
+        "passed": false,
+        "score": 0.5,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142702,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142703,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 1,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142704,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142705,
+        "passed": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "reasons": [],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142706,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142707,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142708,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "reasons": [
+          "required_query_mismatch"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      },
+      {
+        "session_id": 142709,
+        "passed": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "reasons": [
+          "too_many_errors"
+        ],
+        "v2_lessons_generated": 0,
+        "v2_lesson_activations": 0,
+        "v2_lesson_activations_effective": 0,
+        "v2_retrieval_help_ratio": 0.0,
+        "v2_retrieval_help_ratio_effective": 0.0
+      }
+    ]
+  },
+  "summary": {
+    "on": {
+      "run_count": 10,
+      "pass_rate": 0.6,
+      "pass_count": 6,
+      "last5_pass_rate": 0.6,
+      "last5_pass_count": 3,
+      "median_steps_on_pass": 4.0,
+      "mean_v2_lessons_generated": 0.7,
+      "mean_v2_lesson_activations": 2.5,
+      "mean_v2_lesson_activations_effective": 2.5,
+      "mean_v2_retrieval_help_ratio": 0.7,
+      "mean_v2_retrieval_help_ratio_effective": 0.7
+    },
+    "off": {
+      "run_count": 10,
+      "pass_rate": 0.4,
+      "pass_count": 4,
+      "last5_pass_rate": 0.2,
+      "last5_pass_count": 1,
+      "median_steps_on_pass": 4.0,
+      "mean_v2_lessons_generated": 0.0,
+      "mean_v2_lesson_activations": 0.0,
+      "mean_v2_lesson_activations_effective": 0.0,
+      "mean_v2_retrieval_help_ratio": 0.0,
+      "mean_v2_retrieval_help_ratio_effective": 0.0
+    }
+  },
+  "delta": {
+    "pass_rate_delta_on_minus_off": 0.19999999999999996,
+    "last5_pass_rate_delta_on_minus_off": 0.39999999999999997,
+    "activation_effective_delta_on_minus_off": 2.5,
+    "retrieval_help_effective_delta_on_minus_off": 0.7
+  }
+}

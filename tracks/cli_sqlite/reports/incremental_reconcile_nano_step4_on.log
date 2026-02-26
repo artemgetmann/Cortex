@@ -1,0 +1,128 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile_nano  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=True
+============================================================
+
+--- Run 1/10 (session 142600, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 29: no such table: rn'
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (50.4s)
+  [variant-scoreboard] variant=default score=0.7174 quality=1.0000 speed=0.3318 cost=0.2297
+
+--- Run 2/10 (session 142601, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 18: near "(": syntax error\n  e2\',\'bass\',4,\'b1\'),   (\'e4\',\'drums\',8,\'b1\') ) AS t(event_id, category, amount,\n                                      error here ---^\nParse error near line 34: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 37: table rejects has no column named category'
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Parse error near line 2: near "EXISTS": syntax error\n  ALTER TABLE IF EXISTS rejects ADD COLUMN IF NOT EXISTS category TEXT;\n                 ^--- error here'
+  [FAIL] score=0.67  steps=4  errors=3  lessons_in=0  lessons_out=0  (60.1s)
+  [variant-scoreboard] variant=default score=0.4188 quality=0.5336 speed=0.2996 cost=0.1580
+
+--- Run 3/10 (session 142602, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] no tool call; model stopped.
+  [FAIL] score=0.50  steps=3  errors=0  lessons_in=0  lessons_out=0  (61.9s)
+  [variant-scoreboard] variant=default score=0.3481 quality=0.4000 speed=0.3018 cost=0.2177
+
+--- Run 4/10 (session 142603, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (47.7s)
+  [variant-scoreboard] variant=default score=0.7165 quality=1.0000 speed=0.3420 cost=0.2066
+
+--- Run 5/10 (session 142604, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] no tool call; model stopped.
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (39.0s)
+  [variant-scoreboard] variant=default score=0.7362 quality=1.0000 speed=0.3797 cost=0.2754
+
+--- Run 6/10 (session 142605, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 7: table rejects has no column named category\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 12: table rejects has no column named amount\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (61.7s)
+  [variant-scoreboard] variant=default score=0.4993 quality=0.6664 speed=0.2950 cost=0.1713
+
+--- Run 7/10 (session 142606, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (174.0s)
+  [variant-scoreboard] variant=default score=0.6639 quality=1.0000 speed=0.1402 cost=0.1921
+
+--- Run 8/10 (session 142607, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 5: table rejects has no column named category\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 5: table rejects has no column named batch_id\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=2  lessons_in=0  lessons_out=0  (55.2s)
+  [variant-scoreboard] variant=default score=0.7040 quality=1.0000 speed=0.3153 cost=0.1682
+
+--- Run 9/10 (session 142608, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=read_skill ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 7: table rejects has no column named category\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 004] contract gaps detected (1), trigger=no_tool_call; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Parse error near line 7: table rejects has no column named batch_id\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (67.9s)
+  [variant-scoreboard] variant=default score=0.4941 quality=0.6664 speed=0.2780 cost=0.1650
+
+--- Run 10/10 (session 142609, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 7: near "(": syntax error\n  nt_id, \'duplicate_event\' FROM (VALUES (\'e2\')) AS t(event_id) WHERE EXISTS (SEL\n                                      error here ---^\n\n--- HINT from prior sessions ---\n- When reason_code=required_query_mismatch, reconcile data so reject_count matches exactly. query_sql=SELECT COUNT(*) FROM rejects WHERE reason = \'duplicate_event\'; expected_rows=[["1"]]\n- When reason_code=required_query_mismatch, reconcile data so ledger_aggregate matches exactly. query_sql=SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category; expected_rows=[["bass", "4"], ["drums", "13"], ["lead", "3"]]'
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (42.3s)
+  [variant-scoreboard] variant=default score=0.7277 quality=1.0000 speed=0.3645 cost=0.2436
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   142600   1.00     Y      4     1       0        0  50.4s
+   2   142601   0.67     N      4     3       0        0  60.1s
+   3   142602   0.50     N      3     0       0        0  61.9s
+   4   142603   1.00     Y      4     0       0        0  47.7s
+   5   142604   1.00     Y      4     0       0        0  39.0s
+   6   142605   0.83     N      4     2       0        0  61.7s
+   7   142606   1.00     Y      4     0       0        0 174.0s
+   8   142607   1.00     Y      4     2       0        0  55.2s
+   9   142608   0.83     N      4     2       0        0  67.9s
+  10   142609   1.00     Y      4     1       0        0  42.3s
+
+Score trajectory: 1.00 -> 0.67 -> 0.50 -> 1.00 -> 1.00 -> 0.83 -> 1.00 -> 1.00 -> 0.83 -> 1.00
+Improvement: 1.00 -> 1.00 (delta=+0.00)
+Variant scoreboard rows written: 10
+

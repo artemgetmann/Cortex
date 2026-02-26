@@ -1,0 +1,133 @@
+
+============================================================
+  Learning Curve Experiment
+  task=incremental_reconcile_nano  domain=sqlite  curriculum_mode=fixed  learning_mode=strict  bootstrap=False
+  cryptic_errors=False  semi_helpful=False  mixed_errors=False  sessions=10  executor_model=gpt-5-nano judge_model=gpt-5-nano backend=openai cost_profile=default critic=executor(locked)
+  docs mode=lossy retrieval=auto executor_docs=on judge_docs=on posttask_learn=False
+============================================================
+
+--- Run 1/10 (session 142700, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 1
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 3: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (30.7s)
+  [variant-scoreboard] variant=default score=0.7359 quality=1.0000 speed=0.4240 cost=0.1989
+
+--- Run 2/10 (session 142701, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 2
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 19: no such table: dupes'
+[step 004] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 004] no tool call; model stopped.
+  [FAIL] score=0.50  steps=4  errors=2  lessons_in=0  lessons_out=0  (45.0s)
+  [variant-scoreboard] variant=default score=0.3540 quality=0.4000 speed=0.3528 cost=0.1720
+
+--- Run 3/10 (session 142702, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 3
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (56.0s)
+  [variant-scoreboard] variant=default score=0.7044 quality=1.0000 speed=0.3126 cost=0.1748
+
+--- Run 4/10 (session 142703, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 4
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 13: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+  [FAIL] score=0.83  steps=4  errors=1  lessons_in=0  lessons_out=0  (41.5s)
+  [variant-scoreboard] variant=default score=0.5208 quality=0.6664 speed=0.3679 cost=0.1930
+
+--- Run 5/10 (session 142704, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 5
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 002] tool=run_sqlite ok=False error='Parse error near line 8: table rejects has no column named category'
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=1  lessons_in=0  lessons_out=0  (38.5s)
+  [variant-scoreboard] variant=default score=0.7211 quality=1.0000 speed=0.3822 cost=0.1706
+
+--- Run 6/10 (session 142705, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 6
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=True error=None
+[step 004] tool=run_sqlite ok=True error=None
+  [PASS] score=1.00  steps=4  errors=0  lessons_in=0  lessons_out=0  (29.3s)
+  [variant-scoreboard] variant=default score=0.7469 quality=1.0000 speed=0.4326 cost=0.2583
+
+--- Run 7/10 (session 142706, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 7
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 2: near "(": syntax error\n                (\'e4\',\'drums\',8,\'b1\')         ) AS t(event_id, category, amount,\n                                      error here ---^\nParse error near line 17: no such table: src'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 19: no such table: src'
+[step 004] contract gaps detected (1), trigger=step_cap; injecting one retry.
+[step 004] no tool call; model stopped.
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (47.0s)
+  [variant-scoreboard] variant=default score=0.5122 quality=0.6664 speed=0.3449 cost=0.1745
+
+--- Run 8/10 (session 142707, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 8
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] tool=run_sqlite ok=False error='Parse error near line 2: near "(": syntax error\n  ,\'b1\'),                (\'e4\',\'drums\',8,\'b1\')) AS t(event_id, category, amount,\n                                      error here ---^\nParse error near line 13: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=True error=None
+[step 004] contract gaps detected (3), trigger=step_cap; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Parse error near line 15: table rejects has no column named category'
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (40.5s)
+  [variant-scoreboard] variant=default score=0.5213 quality=0.6664 speed=0.3728 cost=0.1883
+
+--- Run 9/10 (session 142708, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 9
+[step 001] tool=read_skill ok=True error=None
+[step 002] tool=show_fixture ok=True error=None
+[step 003] contract gaps detected (3), trigger=no_tool_call; injecting one retry.
+[step 003] tool=run_sqlite ok=False error='Parse error near line 11: table rejects has no column named category'
+[step 004] tool=run_sqlite ok=False error='Parse error near line 8: table rejects has no column named batch_id'
+  [FAIL] score=0.83  steps=4  errors=2  lessons_in=0  lessons_out=0  (49.8s)
+  [variant-scoreboard] variant=default score=0.5083 quality=0.6664 speed=0.3342 cost=0.1661
+
+--- Run 10/10 (session 142709, task=incremental_reconcile_nano, domain=sqlite) ---
+  [curriculum] fixed schedule for run 10
+[step 001] tool=read_skill ok=True error=None
+[step 001] tool=show_fixture ok=True error=None
+[step 002] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)\nParse error near line 9: table rejects has no column named category'
+[step 003] tool=run_sqlite ok=False error='Parse error near line 12: table rejects has no column named batch_id'
+[step 004] contract gaps detected (1), trigger=no_tool_call; injecting one retry.
+[step 004] tool=run_sqlite ok=False error='Runtime error near line 2: UNIQUE constraint failed: ledger.event_id (19)'
+  [FAIL] score=0.83  steps=4  errors=3  lessons_in=0  lessons_out=0  (36.7s)
+  [variant-scoreboard] variant=default score=0.5239 quality=0.6664 speed=0.3909 cost=0.1754
+
+
+============================================================
+  LEARNING CURVE SUMMARY
+============================================================
+ Run  Session  Score  Pass  Steps  Errs  LessIn  LessOut   Time
+---- -------- ------ ----- ------ ----- ------- -------- ------
+   1   142700   1.00     Y      4     1       0        0  30.7s
+   2   142701   0.50     N      4     2       0        0  45.0s
+   3   142702   1.00     Y      4     0       0        0  56.0s
+   4   142703   0.83     N      4     1       0        0  41.5s
+   5   142704   1.00     Y      4     1       0        0  38.5s
+   6   142705   1.00     Y      4     0       0        0  29.3s
+   7   142706   0.83     N      4     2       0        0  47.0s
+   8   142707   0.83     N      4     2       0        0  40.5s
+   9   142708   0.83     N      4     2       0        0  49.8s
+  10   142709   0.83     N      4     3       0        0  36.7s
+
+Score trajectory: 1.00 -> 0.50 -> 1.00 -> 0.83 -> 1.00 -> 1.00 -> 0.83 -> 0.83 -> 0.83 -> 0.83
+Improvement: 1.00 -> 0.83 (delta=-0.17)
+Variant scoreboard rows written: 10
+
