@@ -839,10 +839,12 @@ def _action_template_is_placeholder_like(action_template: str) -> bool:
     text = str(action_template or "").strip().lower()
     if not text:
         return True
+    # Reject explicit placeholder spans like "<value>" but allow shell
+    # redirection operators used in real command templates.
+    if re.search(r"<[^>\n]{1,40}>", text):
+        return True
     placeholder_tokens = (
         "...",
-        "<",
-        ">",
         "todo",
         "tbd",
         "placeholder",
@@ -886,7 +888,38 @@ def _expected_evidence_is_anchored(
     clean_anchors = {anchor for anchor in anchors if len(anchor) >= 3}
     if not clean_anchors:
         return True
-    return any(anchor in text for anchor in clean_anchors)
+    if any(anchor in text for anchor in clean_anchors):
+        return True
+
+    # Fallback: allow semantic anchoring via meaningful tokens extracted from
+    # gap metadata/detail (handles regex-like signatures such as
+    # (?is)git\\s+format-patch... that won't appear verbatim in evidence text).
+    token_source = " ".join(
+        [
+            str(resolved_reason or ""),
+            str(resolved_gap_type or ""),
+            str(matched_row.get("query_id", "") or ""),
+            str(matched_row.get("detail", "") or ""),
+        ]
+    ).lower()
+    raw_tokens = re.findall(r"[a-z0-9_./-]{3,}", token_source)
+    stop_tokens = {
+        "missing",
+        "required",
+        "pattern",
+        "query",
+        "reason",
+        "code",
+        "type",
+        "detail",
+        "event",
+        "file",
+        "content",
+    }
+    semantic_tokens = {tok for tok in raw_tokens if tok not in stop_tokens and len(tok) >= 4}
+    if not semantic_tokens:
+        return False
+    return any(tok in text for tok in semantic_tokens)
 
 
 def _allowed_action_tools_for_adapter(*, adapter: DomainAdapter, opaque_tools: bool) -> set[str]:
@@ -4229,6 +4262,12 @@ def _run_cli_agent_impl(
         "critic_raw_lessons": [],
         "critic_filtered_lessons": [],
         "critic_rejected_lessons": [],
+        "critic_generation_error": "",
+        "critic_generation_parsed_items": 0,
+        "critic_generation_raw_chars": 0,
+        "v2_generation_error": "",
+        "v2_generation_parsed_items": 0,
+        "v2_generation_raw_chars": 0,
         "loop_watchdog_enabled": True,
         "loop_watchdog_state_path": str(loop_watchdog_state_path),
         "loop_watchdog_safe_mode_initial": bool(loop_watchdog_state.safe_mode_active),
@@ -5602,12 +5641,17 @@ def _run_cli_agent_impl(
 
     critic_no_updates = False
 
-    if posttask_learn and skill_manifest_entries and client is not None:
+    if posttask_learn and client is not None:
         if client is None:
             raise RuntimeError("Posttask learning requires an LLM client.")
         # Demo mode keeps Memory V2 lesson generation/promotion active while
         # suppressing legacy skill patching hooks/events for cleaner demos.
-        patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode
+        patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode and bool(skill_manifest_entries)
+        if not bool(skill_manifest_entries):
+            # Domains/tasks with no routed skill manifests must still run V2
+            # lesson extraction/promotion; only legacy skill patching is skipped.
+            metrics["posttask_skill_patching_skipped_by_mode"] = True
+            metrics["posttask_skill_patching_skip_reason"] = "no_skill_manifest"
         if bool(loop_watchdog_decision) and bool(watchdog_disable_posttask_effective):
             patching_enabled = False
             metrics["posttask_skill_patching_skipped_by_mode"] = True
@@ -5682,6 +5726,9 @@ def _run_cli_agent_impl(
         filtered_texts = {lesson.lesson for lesson in lesson_result.filtered_lessons}
         rejected = [lesson for lesson in lesson_result.raw_lessons if lesson.lesson not in filtered_texts]
         metrics["critic_rejected_lessons"] = [_serialize_lesson(lesson) for lesson in rejected]
+        metrics["critic_generation_error"] = str(getattr(lesson_result, "error", "") or "")
+        metrics["critic_generation_parsed_items"] = int(getattr(lesson_result, "parsed_items", 0) or 0)
+        metrics["critic_generation_raw_chars"] = len(str(getattr(lesson_result, "raw_response_text", "") or ""))
         metrics["lessons_generated"] = store_lessons(path=LESSONS_PATH, lessons=lesson_result.filtered_lessons)
         prune_lessons(LESSONS_PATH, max_per_task=20, domain_keywords=domain_keywords)
 
@@ -5704,6 +5751,9 @@ def _run_cli_agent_impl(
             unresolved_gaps=final_unresolved_gaps,
             structured_fields_required=bool(structured_lessons_required),
         )
+        metrics["v2_generation_error"] = str(getattr(v2_reflection, "error", "") or "")
+        metrics["v2_generation_parsed_items"] = int(getattr(v2_reflection, "parsed_items", 0) or 0)
+        metrics["v2_generation_raw_chars"] = len(str(getattr(v2_reflection, "raw_response_text", "") or ""))
         hard_events = [event for event in run_error_events if event.channel == "hard_failure"]
         fingerprint_counts = Counter(event.fingerprint for event in hard_events)
         recurring_fingerprints = [fingerprint for fingerprint, count in fingerprint_counts.items() if count >= 2]
@@ -5856,6 +5906,9 @@ def _run_cli_agent_impl(
             "filtered_lessons": [_serialize_lesson(lesson) for lesson in v2_reflection.filtered_lessons],
             "fallback_rules": list(fallback_rules),
             "unresolved_gaps": list(final_unresolved_gaps),
+            "generation_error": str(getattr(v2_reflection, "error", "") or ""),
+            "generation_parsed_items": int(getattr(v2_reflection, "parsed_items", 0) or 0),
+            "generation_raw_response": str(getattr(v2_reflection, "raw_response_text", "") or ""),
         }
         posttask_lessons_applied = {
             "candidates": v2_candidate_lessons,

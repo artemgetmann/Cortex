@@ -68,6 +68,28 @@ class _FakeAnthropicClient:
         self.messages = _FakeMessages(responses)
 
 
+def _lesson_row(
+    text: str,
+    *,
+    trigger_gap_signature: str = "",
+    action_template: str = "",
+    expected_evidence: str = "",
+    reason_code: str = "",
+    gap_type: str = "",
+) -> Any:
+    return SimpleNamespace(
+        lesson=text,
+        category="negative",
+        confidence=0.9,
+        source="model",
+        trigger_gap_signature=trigger_gap_signature,
+        action_template=action_template,
+        expected_evidence=expected_evidence,
+        reason_code=reason_code,
+        gap_type=gap_type,
+    )
+
+
 class _RetryAdapter:
     def __init__(self) -> None:
         self.execute_calls: list[dict[str, Any]] = []
@@ -686,6 +708,45 @@ def test_posttask_structured_fallback_respects_det_recipe_flag(
     assert learning_artifacts.get("lesson_candidates") == []
 
 
+def test_posttask_v2_learning_runs_without_skill_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [_FakeResponse([{"type": "text", "text": "done"}])]
+    sessions_root, _adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    def _fake_generate_lessons(**kwargs: Any) -> Any:
+        del kwargs
+        row = _lesson_row("run_sqlite(sql=\"SELECT 1;\")")
+        return SimpleNamespace(raw_lessons=[row], filtered_lessons=[row])
+
+    monkeypatch.setattr(agent_cli, "generate_lessons", _fake_generate_lessons)
+    monkeypatch.setattr(agent_cli, "store_lessons", lambda **kwargs: 0)
+    monkeypatch.setattr(agent_cli, "prune_lessons", lambda *args, **kwargs: None)
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=609,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=True,
+        structured_lessons_required=False,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=False,
+    )
+
+    assert result.metrics["posttask_skill_patching_skip_reason"] == "no_skill_manifest"
+    assert int(result.metrics["v2_lessons_generated"]) + int(result.metrics["v2_lessons_merged"]) >= 1
+    learning_artifacts = json.loads(
+        (sessions_root / "session-609" / "learning_artifacts.json").read_text(encoding="utf-8")
+    )
+    assert len(learning_artifacts.get("lesson_candidates") or []) >= 1
+
+
 def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:
     unresolved = [
         {
@@ -694,7 +755,7 @@ def test_validate_structured_model_lesson_requires_trigger_action_and_evidence()
             "gap_signature": "required_query_mismatch|required_query|reject_count",
         }
     ]
-    allowed_tools = {"run_sqlite", "read_skill", "show_fixture"}
+    allowed_tools = {"run_sqlite", "run_bash", "read_skill", "show_fixture"}
 
     missing_trigger = SimpleNamespace(
         trigger_gap_signature="",
@@ -776,3 +837,45 @@ def test_validate_structured_model_lesson_requires_trigger_action_and_evidence()
     assert reason3 == ""
     assert payload3["trigger_gap_signature"] == "required_query_mismatch|required_query|reject_count"
     assert payload3["action_template"].startswith("run_sqlite(")
+
+    valid_shell_redirection = SimpleNamespace(
+        trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+        action_template='run_bash(command="echo ok > out.txt")',
+        expected_evidence='required_query_mismatch|required_query|reject_count',
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+    )
+    ok4, reason4, payload4 = agent_cli._validate_structured_model_lesson(
+        lesson=valid_shell_redirection,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools=allowed_tools,
+    )
+    assert ok4 is True
+    assert reason4 == ""
+    assert payload4["action_template"].startswith("run_bash(")
+
+
+def test_validate_structured_model_lesson_allows_semantic_anchor_from_gap_detail() -> None:
+    unresolved = [
+        {
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\\\s+format-patch",
+            "detail": "(?is)git\\\\s+format-patch\\\\s+-1\\\\s+HEAD\\\\s+--stdout",
+        }
+    ]
+    lesson = SimpleNamespace(
+        trigger_gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\\\s+format-patch",
+        action_template='run_bash(command="git format-patch -1 HEAD --stdout > hotfix.patch")',
+        expected_evidence="hotfix.patch created via git format-patch and present in task root",
+        reason_code="missing_required_event_pattern",
+        gap_type="required_event_pattern",
+    )
+    ok, reason, payload = agent_cli._validate_structured_model_lesson(
+        lesson=lesson,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools={"run_bash"},
+    )
+    assert ok is True
+    assert reason == ""
+    assert payload["trigger_gap_signature"].startswith("missing_required_event_pattern|required_event_pattern")

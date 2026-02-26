@@ -30,12 +30,42 @@ def _extract_json_array(raw: str) -> list[dict[str, Any]]:
     text = raw.strip()
     if not text:
         return []
-    if text.startswith("[") and text.endswith("]"):
+
+    def _from_parsed(parsed: Any) -> list[dict[str, Any]]:
+        if isinstance(parsed, list):
+            return [row for row in parsed if isinstance(row, dict)]
+        if isinstance(parsed, dict):
+            for key in ("lessons", "items", "results", "data"):
+                value = parsed.get(key)
+                if isinstance(value, list):
+                    return [row for row in value if isinstance(row, dict)]
+        return []
+
+    if text.startswith("```"):
+        fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+        if fence_match:
+            text = str(fence_match.group(1)).strip()
+
+    if (text.startswith("[") and text.endswith("]")) or (text.startswith("{") and text.endswith("}")):
         try:
             parsed = json.loads(text)
-            return parsed if isinstance(parsed, list) else []
+            extracted = _from_parsed(parsed)
+            if extracted:
+                return extracted
         except json.JSONDecodeError:
-            return []
+            pass
+
+    obj_start = text.find("{")
+    obj_end = text.rfind("}")
+    if obj_start != -1 and obj_end != -1 and obj_end > obj_start:
+        try:
+            parsed = json.loads(text[obj_start : obj_end + 1])
+            extracted = _from_parsed(parsed)
+            if extracted:
+                return extracted
+        except json.JSONDecodeError:
+            pass
+
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1 or end <= start:
@@ -44,7 +74,7 @@ def _extract_json_array(raw: str) -> list[dict[str, Any]]:
         parsed = json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         return []
-    return parsed if isinstance(parsed, list) else []
+    return _from_parsed(parsed)
 
 
 def _normalize_learning_mode(learning_mode: str) -> str:
@@ -99,6 +129,9 @@ class LessonGenerationResult:
 
     raw_lessons: list[Lesson]
     filtered_lessons: list[Lesson]
+    raw_response_text: str = ""
+    error: str = ""
+    parsed_items: int = 0
 
 
 def load_lessons(path: Path) -> list[Lesson]:
@@ -559,9 +592,11 @@ def generate_lessons(
                     "- action_template MUST NOT contain placeholders (..., TODO, <value>, example text).\n"
                     "- expected_evidence MUST be concrete and verifiable (query rows, file pattern, or exact line).\n"
                     "- expected_evidence MUST mention at least one gap anchor (gap_signature or reason_code/gap_type/query_id/detail).\n"
+                    "- action_template must be minimal (single command, <= 140 chars), not a full script.\n"
                     "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
+                    "- Keep each lesson concise (<= 180 chars) and command-level.\n"
                     "- Reject generic advice and motivational text.\n"
-                    "- 2 to 5 lessons total.\n"
+                    "- 1 to 3 lessons total.\n"
                 )
             else:
                 system = (
@@ -572,8 +607,9 @@ def generate_lessons(
                     "- Use only evidence from EVENTS_TAIL, EVAL, and RETRIEVED_CONTEXT.\n"
                     "- Lessons must be concrete, syntax-level, and reusable in future runs.\n"
                     "- Include exact command/operator/function tokens that actually appeared.\n"
+                    "- Keep each lesson concise (<= 180 chars) and command-level.\n"
                     "- Reject generic advice and motivational text.\n"
-                    "- 2 to 5 lessons total.\n"
+                    "- 1 to 3 lessons total.\n"
                 )
         else:
             if structured_fields_required:
@@ -591,8 +627,10 @@ def generate_lessons(
                     "- action_template MUST NOT contain placeholders (..., TODO, <value>, example text).\n"
                     "- expected_evidence MUST be concrete and verifiable (query rows, file pattern, or exact line).\n"
                     "- expected_evidence MUST mention at least one gap anchor (gap_signature or reason_code/gap_type/query_id/detail).\n"
+                    "- action_template must be minimal (single command, <= 140 chars), not a full script.\n"
                     "- Every lesson must include the concrete correction, not generic process advice.\n"
-                    "- 2 to 5 lessons total.\n"
+                    "- Keep each lesson concise (<= 180 chars) and command-level.\n"
+                    "- 1 to 3 lessons total.\n"
                 )
             else:
                 system = (
@@ -605,7 +643,8 @@ def generate_lessons(
                     "- For category='negative', format as:\n"
                     "  WRONG: <bad syntax> -> CORRECT: <valid syntax>. WHY: <brief cause>\n"
                     "- Every lesson must include the concrete correction, not generic process advice.\n"
-                    "- 2 to 5 lessons total.\n"
+                    "- Keep each lesson concise (<= 180 chars) and command-level.\n"
+                    "- 1 to 3 lessons total.\n"
                 )
     else:
         # Legacy critic contract preserves the existing domain-tuned guidance.
@@ -665,15 +704,21 @@ def generate_lessons(
     try:
         request: dict[str, Any] = {
             "model": model,
-            "max_tokens": 500,
+            "max_tokens": 1800,
             "system": system,
             "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
         }
         if temperature is not None:
             request["temperature"] = float(temperature)
         response = client.messages.create(**request)
-    except Exception:
-        return LessonGenerationResult(raw_lessons=[], filtered_lessons=[])
+    except Exception as exc:
+        return LessonGenerationResult(
+            raw_lessons=[],
+            filtered_lessons=[],
+            raw_response_text="",
+            error=f"{type(exc).__name__}: {exc}",
+            parsed_items=0,
+        )
 
     raw = ""
     for block in response.content:
@@ -715,4 +760,10 @@ def generate_lessons(
             )
         )
     filtered_lessons = filter_lessons(raw_lessons, domain_keywords=domain_keywords)
-    return LessonGenerationResult(raw_lessons=raw_lessons, filtered_lessons=filtered_lessons)
+    return LessonGenerationResult(
+        raw_lessons=raw_lessons,
+        filtered_lessons=filtered_lessons,
+        raw_response_text=raw,
+        error="",
+        parsed_items=len(parsed),
+    )

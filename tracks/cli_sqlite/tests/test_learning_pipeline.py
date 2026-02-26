@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tracks.cli_sqlite.learning_cli import (
     Lesson,
     _KNOWN_WRONG_PATTERNS,
+    _extract_json_array,
     _lesson_quality_score,
     filter_lessons,
     find_lessons_for_error,
@@ -158,6 +159,20 @@ def test_gridtool_mixed_error_mode_map():
         error_mode_map="TALLY=cryptic",
     )
     assert err_tally.strip() == "ERROR at line 2: TALLY: syntax error.", err_tally
+
+
+def test_extract_json_array_accepts_object_wrappers():
+    wrapped = '{"lessons":[{"category":"insight","lesson":"Use exact flag.","evidence_steps":[1]}]}'
+    rows = _extract_json_array(wrapped)
+    assert len(rows) == 1
+    assert rows[0]["lesson"] == "Use exact flag."
+
+
+def test_extract_json_array_accepts_fenced_json():
+    fenced = '```json\n[{"category":"insight","lesson":"Keep branch clean.","evidence_steps":[2]}]\n```'
+    rows = _extract_json_array(fenced)
+    assert len(rows) == 1
+    assert rows[0]["lesson"] == "Keep branch clean."
 
 
 def test_lesson_quality_filter():
