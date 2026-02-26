@@ -1873,10 +1873,15 @@ def _anthropic_messages_to_openai_responses_input(
                         content_text = f"{content_text}\n{call_line}".strip() if content_text else call_line
             if not content_text:
                 continue
+            # Responses API expects role-aware content block types:
+            # - user/system inputs -> input_text
+            # - assistant history -> output_text
+            # Sending assistant history as input_text triggers 400 invalid_value.
+            content_type = "output_text" if role == "assistant" else "input_text"
             input_items.append(
                 {
                     "role": role,
-                    "content": [{"type": "input_text", "text": content_text}],
+                    "content": [{"type": content_type, "text": content_text}],
                 }
             )
             continue
