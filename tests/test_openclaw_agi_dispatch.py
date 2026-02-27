@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DISPATCHER = ROOT / "integrations" / "openclaw_agi_dispatch.py"
@@ -28,6 +30,7 @@ def test_dispatch_known_task_from_run_command() -> None:
     plan = payload["plan"]
     result = payload["result"]
     assert payload["mode"] == "run"
+    assert plan["attempts"] == 1
     assert plan["task_id"] == "shell_git_transfer_hotfix"
     assert plan["domain"] == "shell"
     assert result["dry_run"] is True
@@ -54,3 +57,68 @@ def test_dispatch_learn_off_adds_no_posttask_flag() -> None:
     payload = _run_dispatch(text="/run domain=shell learn=off shell_git_transfer_hotfix")
     cmd = payload["result"]["command"]
     assert "--no-posttask-learn" in cmd
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "use only 5 steps",
+        "in 5 steps",
+        "steps 5",
+    ],
+)
+def test_dispatch_natural_steps_phrase_sets_max_steps(phrase: str) -> None:
+    payload = _run_dispatch(text=f"/run domain=shell {phrase} shell_git_transfer_hotfix")
+    assert payload["plan"]["max_steps"] == 5
+
+
+def test_dispatch_natural_control_phrase_not_used_as_task_text_for_known_task() -> None:
+    payload = _run_dispatch(text="/run domain=sqlite task_id=incremental_reconcile use only 5 steps")
+    plan = payload["plan"]
+    assert plan["task_id"] == "incremental_reconcile"
+    # Control phrase should not become task body. Known task should run by ID.
+    assert plan["task_text"] is None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "learn off",
+        "learning off",
+        "without learning",
+        "do not learn",
+        "don't learn",
+        "no learning",
+    ],
+)
+def test_dispatch_natural_learning_off_phrase_adds_no_posttask_flag(phrase: str) -> None:
+    payload = _run_dispatch(text=f"/run domain=shell {phrase} shell_git_transfer_hotfix")
+    cmd = payload["result"]["command"]
+    assert "--no-posttask-learn" in cmd
+
+
+def test_dispatch_learnrun_attempts_three_emits_attempt_results() -> None:
+    payload = _run_dispatch(text="/learnrun domain=shell attempts=3 shell_git_transfer_hotfix")
+    result = payload["result"]
+    assert payload["mode"] == "run"
+    assert payload["plan"]["attempts"] == 3
+    assert result["attempts_requested"] == 3
+    assert len(result["attempt_results"]) == 3
+    assert len({item["run_id"] for item in result["attempt_results"]}) == 3
+    assert len({item["session_id"] for item in result["attempt_results"]}) == 3
+    assert result["run_id"] == result["attempt_results"][-1]["run_id"]
+
+
+def test_dispatch_run_prefix_defaults_to_single_attempt() -> None:
+    payload = _run_dispatch(text="/run domain=shell shell_git_transfer_hotfix")
+    assert payload["plan"]["attempts"] == 1
+    assert "attempts_requested" not in payload["result"]
+    assert "attempt_results" not in payload["result"]
+
+
+def test_dispatch_known_task_without_explicit_text_omits_task_override_flag() -> None:
+    payload = _run_dispatch(text="/run domain=sqlite task_id=incremental_reconcile")
+    cmd = payload["result"]["command"]
+    assert "--task-id" in cmd
+    assert "incremental_reconcile" in cmd
+    assert "--task" not in cmd

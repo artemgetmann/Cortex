@@ -4,7 +4,7 @@
 This wrapper keeps Telegram task-mode execution on one deterministic policy:
 - backend: openai
 - executor/judge: gpt-5-nano
-- critic escalation: disabled
+- critic path: disabled (simplified architecture uses executor for lesson extraction)
 - self-edit: disabled
 - deterministic benchmark settings: enabled
 """
@@ -39,6 +39,10 @@ def _build_command(args: argparse.Namespace) -> list[str]:
         V15_LOCKED.posttask_mode,
         "--learning-mode",
         V15_LOCKED.learning_mode,
+        # Simplified architecture bypasses separate critic-model generation and
+        # keeps the proof path to one model behavior surface.
+        "--architecture-mode",
+        "simplified",
         "--llm-backend",
         V15_LOCKED.llm_backend,
         "--model-executor",

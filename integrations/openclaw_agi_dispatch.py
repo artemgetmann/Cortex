@@ -53,6 +53,7 @@ KNOWN_TASK_DOMAIN: dict[str, str] = {
 }
 
 RUN_PREFIXES = ("/run", "run ")
+LEARNRUN_PREFIXES = ("/learnrun", "learnrun ")
 STATUS_PREFIXES = ("/learn-status", "/learnstatus", "/learn_status", "/run-status", "/status", "learn status")
 CANCEL_PREFIXES = ("/cancel", "/cancel-run", "cancel run")
 FOLLOWUP_PREFIXES = ("/followup", "followup ")
@@ -68,6 +69,7 @@ class DispatchPlan:
     task_text: str | None = None
     followup_text: str | None = None
     run_id: str | None = None
+    attempts: int = 1
     max_steps: int = 6
     model_executor: str = DEFAULT_EXECUTOR_MODEL
     llm_backend: str = DEFAULT_LLM_BACKEND
@@ -140,6 +142,68 @@ def _parse_progress_limit(value: str, *, default: int = 8) -> int:
         return max(1, min(20, int(raw)))
     except ValueError:
         return default
+
+
+def _parse_attempts(value: str, *, default: int) -> int:
+    raw = str(value or "").strip()
+    if not raw:
+        return max(1, default)
+    try:
+        return max(1, min(10, int(raw)))
+    except ValueError:
+        return max(1, default)
+
+
+def _extract_natural_step_budget(text: str) -> int | None:
+    lowered = str(text or "").lower()
+    patterns = (
+        r"\buse\s+only\s+(\d{1,2})\s+steps?\b",
+        r"\bin\s+(\d{1,2})\s+steps?\b",
+        r"\bsteps?\s+(\d{1,2})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if match:
+            try:
+                return int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _has_learning_off_phrase(text: str) -> bool:
+    lowered = str(text or "").lower()
+    patterns = (
+        r"\blearn(?:ing)?\s+off\b",
+        r"\bwithout\s+learning\b",
+        r"\bdo\s+not\s+learn\b",
+        r"\bdon[\'’]?t\s+learn\b",
+        r"\bno\s+learning\b",
+    )
+    return any(re.search(pattern, lowered) for pattern in patterns)
+
+
+def _strip_natural_control_phrases(text: str) -> str:
+    """Remove inline control phrases so task text remains execution-focused.
+
+    This keeps natural-language UX ("use only 5 steps", "without learning")
+    from polluting the actual task instruction that we pass to the executor.
+    """
+
+    cleaned = str(text or "")
+    control_patterns = (
+        r"\buse\s+only\s+\d{1,2}\s+steps?\b",
+        r"\bin\s+\d{1,2}\s+steps?\b",
+        r"\bsteps?\s+\d{1,2}\b",
+        r"\blearn(?:ing)?\s+off\b",
+        r"\bwithout\s+learning\b",
+        r"\bdo\s+not\s+learn\b",
+        r"\bdon[\'’]?t\s+learn\b",
+        r"\bno\s+learning\b",
+    )
+    for pattern in control_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    return _normalize_ws(cleaned)
 
 
 def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -340,34 +404,51 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
     if any(lowered.startswith(prefix) for prefix in CHAT_PREFIXES):
         return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="chat_prefix")
 
-    if not any(lowered.startswith(prefix) for prefix in RUN_PREFIXES):
+    is_run = any(lowered.startswith(prefix) for prefix in RUN_PREFIXES)
+    is_learnrun = any(lowered.startswith(prefix) for prefix in LEARNRUN_PREFIXES)
+    if not (is_run or is_learnrun):
         return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="no_run_prefix")
 
-    payload = _strip_prefix(normalized, RUN_PREFIXES)
+    run_prefixes = LEARNRUN_PREFIXES if is_learnrun else RUN_PREFIXES
+    payload = _strip_prefix(normalized, run_prefixes)
     controls, payload_tail = _parse_keyvals(payload)
+    cleaned_tail = _strip_natural_control_phrases(payload_tail)
+    explicit_task_text = controls.get("task", "").strip()
     known_ids = _known_task_ids()
     explicit_task_id = controls.get("task_id", "").strip()
     if explicit_task_id and explicit_task_id in known_ids:
         task_id = explicit_task_id
         domain = controls.get("domain", KNOWN_TASK_DOMAIN.get(task_id, default_domain)).strip() or default_domain
-        task_text = controls.get("task", "").strip() or payload_tail
+        task_text = explicit_task_text or cleaned_tail or None
     else:
-        detected_task_id = _extract_known_task_id(payload_tail, known_ids)
+        detected_task_id = _extract_known_task_id(cleaned_tail, known_ids)
         if detected_task_id:
             task_id = detected_task_id
             domain = controls.get("domain", KNOWN_TASK_DOMAIN.get(task_id, default_domain)).strip() or default_domain
-            task_text = controls.get("task", "").strip() or payload_tail
+            tail_without_task_id = _normalize_ws(
+                re.sub(rf"\b{re.escape(detected_task_id)}\b", " ", cleaned_tail)
+            )
+            task_text = explicit_task_text or tail_without_task_id or None
         else:
-            free_text = controls.get("task", "").strip() or payload_tail
+            free_text = explicit_task_text or cleaned_tail
             if not free_text:
                 free_text = "Run a meaningful CLI task and provide verification evidence."
             domain = controls.get("domain", "").strip() or _infer_domain(free_text, fallback=default_domain)
             task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
             task_text = free_text
 
+    default_attempts = 3 if is_learnrun else 1
+    attempts = _parse_attempts(controls.get("attempts", ""), default=default_attempts)
+
     max_steps_raw = controls.get("steps", "").strip()
+    natural_steps = _extract_natural_step_budget(payload_tail or task_text or "")
     try:
-        max_steps = max(2, min(20, int(max_steps_raw))) if max_steps_raw else 6
+        if max_steps_raw:
+            max_steps = max(2, min(20, int(max_steps_raw)))
+        elif natural_steps is not None:
+            max_steps = max(2, min(20, int(natural_steps)))
+        else:
+            max_steps = 6
     except ValueError:
         max_steps = 6
 
@@ -381,7 +462,10 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         llm_backend = controls.get("backend", "").strip() or DEFAULT_LLM_BACKEND
     run_id = controls.get("run_id", "").strip() or None
     learn_value = controls.get("learn", controls.get("persist", "")).strip().lower()
-    posttask_learn = not (learn_value in {"off", "false", "0", "no"})
+    if learn_value:
+        posttask_learn = not (learn_value in {"off", "false", "0", "no"})
+    else:
+        posttask_learn = not _has_learning_off_phrase(payload_tail or task_text or "")
     return DispatchPlan(
         mode="run",
         chat_scope=chat_scope,
@@ -389,19 +473,24 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         task_id=task_id,
         task_text=task_text,
         run_id=run_id,
+        attempts=attempts,
         max_steps=max_steps,
         model_executor=model_executor,
         llm_backend=llm_backend,
         posttask_learn=posttask_learn,
-        reason="run_prefix",
+        reason="learnrun_prefix" if is_learnrun else "run_prefix",
     )
 
 
-def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
+def _run_task_once(
+    plan: DispatchPlan,
+    *,
+    dry_run: bool = False,
+    preferred_run_id: str | None = None,
+) -> dict[str, Any]:
     assert plan.mode == "run"
     assert plan.domain is not None
     assert plan.task_id is not None
-    assert plan.task_text is not None
     if not RUNNER.exists():
         return {
             "ok": False,
@@ -419,15 +508,13 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
 
     # Reserve IDs before execution so transport layers can immediately track
     # this run with deterministic identifiers.
-    run_id = plan.run_id or run_service.generate_run_id()
+    run_id = preferred_run_id or run_service.generate_run_id()
     session_id = run_service.allocate_session_id()
     cmd = [
         "python3",
         str(RUNNER),
         "--task-id",
         plan.task_id,
-        "--task",
-        plan.task_text,
         "--domain",
         plan.domain,
         "--session",
@@ -441,6 +528,8 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         "--run-id",
         run_id,
     ]
+    if plan.task_text:
+        cmd.extend(["--task", plan.task_text])
     # Legacy runner expects these explicit control flags. v1.5 runner is
     # already hard-locked internally and keeps argv minimal on purpose.
     if not USE_V15_PROFILE:
@@ -500,6 +589,27 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         "run": run_row.to_dict() if run_row else None,
         "run_followup_count": len(run_row.followups or []) if run_row else 0,
     }
+
+
+def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
+    attempts_requested = max(1, int(plan.attempts))
+    if attempts_requested == 1:
+        return _run_task_once(plan, dry_run=dry_run, preferred_run_id=plan.run_id)
+
+    attempt_results: list[dict[str, Any]] = []
+    last_result: dict[str, Any] = {}
+    for attempt_index in range(attempts_requested):
+        # Multi-attempt runs must isolate state by allocating fresh run/session
+        # identifiers each time, even if a caller provided run_id.
+        attempt = _run_task_once(plan, dry_run=dry_run, preferred_run_id=None)
+        attempt["attempt_index"] = attempt_index + 1
+        attempt_results.append(attempt)
+        last_result = attempt
+
+    merged = dict(last_result)
+    merged["attempts_requested"] = attempts_requested
+    merged["attempt_results"] = attempt_results
+    return merged
 
 
 def _status_payload(

@@ -612,9 +612,8 @@ export async function maybeHandleCortexRoute(
     return handleCortexFollowupCommand(ctx, chatId, normalized);
   }
 
-  if (
-    lowered.startsWith("/run")
-  ) {
+  // UX alias: `/learnrun` should trigger the same natural task loop as `/run`.
+  if (lowered.startsWith("/run") || lowered.startsWith("/learnrun")) {
     await runTaskAndReply(ctx, normalized, chatId);
     return true;
   }
