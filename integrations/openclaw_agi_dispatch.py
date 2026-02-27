@@ -24,7 +24,9 @@ TRACK_DIR = ROOT_DIR / "tracks" / "cli_sqlite"
 TASKS_ROOT = TRACK_DIR / "tasks"
 SESSIONS_ROOT = TRACK_DIR / "sessions"
 LESSONS_V2_PATH = TRACK_DIR / "learning" / "lessons_v2.jsonl"
-DISPATCH_PROFILE = str(os.environ.get("CORTEX_DISPATCH_PROFILE", "legacy")).strip().lower()
+# Default to v15 for Telegram AGI runs so the live path uses the current
+# single-model OpenAI proof loop unless a caller explicitly opts into legacy.
+DISPATCH_PROFILE = str(os.environ.get("CORTEX_DISPATCH_PROFILE", "v15")).strip().lower()
 USE_V15_PROFILE = DISPATCH_PROFILE in {"v15", "proof", "cli_sqlite_v15"}
 RUNNER_LEGACY = TRACK_DIR / "scripts" / "run_cli_agent.py"
 RUNNER_V15 = ROOT_DIR / "tracks" / "cli_sqlite_v15" / "run_cli_agent_v15.py"
