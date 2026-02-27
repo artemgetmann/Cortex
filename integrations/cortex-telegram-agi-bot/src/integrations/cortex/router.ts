@@ -156,6 +156,7 @@ function looksLikeTaskIntent(message: string): boolean {
     "fix",
     "run",
     "write",
+    "import",
     "analyze",
     "summarize",
     "list files",
@@ -621,7 +622,9 @@ export async function maybeHandleCortexRoute(
   if (pending) {
     if (POSITIVE_CONFIRM.has(lowered)) {
       pendingTasks.delete(scope);
-      const runText = `/run domain=${CORTEX_TASK_DEFAULT_DOMAIN} ${pending.prompt}`;
+      // Keep natural-language task routing domain-agnostic. The Python
+      // dispatcher infers domain/task when explicit controls are absent.
+      const runText = `/run ${pending.prompt}`;
       await runTaskAndReply(ctx, runText, chatId);
       return true;
     }
@@ -645,7 +648,8 @@ export async function maybeHandleCortexRoute(
   }
 
   if (!CORTEX_CONFIRMATION_ENABLED) {
-    const runText = `/run domain=${CORTEX_TASK_DEFAULT_DOMAIN} ${normalized}`;
+    // Same domain-agnostic routing path as the confirmation flow.
+    const runText = `/run ${normalized}`;
     await runTaskAndReply(ctx, runText, chatId);
     return true;
   }
