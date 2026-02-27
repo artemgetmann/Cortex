@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from tracks.cli_sqlite import agent_cli
+from tracks.cli_sqlite import openai_transport
 
 
 def _raising_stub(message: str):
@@ -40,14 +40,14 @@ def test_openai_executor_uses_responses_and_parses_function_calls(
             "usage": {"input_tokens": 9, "output_tokens": 4},
         }
 
-    monkeypatch.setattr(agent_cli, "_openai_responses_request", _fake_responses_request)
+    monkeypatch.setattr(openai_transport, "openai_responses_request", _fake_responses_request)
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_chat_completions_request",
+        openai_transport,
+        "openai_chat_completions_request",
         _raising_stub("chat completions path should not be used when toggle is off"),
     )
 
-    blocks, usage = agent_cli._create_executor_response_via_openai(
+    blocks, usage = openai_transport.create_executor_response_via_openai(
         api_key="test-key",
         model="gpt-5-nano",
         system_prompt="System policy",
@@ -99,8 +99,8 @@ def test_openai_executor_skips_malformed_function_call_arguments(
 ) -> None:
     monkeypatch.delenv("OPENAI_USE_CHAT_COMPLETIONS", raising=False)
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_responses_request",
+        openai_transport,
+        "openai_responses_request",
         lambda **_: {
             "id": "resp_bad_args",
             "output": [
@@ -115,7 +115,7 @@ def test_openai_executor_skips_malformed_function_call_arguments(
         },
     )
 
-    blocks, usage = agent_cli._create_executor_response_via_openai(
+    blocks, usage = openai_transport.create_executor_response_via_openai(
         api_key="test-key",
         model="gpt-5-nano",
         system_prompt="System policy",
@@ -170,14 +170,14 @@ def test_openai_executor_respects_chat_completions_toggle(
             "usage": {"total_tokens": 12},
         }
 
-    monkeypatch.setattr(agent_cli, "_openai_chat_completions_request", _fake_chat_request)
+    monkeypatch.setattr(openai_transport, "openai_chat_completions_request", _fake_chat_request)
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_responses_request",
+        openai_transport,
+        "openai_responses_request",
         _raising_stub("responses path should not run when chat-completions toggle is enabled"),
     )
 
-    blocks, usage = agent_cli._create_executor_response_via_openai(
+    blocks, usage = openai_transport.create_executor_response_via_openai(
         api_key="test-key",
         model="gpt-5-nano",
         system_prompt="System policy",
@@ -227,14 +227,14 @@ def test_openai_compat_messages_uses_responses_api(
             "usage": {"total_tokens": 7},
         }
 
-    monkeypatch.setattr(agent_cli, "_openai_responses_request", _fake_responses_request)
+    monkeypatch.setattr(openai_transport, "openai_responses_request", _fake_responses_request)
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_chat_completions_request",
+        openai_transport,
+        "openai_chat_completions_request",
         _raising_stub("compat path should default to responses API"),
     )
 
-    api = agent_cli._OpenAICompatMessagesAPI(api_key="test-key")
+    api = openai_transport.OpenAICompatMessagesAPI(api_key="test-key")
     response = api.create(
         model="gpt-5-nano",
         max_tokens=64,
@@ -255,13 +255,13 @@ def test_openai_compat_messages_respects_chat_completions_toggle(
 ) -> None:
     monkeypatch.setenv("OPENAI_USE_CHAT_COMPLETIONS", "1")
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_responses_request",
+        openai_transport,
+        "openai_responses_request",
         _raising_stub("responses path should not be used when chat-completions toggle is enabled"),
     )
     monkeypatch.setattr(
-        agent_cli,
-        "_openai_chat_completions_request",
+        openai_transport,
+        "openai_chat_completions_request",
         lambda **_: {
             "id": "chat_judge_1",
             "choices": [{"message": {"content": "Legacy path"}}],
@@ -269,7 +269,7 @@ def test_openai_compat_messages_respects_chat_completions_toggle(
         },
     )
 
-    api = agent_cli._OpenAICompatMessagesAPI(api_key="test-key")
+    api = openai_transport.OpenAICompatMessagesAPI(api_key="test-key")
     response = api.create(
         model="gpt-5-nano",
         max_tokens=64,
@@ -284,7 +284,7 @@ def test_openai_compat_messages_respects_chat_completions_toggle(
 
 
 def test_anthropic_messages_to_openai_responses_input_serializes_tool_history() -> None:
-    input_items = agent_cli._anthropic_messages_to_openai_responses_input(
+    input_items = openai_transport.anthropic_messages_to_openai_responses_input(
         messages=[
             {
                 "role": "assistant",
