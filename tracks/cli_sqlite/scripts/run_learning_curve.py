@@ -89,7 +89,7 @@ def main() -> int:
     ap.add_argument("--mixed-errors", action="store_true", help="Mixed mode: semi-helpful for simple commands, cryptic for core pipeline commands")
     ap.add_argument("--model-executor", default=DEFAULT_EXECUTOR_MODEL)
     ap.add_argument("--model-judge", default=DEFAULT_EXECUTOR_MODEL)
-    ap.add_argument("--llm-backend", default="anthropic", choices=LLM_BACKENDS)
+    ap.add_argument("--llm-backend", default="openai", choices=LLM_BACKENDS)
     ap.add_argument(
         "--cost-profile",
         default="default",

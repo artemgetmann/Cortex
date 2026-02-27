@@ -538,7 +538,7 @@ def main() -> int:
     ap.add_argument("--doc-budget-tokens", type=int, default=900)
     ap.add_argument("--doc-retrieval", choices=["off", "auto"], default="auto")
     ap.add_argument("--doc-retriever-model", default="")
-    ap.add_argument("--llm-backend", default="anthropic", choices=LLM_BACKENDS)
+    ap.add_argument("--llm-backend", default="openai", choices=LLM_BACKENDS)
     ap.add_argument(
         "--cost-profile",
         default="default",

@@ -30,7 +30,7 @@ If FL benchmarks are unstable due to environment issues (lock screen, hidden win
 pip install -r requirements.txt
 
 # Configure
-cp .env.example .env   # then set ANTHROPIC_API_KEY
+cp .env.example .env   # then set OPENAI_API_KEY
 
 # Run an agent session
 python3 scripts/run_agent.py \
@@ -61,9 +61,10 @@ python3 -m pytest tracks/cli_sqlite/tests -q
 
 ## API Limit Policy (Execution Priority)
 
-- Default benchmark/runtime path is `--llm-backend anthropic` (API) for speed and consistency.
-- If API quota/rate limits are hit during active collaboration, stop and notify the user immediately instead of silently switching to `claude_print`.
-- Only use `claude_print` as fallback when the user explicitly approves it, or when the user explicitly asks for unattended overnight execution.
+- Default benchmark/runtime path is `--llm-backend openai` (API) for speed and cost control.
+- If API quota/rate limits are hit during active collaboration, stop and notify the user immediately.
+- Do not silently switch to `claude_print`; it is typically much slower for benchmark iteration.
+- Only use `claude_print` when the user explicitly asks for it, or for unattended overnight runs.
 
 ## Architecture
 
@@ -99,7 +100,7 @@ docs/
 ### Data flow
 
 1. `run_agent()` builds system prompt + loads skills from `skills/fl-studio/` into context
-2. Sends task to Anthropic API (`llm-backend=anthropic`) or Claude CLI (`llm-backend=claude_print`) with computer tool definition
+2. Sends task to OpenAI API (`llm-backend=openai`) or Anthropic API/Claude CLI when explicitly selected
 3. Model returns `tool_use` blocks (screenshot, key, click, etc.)
 4. `ComputerTool.run()` executes via macOS Quartz CGEvent APIs, returns screenshot
 5. Loop continues until model stops requesting tools or hits `max_steps`
@@ -170,7 +171,7 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 
 ### API limit handling policy
 
-- If Anthropic API limit/quota is hit, stop immediately and notify the user to raise limits.
+- If OpenAI or Anthropic API limit/quota is hit, stop immediately and notify the user to raise limits.
 - Do **not** continue with `claude_print` fallback by default because it is much slower and wastes iteration time.
 - Only use `claude_print` after an API limit hit if the user explicitly says to continue unattended (example: user says they are going to sleep and wants overnight progress).
 
@@ -235,6 +236,7 @@ Modes:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `OPENAI_API_KEY` | (required for `--llm-backend openai`) | API key |
 | `ANTHROPIC_API_KEY` | (required for `--llm-backend anthropic`) | API key |
 | `CORTEX_MODEL_HEAVY` | `claude-opus-4-6` | Main agent model |
 | `CORTEX_MODEL_DECIDER` | `claude-haiku-4-5` | Cheaper model for gate tests |
