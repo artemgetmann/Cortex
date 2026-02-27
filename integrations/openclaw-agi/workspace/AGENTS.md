@@ -9,11 +9,13 @@ Routing rule:
 1. Parse inbound messages with:
    `./bin/cortex_openclaw_dispatch.sh --text "<message>" --chat-id "<scope>"`
    - If chat scope is unavailable, omit `--chat-id` and dispatcher defaults to `global`.
-2. Dispatch behavior is command-based:
-   - `/run ...` => Cortex learning loop (execute -> judge -> lessons -> persist)
+2. Dispatch behavior is message-agnostic by default:
+   - non-control text => Cortex learning loop (execute -> judge -> lessons -> persist)
+     - default is multi-attempt learning loop
      - add `learn=off` to run execution-only (no lesson writes)
+   - `/run ...` and `/learnrun ...` => explicit task-mode controls
    - `/learn-status` => return learning signal summary
-   - anything else => chat mode (no learning run, no lesson writes)
+   - `/chat ...` => force chat mode (bypass learning run)
 3. For benchmark tasks, dispatcher reuses known task ids.
 4. For unseen tasks, dispatcher generates deterministic dynamic task ids scoped by chat.
 
@@ -21,7 +23,7 @@ Guardrails:
 1. Keep bridge usage thin and deterministic.
 2. Do not patch OpenClaw core code from this workspace.
 3. Do not mutate the main profile at `~/.openclaw`.
-4. Do not treat casual chat as tasks; only `/run` triggers task mode.
+4. Keep obvious small-talk in chat mode; everything else should route to Cortex run mode.
 
 Quick examples:
 1. `./bin/cortex_openclaw_dispatch.sh --chat-id tg-1336356696 --text "/run shell_git_transfer_hotfix"`

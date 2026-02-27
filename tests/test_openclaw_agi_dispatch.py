@@ -139,3 +139,9 @@ def test_dispatch_plain_natural_task_routes_to_dynamic_run_plan() -> None:
 def test_dispatch_plain_non_task_text_stays_chat_mode() -> None:
     payload = _run_dispatch(text="hey what is up")
     assert payload["mode"] == "chat"
+
+
+def test_dispatch_ambiguous_plain_request_still_routes_to_run_mode() -> None:
+    payload = _run_dispatch(text="help me clean up my database")
+    assert payload["mode"] == "run"
+    assert payload["plan"]["reason"] == "auto_task_intent"

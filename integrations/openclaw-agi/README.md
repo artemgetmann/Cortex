@@ -49,12 +49,12 @@ OPENCLAW_STATE_DIR=$HOME/.openclaw OPENCLAW_CONFIG_PATH=$HOME/.openclaw/openclaw
 
 ## Dispatcher Usage
 
-Run from the AGI workspace:
+Run from the AGI workspace (natural-language, no slash required):
 ```bash
 cd /Users/user/Programming_Projects/Cortex/integrations/openclaw-agi/workspace
 ./bin/cortex_openclaw_dispatch.sh \
   --chat-id tg-1336356696 \
-  --text "/run shell_git_transfer_hotfix"
+  --text "import csv sales events into sqlite, deduplicate by event_id, track rejects, and return totals by category"
 ```
 
 Run an unseen task in dynamic mode:
@@ -83,4 +83,5 @@ Inspect learning signals:
 1. `setup` disables Telegram in AGI config unless a dedicated token is provided.
 2. OAuth credentials are copied once into isolated AGI credentials for convenience.
 3. Runtime artifacts under `integrations/openclaw-agi/workspace` are gitignored.
-4. Only `/run` triggers task mode; plain chat stays non-learning mode to avoid memory pollution.
+4. Non-control natural-language messages route to Cortex task mode by default.
+5. Use `/chat ...` when you explicitly want normal chat mode without running Cortex.

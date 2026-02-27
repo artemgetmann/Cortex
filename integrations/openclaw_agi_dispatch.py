@@ -208,30 +208,39 @@ def _strip_natural_control_phrases(text: str) -> str:
     return _normalize_ws(cleaned)
 
 
-def _looks_like_task_intent(text: str) -> bool:
+def _is_trivial_chat_message(text: str) -> bool:
     """
-    Conservative intent detector for zero-slash task routing.
+    Minimal guardrail to keep obvious small-talk out of the learning loop.
 
-    Keeps normal chat in chat mode while allowing plain-language task requests
-    to enter the Cortex loop.
+    Routing rule is message-agnostic by default: if it is not a control
+    command and not trivial chat, treat it as a task and run Cortex.
     """
-    lowered = _normalize_ws(str(text or "")).lower()
-    if not lowered or lowered.startswith("/"):
-        return False
-    markers = (
-        "build",
-        "create",
-        "generate",
-        "fix",
-        "import",
-        "deduplicate",
-        "analyze",
-        "summarize",
-        "list files",
-        "show me",
-        "prepare",
-    )
-    return len(lowered) >= 24 and any(marker in lowered for marker in markers)
+    normalized = _normalize_ws(str(text or ""))
+    lowered = normalized.lower()
+    if not lowered:
+        return True
+    if lowered in {
+        "hi",
+        "hello",
+        "hey",
+        "yo",
+        "sup",
+        "ok",
+        "okay",
+        "k",
+        "thanks",
+        "thank you",
+        "cool",
+        "nice",
+        "lol",
+    }:
+        return True
+    if lowered.startswith("hi ") or lowered.startswith("hello ") or lowered.startswith("hey "):
+        return True
+    # Very short one-token chatter should not start a full run.
+    if len(lowered) <= 8 and " " not in lowered:
+        return True
+    return False
 
 
 def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -471,10 +480,10 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
     is_learnrun = any(lowered.startswith(prefix) for prefix in LEARNRUN_PREFIXES)
     auto_task_intent = False
     if not (is_run or is_learnrun):
-        if _looks_like_task_intent(normalized):
-            auto_task_intent = True
+        if _is_trivial_chat_message(normalized):
+            return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="trivial_chat")
         else:
-            return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="no_run_prefix")
+            auto_task_intent = True
 
     run_prefixes = LEARNRUN_PREFIXES if is_learnrun else RUN_PREFIXES
     payload = normalized if auto_task_intent else _strip_prefix(normalized, run_prefixes)

@@ -144,29 +144,40 @@ function buildFollowupDispatchText(
   };
 }
 
-function looksLikeTaskIntent(message: string): boolean {
+function isTrivialChatMessage(message: string): boolean {
   const text = message.trim().toLowerCase();
-  if (!text) return false;
-  if (text.startsWith("/")) return false;
-
-  const taskMarkers = [
-    "build",
-    "create",
-    "generate",
-    "fix",
-    "run",
-    "write",
-    "import",
-    "analyze",
-    "summarize",
-    "list files",
-    "show me",
-    "prepare",
-  ];
-  const containsMarker = taskMarkers.some((marker) => text.includes(marker));
-
-  // Keep the heuristic strict enough to avoid hijacking normal chat.
-  return containsMarker && text.length >= 24;
+  if (!text) return true;
+  if (text.startsWith("/")) return true;
+  if (
+    new Set([
+      "hi",
+      "hello",
+      "hey",
+      "yo",
+      "sup",
+      "ok",
+      "okay",
+      "k",
+      "thanks",
+      "thank you",
+      "cool",
+      "nice",
+      "lol",
+    ]).has(text)
+  ) {
+    return true;
+  }
+  if (
+    text.startsWith("hi ") ||
+    text.startsWith("hello ") ||
+    text.startsWith("hey ")
+  ) {
+    return true;
+  }
+  if (text.length <= 8 && !text.includes(" ")) {
+    return true;
+  }
+  return false;
 }
 
 function summarizeStatus(payload: Record<string, unknown>): string {
@@ -594,7 +605,9 @@ export async function maybeHandleCortexRoute(
   const scope = chatScope(chatId);
   const pending = pendingTasks.get(scope);
   const taskIntent =
-    CORTEX_AUTO_TASK_ROUTING && looksLikeTaskIntent(normalized);
+    CORTEX_AUTO_TASK_ROUTING &&
+    !normalized.startsWith("/") &&
+    !isTrivialChatMessage(normalized);
 
   if (startsWithAny(lowered, RUN_STATUS_PREFIXES)) {
     await sendStatusReply(ctx, normalized, chatId);
