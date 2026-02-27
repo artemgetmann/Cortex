@@ -31,6 +31,8 @@ TELEGRAM_ALLOWED_USERS=1336356696,6783130823
 AI_WORKING_DIR=/Users/user/Programming_Projects/Cortex/integrations/cortex-telegram-agi-bot/workspace
 AI_ASSISTANT=codex
 CORTEX_ROOT=/Users/user/Programming_Projects/Cortex
+CORTEX_DISPATCHER_PATH=/Users/user/Programming_Projects/Cortex/integrations/cortex_dispatch.py
+CORTEX_DISPATCH_PROFILE=v15
 ```
 
 3. Start bot:
@@ -43,6 +45,16 @@ bun run start
 ```text
 /learnstatus
 /run domain=shell steps=2 learn=off print current working directory and list files
+```
+
+5. Real memory-write check (learn=on):
+```text
+/run domain=shell steps=2 shell_git_transfer_hotfix
+```
+
+Verify lesson persistence:
+```bash
+tail -n 5 /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/learning/lessons_v2.jsonl
 ```
 
 ## Safe Parallel Service (Optional)

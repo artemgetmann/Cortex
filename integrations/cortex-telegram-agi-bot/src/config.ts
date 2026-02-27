@@ -291,8 +291,13 @@ export const CORTEX_ROOT = resolveFromWorkingDir(
 
 export const CORTEX_DISPATCHER_PATH = resolveFromWorkingDir(
   process.env.CORTEX_DISPATCHER_PATH ||
-    `${CORTEX_ROOT}/integrations/openclaw_agi_dispatch.py`
+    `${CORTEX_ROOT}/integrations/cortex_dispatch.py`
 );
+
+// Dispatch profile controls runtime policy in Python dispatcher.
+// v15 = locked OpenAI + GPT-5 nano single-path loop.
+export const CORTEX_DISPATCH_PROFILE =
+  process.env.CORTEX_DISPATCH_PROFILE || "v15";
 
 export const CORTEX_BRIDGE_TIMEOUT_MS = parseInt(
   process.env.CORTEX_BRIDGE_TIMEOUT_MS || "420000",

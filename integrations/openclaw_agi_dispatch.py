@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -23,7 +24,13 @@ TRACK_DIR = ROOT_DIR / "tracks" / "cli_sqlite"
 TASKS_ROOT = TRACK_DIR / "tasks"
 SESSIONS_ROOT = TRACK_DIR / "sessions"
 LESSONS_V2_PATH = TRACK_DIR / "learning" / "lessons_v2.jsonl"
-RUNNER = TRACK_DIR / "scripts" / "run_cli_agent.py"
+DISPATCH_PROFILE = str(os.environ.get("CORTEX_DISPATCH_PROFILE", "legacy")).strip().lower()
+USE_V15_PROFILE = DISPATCH_PROFILE in {"v15", "proof", "cli_sqlite_v15"}
+RUNNER_LEGACY = TRACK_DIR / "scripts" / "run_cli_agent.py"
+RUNNER_V15 = ROOT_DIR / "tracks" / "cli_sqlite_v15" / "run_cli_agent_v15.py"
+RUNNER = RUNNER_V15 if USE_V15_PROFILE else RUNNER_LEGACY
+DEFAULT_EXECUTOR_MODEL = "gpt-5-nano" if USE_V15_PROFILE else "claude-haiku-4-5"
+DEFAULT_LLM_BACKEND = "openai" if USE_V15_PROFILE else "anthropic"
 
 KNOWN_TASK_DOMAIN: dict[str, str] = {
     "aggregate_report": "gridtool",
@@ -62,8 +69,8 @@ class DispatchPlan:
     followup_text: str | None = None
     run_id: str | None = None
     max_steps: int = 6
-    model_executor: str = "claude-haiku-4-5"
-    llm_backend: str = "anthropic"
+    model_executor: str = DEFAULT_EXECUTOR_MODEL
+    llm_backend: str = DEFAULT_LLM_BACKEND
     posttask_learn: bool = True
     progress: bool = False
     progress_limit: int = 8
@@ -364,8 +371,14 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
     except ValueError:
         max_steps = 6
 
-    model_executor = controls.get("model", "").strip() or "claude-haiku-4-5"
-    llm_backend = controls.get("backend", "").strip() or "anthropic"
+    # v1.5 profile is intentionally locked to a single model/backend so
+    # real-world Telegram data stays consistent with benchmark policy.
+    if USE_V15_PROFILE:
+        model_executor = DEFAULT_EXECUTOR_MODEL
+        llm_backend = DEFAULT_LLM_BACKEND
+    else:
+        model_executor = controls.get("model", "").strip() or DEFAULT_EXECUTOR_MODEL
+        llm_backend = controls.get("backend", "").strip() or DEFAULT_LLM_BACKEND
     run_id = controls.get("run_id", "").strip() or None
     learn_value = controls.get("learn", controls.get("persist", "")).strip().lower()
     posttask_learn = not (learn_value in {"off", "false", "0", "no"})
@@ -389,6 +402,12 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
     assert plan.domain is not None
     assert plan.task_id is not None
     assert plan.task_text is not None
+    if not RUNNER.exists():
+        return {
+            "ok": False,
+            "error": f"runner not found: {RUNNER}",
+            "dispatch_profile": DISPATCH_PROFILE,
+        }
 
     if plan.task_id.startswith("openclaw_dynamic_") and not dry_run:
         _ensure_dynamic_task_dir(
@@ -415,12 +434,6 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         str(session_id),
         "--max-steps",
         str(plan.max_steps),
-        "--posttask-mode",
-        "direct",
-        "--contract-gap-retry",
-        "--contract-gap-retry-steps",
-        "1",
-        "--structured-lessons-required",
         "--llm-backend",
         plan.llm_backend,
         "--model-executor",
@@ -428,6 +441,19 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
         "--run-id",
         run_id,
     ]
+    # Legacy runner expects these explicit control flags. v1.5 runner is
+    # already hard-locked internally and keeps argv minimal on purpose.
+    if not USE_V15_PROFILE:
+        cmd.extend(
+            [
+                "--posttask-mode",
+                "direct",
+                "--contract-gap-retry",
+                "--contract-gap-retry-steps",
+                "1",
+                "--structured-lessons-required",
+            ]
+        )
     if not plan.posttask_learn:
         # Allow safe live testing without mutating shared lesson stores.
         cmd.append("--no-posttask-learn")
@@ -441,6 +467,8 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
             "domain": plan.domain,
             "session_id": session_id,
             "run_id": run_id,
+            "dispatch_profile": DISPATCH_PROFILE,
+            "runner": str(RUNNER),
         }
 
     proc = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True)
@@ -457,6 +485,8 @@ def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
     run_row = run_service.get_run(run_id)
     return {
         "ok": ok,
+        "dispatch_profile": DISPATCH_PROFILE,
+        "runner": str(RUNNER),
         "run_id": run_id,
         "task_id": plan.task_id,
         "domain": plan.domain,
@@ -521,6 +551,8 @@ def _status_payload(
     return {
         "ok": True,
         "mode": "status",
+        "dispatch_profile": DISPATCH_PROFILE,
+        "runner": str(RUNNER),
         "chat_scope": chat_scope,
         "run_id": run_id,
         "run": run_row.to_dict() if run_row else None,
