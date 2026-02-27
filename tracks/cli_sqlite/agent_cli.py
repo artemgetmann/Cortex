@@ -2451,6 +2451,28 @@ def _select_high_signal_prerun_matches(
     """
     if not matches:
         return []
+
+    def _is_dynamic_task(task_ref: str) -> bool:
+        text = str(task_ref or "").strip().lower()
+        # Telegram/OpenClaw natural-language tasks are materialized with a
+        # dynamic id. These tasks rarely start with strong fingerprint/tag
+        # anchors, so they need a softer fallback path to bootstrap retrieval.
+        return text.startswith("openclaw_dynamic_") or text.startswith("dynamic_")
+
+    def _has_structured_gap_fields(lesson_obj: Any) -> bool:
+        return bool(
+            str(getattr(lesson_obj, "reason_code", "")).strip()
+            or str(getattr(lesson_obj, "gap_type", "")).strip()
+            or str(getattr(lesson_obj, "gap_signature", "")).strip()
+        )
+
+    def _fallback_semantic_anchor(score_obj: Any) -> bool:
+        # Keep fallback deterministic and conservative. We only consider
+        # lessons that have at least minimal lexical/semantic overlap.
+        text_sim = float(getattr(score_obj, "text_similarity", 0.0) or 0.0)
+        sem_sim = float(getattr(score_obj, "semantic_similarity", 0.0) or 0.0)
+        return text_sim >= 0.02 or sem_sim >= 0.10
+
     normalized_domain = str(domain).strip().lower()
     limit = max(0, int(max_results))
     threshold = float(min_score)
@@ -2468,7 +2490,8 @@ def _select_high_signal_prerun_matches(
             continue
         if str(getattr(lesson, "task_id", "")).strip() != task_id:
             continue
-        if str(getattr(lesson, "domain", "")).strip().lower() != normalized_domain:
+        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != normalized_domain:
             continue
         if float(getattr(score, "score", 0.0) or 0.0) < threshold:
             continue
@@ -2489,6 +2512,67 @@ def _select_high_signal_prerun_matches(
         if str(getattr(lesson, "domain", "")).strip().lower() != normalized_domain:
             continue
         if float(getattr(score, "score", 0.0) or 0.0) < threshold:
+            continue
+        selected.append(match)
+        seen_ids.add(lesson_id)
+        if len(selected) >= limit:
+            break
+
+    if selected or not _is_dynamic_task(task_id):
+        return selected
+
+    # Pass 3 (dynamic-task fallback): exact task-id matches with low scores.
+    # Why this exists:
+    # - dynamic tasks start without stable trigger fingerprints/tags
+    # - strict threshold filtering can drop all lessons even after repeated
+    #   failures on the same task_id
+    # Guardrails:
+    # - only for dynamic task ids
+    # - only for lessons without structured gap signatures
+    # - requires at least minimal semantic/lexical anchor
+    dynamic_min_score = 0.05
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None or score is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_ids:
+            continue
+        if str(getattr(lesson, "task_id", "")).strip() != task_id:
+            continue
+        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != normalized_domain:
+            continue
+        if _has_structured_gap_fields(lesson):
+            continue
+        if float(getattr(score, "score", 0.0) or 0.0) < dynamic_min_score:
+            continue
+        if not _fallback_semantic_anchor(score):
+            continue
+        selected.append(match)
+        seen_ids.add(lesson_id)
+        if len(selected) >= limit:
+            break
+
+    if selected:
+        return selected
+
+    # Pass 4 (dynamic semantic backfill): same-domain/domainless legacy lessons.
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None or score is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_ids:
+            continue
+        if _has_structured_gap_fields(lesson):
+            continue
+        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != normalized_domain:
+            continue
+        if not _fallback_semantic_anchor(score):
             continue
         selected.append(match)
         seen_ids.add(lesson_id)
@@ -3442,8 +3526,10 @@ def _run_cli_agent_impl(
         "v2_prerun_lesson_ids": prerun_v2_ids,
         "v2_prerun_lesson_activations": len(prerun_v2_ids),
         "v2_prerun_placebo_applied": bool(benchmark_placebo and prerun_v2_ids),
-        "lesson_activations": 0,
-        "v2_lesson_activations": 0,
+        # Pre-run prompt injections are real lesson activations and should be
+        # counted in the same top-line metric users watch during live runs.
+        "lesson_activations": len(prerun_v2_ids),
+        "v2_lesson_activations": len(prerun_v2_ids),
         "v2_lesson_activations_effective": 0 if benchmark_placebo else len(prerun_v2_ids),
         "v2_lesson_activations_placebo": len(prerun_v2_ids) if benchmark_placebo else 0,
         "v2_lesson_activations_by_step": {},

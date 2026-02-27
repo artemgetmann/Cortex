@@ -307,6 +307,7 @@ def _ensure_dynamic_task_dir(*, task_id: str, domain: str, task_text: str, chat_
     task_dir = TASKS_ROOT / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
+    bootstrap_sql = task_dir / "bootstrap.sql"
     metadata_path = task_dir / "OPENCLAW_TASK.json"
     if not task_md.exists():
         # The task prompt is intentionally explicit so the executor has a clear
@@ -321,6 +322,40 @@ def _ensure_dynamic_task_dir(*, task_id: str, domain: str, task_text: str, chat_
             "- If blocked, produce the smallest deterministic recovery step.\n"
         )
         task_md.write_text(body, encoding="utf-8")
+
+    if str(domain).strip().lower() == "sqlite":
+        needs_bootstrap_write = not bootstrap_sql.exists()
+        if bootstrap_sql.exists():
+            existing = bootstrap_sql.read_text(encoding="utf-8", errors="ignore")
+            # Backward-compat repair: older dynamic bootstrap payload used
+            # fixture_* tables, which are blocked by sqlite adapter safety rules.
+            if "fixture_" in existing:
+                needs_bootstrap_write = True
+        if needs_bootstrap_write:
+            # Dynamic sqlite tasks run inside the sqlite adapter, which expects
+            # a deterministic bootstrap fixture. Without this file, runs fail
+            # before the model can execute any SQL, so no learning loop closes.
+            bootstrap_sql.write_text(
+                (
+                    "BEGIN;\n"
+                    "CREATE TABLE IF NOT EXISTS source_events(\n"
+                    "  event_id TEXT,\n"
+                    "  category TEXT,\n"
+                    "  amount REAL,\n"
+                    "  batch_id TEXT\n"
+                    ");\n"
+                    "DELETE FROM source_events;\n"
+                    "INSERT INTO source_events(event_id, category, amount, batch_id) VALUES\n"
+                    "  ('evt_001','alpha',10.0,'b1'),\n"
+                    "  ('evt_001','alpha',10.0,'b1'),\n"
+                    "  ('evt_002','beta',12.5,'b1'),\n"
+                    "  ('evt_003','alpha',7.0,'b2'),\n"
+                    "  ('evt_003','alpha',7.0,'b2'),\n"
+                    "  ('evt_004','gamma',3.5,'b2');\n"
+                    "COMMIT;\n"
+                ),
+                encoding="utf-8",
+            )
     metadata = {
         "task_id": task_id,
         "domain": domain,

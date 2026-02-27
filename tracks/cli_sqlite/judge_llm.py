@@ -107,6 +107,52 @@ def _extract_json_object(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _extract_partial_json_fields(raw: str) -> dict[str, Any] | None:
+    """
+    Best-effort parser for truncated judge output.
+
+    Why this exists:
+    - some model responses are cut before the closing brace
+    - strict JSON parse then fails even when key fields are present
+    - this fallback recovers only explicit fields (`passed`, `score`,
+      and quoted reason strings) and never invents values
+    """
+
+    text = str(raw or "")
+    if not text.strip():
+        return None
+
+    passed_match = re.search(r'"passed"\s*:\s*(true|false)', text, flags=re.IGNORECASE)
+    score_match = re.search(r'"score"\s*:\s*(-?\d+(?:\.\d+)?)', text, flags=re.IGNORECASE)
+    reasons: list[str] = []
+    reasons_start = re.search(r'"reasons"\s*:\s*\[', text, flags=re.IGNORECASE)
+    if reasons_start:
+        reasons_blob = text[reasons_start.end() :]
+        for match in re.finditer(r'"([^"\\]*(?:\\.[^"\\]*)*)"', reasons_blob):
+            value = bytes(match.group(1), "utf-8").decode("unicode_escape")
+            cleaned = str(value).strip()
+            if cleaned:
+                reasons.append(cleaned)
+            if len(reasons) >= 6:
+                break
+
+    if not passed_match and not score_match and not reasons:
+        return None
+
+    payload: dict[str, Any] = {}
+    if passed_match:
+        payload["passed"] = str(passed_match.group(1)).lower() == "true"
+    if score_match:
+        try:
+            payload["score"] = float(score_match.group(1))
+        except ValueError:
+            payload["score"] = 0.0
+    if reasons:
+        payload["reasons"] = reasons
+    payload["doc_grounding"] = []
+    return payload
+
+
 def llm_judge(
     *,
     client: Any,
@@ -228,6 +274,8 @@ def llm_judge(
             raw += str(data.get("text", ""))
 
     obj = _extract_json_object(raw)
+    if obj is None:
+        obj = _extract_partial_json_fields(raw)
     if obj is None:
         return JudgeResult(
             passed=False,
