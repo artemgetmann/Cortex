@@ -714,6 +714,7 @@ def _status_payload(
             "domain": recent_metrics.get("domain"),
             "eval_passed": recent_metrics.get("eval_passed"),
             "eval_score": recent_metrics.get("eval_score"),
+            "error_count": recent_metrics.get("error_count"),
             "lesson_activations": recent_metrics.get("lesson_activations"),
             "v2_retrieval_help_ratio": recent_metrics.get("v2_retrieval_help_ratio"),
         },

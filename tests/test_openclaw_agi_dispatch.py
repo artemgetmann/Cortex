@@ -51,6 +51,7 @@ def test_dispatch_status_mode() -> None:
     payload = _run_dispatch(text="/learn-status")
     assert payload["mode"] == "status"
     assert "lessons_total" in payload
+    assert "error_count" in payload["latest_session"]
 
 
 def test_dispatch_learn_off_adds_no_posttask_flag() -> None:

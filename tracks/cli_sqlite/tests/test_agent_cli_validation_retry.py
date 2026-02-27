@@ -295,6 +295,11 @@ def test_validation_retries_repeat_same_step_without_advancing_counter(
     assert result.metrics["tool_validation_errors"] == 2
     assert result.metrics["tool_validation_retry_attempts"] == 2
     assert result.metrics["tool_validation_retry_capped_events"] == 0
+    assert result.metrics["error_count"] == (
+        result.metrics["tool_errors"]
+        + result.metrics["tool_validation_errors"]
+        + result.metrics["v2_error_events"]
+    )
     assert adapter.execute_calls == [{"sql": "SELECT 1;"}]
 
 
@@ -329,6 +334,11 @@ def test_validation_retry_cap_records_metric_and_queues_reflection(
     assert result.metrics["tool_validation_errors"] == 3
     assert result.metrics["tool_validation_retry_attempts"] == 2
     assert result.metrics["tool_validation_retry_capped_events"] == 1
+    assert result.metrics["error_count"] == (
+        result.metrics["tool_errors"]
+        + result.metrics["tool_validation_errors"]
+        + result.metrics["v2_error_events"]
+    )
     assert result.metrics["v2_reflection_prompts"] >= 1
     assert any(
         row.get("reason") == "validation_retry_cap"

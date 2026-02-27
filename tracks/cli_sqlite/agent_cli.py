@@ -3517,6 +3517,11 @@ def _run_cli_agent_impl(
         "tool_validation_errors": 0,
         "tool_validation_retry_attempts": 0,
         "tool_validation_retry_capped_events": 0,
+        # Unified top-line error metric used for learning curves.
+        # This intentionally counts execution/tool errors + validation errors
+        # + structured memory error events so "error trend" is visible across
+        # attempts without requiring downstream code to recompute it.
+        "error_count": 0,
         "skill_gate_blocks": 0,
         "skill_reads": 0,
         "required_skill_refs": sorted(required_skill_refs),
@@ -5745,6 +5750,14 @@ def _run_cli_agent_impl(
             if count >= 2
         ]
     metrics["repeated_error_signatures"] = sorted(set(repeated_error_signatures))
+    # Keep error_count deterministic and derived from existing primitive
+    # counters at end-of-run. This avoids drift from partial increments in
+    # different branches of the executor loop.
+    metrics["error_count"] = (
+        int(metrics.get("tool_errors", 0) or 0)
+        + int(metrics.get("tool_validation_errors", 0) or 0)
+        + int(metrics.get("v2_error_events", 0) or 0)
+    )
     metrics["elapsed_s"] = round(time.time() - float(metrics["time_start"]), 3)
 
     docs_artifacts_path = write_doc_artifacts(session_dir=paths.session_dir, bundle=docs_bundle)
@@ -5811,6 +5824,7 @@ def _run_cli_agent_impl(
             "eval_passed": bool(metrics.get("eval_passed", False)),
             "eval_score": float(metrics.get("eval_score", 0.0) or 0.0),
             "steps": int(metrics.get("steps", 0) or 0),
+            "error_count": int(metrics.get("error_count", 0) or 0),
             "tool_errors": int(metrics.get("tool_errors", 0) or 0),
             "lessons_loaded": int(metrics.get("lessons_loaded", 0) or 0),
             "v2_lessons_generated": int(metrics.get("v2_lessons_generated", 0) or 0),
