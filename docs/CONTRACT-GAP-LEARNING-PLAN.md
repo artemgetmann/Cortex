@@ -1,5 +1,8 @@
 # Contract-Gap Learning Upgrade (CLI Memory V2)
 
+Status: `legacy reference` (superseded by `docs/CLI-SQLITE-V15-PROOF-PLAN.md`)
+Use: historical context for earlier contract-gap iterations; do not use as active execution plan.
+
 ## Summary
 
 We will improve learning quality by making failures explicit and machine-actionable.

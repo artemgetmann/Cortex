@@ -70,4 +70,5 @@ tracks/cli_sqlite/reports/sqlite_transfer_nano_smoke.*
 tracks/cli_sqlite/reports/*_rerun.log
 tracks/cli_sqlite/reports/*_refactor.log
 tracks/cli_sqlite/reports/*_structured.log
+tracks/cli_sqlite/reports/*.log
 tracks/cli_sqlite/skills/**/*.bak

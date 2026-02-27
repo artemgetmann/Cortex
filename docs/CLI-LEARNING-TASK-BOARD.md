@@ -1,5 +1,8 @@
 # CLI Learning Task Board
 
+Status: `reference board` (historical tracking artifact)
+Use: task history and rationale only; active execution source is `docs/CLI-SQLITE-V15-PROOF-PLAN.md`.
+
 Last updated: 2026-02-27
 Scope: `tracks/cli_sqlite`
 North star: prove real learning signal in hard transfer tasks (not prompt luck), while making the runtime maintainable.
