@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,12 @@ DEFAULT_CANDIDATE_MIN_SCORE = 0.25
 DEFAULT_CANDIDATE_ANCHOR_THRESHOLD = 0.25
 DEFAULT_ENABLE_SEMANTIC_SCORING = False
 DEFAULT_SEMANTIC_BLEND_WEIGHT = 0.60
+_ACTION_TOOL_RE = re.compile(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
+_ACTION_PLACEHOLDER_RE = re.compile(
+    r"(^|[\s(,])(?:todo|placeholder|tbd|fixme|fill_me|insert_here|example)(?:[\s),]|$)",
+    re.IGNORECASE,
+)
+_EVIDENCE_TOKEN_RE = re.compile(r"[a-z0-9_./-]{3,}")
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -189,6 +196,123 @@ def _normalize_candidate_policy(candidate_policy: str | None) -> str:
     }:
         return normalized
     return CANDIDATE_POLICY_ALL
+
+
+def _bump_rejection(rejection_counters: dict[str, int] | None, key: str) -> None:
+    if rejection_counters is None:
+        return
+    reason = str(key).strip() or "unknown_rejection"
+    rejection_counters[reason] = int(rejection_counters.get(reason, 0) or 0) + 1
+
+
+def _action_template_is_placeholder_like(action_template: str) -> bool:
+    text = str(action_template or "").strip()
+    if not text:
+        return False
+    if "..." in text or "<" in text or ">" in text:
+        return True
+    return bool(_ACTION_PLACEHOLDER_RE.search(text))
+
+
+def _parse_action_tool_name(action_template: str) -> str:
+    match = _ACTION_TOOL_RE.match(str(action_template or ""))
+    return str(match.group(1)).strip() if match else ""
+
+
+def _action_template_has_named_args(action_template: str) -> bool:
+    text = str(action_template or "").strip()
+    if not text.endswith(")") or "(" not in text:
+        return False
+    args = text[text.find("(") + 1 : -1]
+    if not args.strip():
+        return False
+    return "=" in args
+
+
+def _evidence_has_anchor(
+    *,
+    expected_evidence: str,
+    lesson: LessonRecord,
+    matched_gap: dict[str, Any] | None,
+) -> bool:
+    evidence = str(expected_evidence or "").lower()
+    if not evidence:
+        return False
+    gap_signature = str(getattr(lesson, "gap_signature", "") or "").strip().lower()
+    reason_code = str(getattr(lesson, "reason_code", "") or "").strip().lower()
+    gap_type = str(getattr(lesson, "gap_type", "") or "").strip().lower()
+    if gap_signature and gap_signature in evidence:
+        return True
+    if reason_code and reason_code in evidence:
+        return True
+    if gap_type and gap_type in evidence:
+        return True
+    if not isinstance(matched_gap, dict):
+        return False
+    detail_source = " ".join(
+        [
+            str(matched_gap.get("query_id", "") or ""),
+            str(matched_gap.get("detail", "") or ""),
+        ]
+    ).lower()
+    tokens = [tok for tok in _EVIDENCE_TOKEN_RE.findall(detail_source) if len(tok) >= 4]
+    stop_tokens = {"missing", "required", "pattern", "query", "event", "file", "content", "detail"}
+    filtered_tokens = [tok for tok in tokens if tok not in stop_tokens]
+    return any(tok in evidence for tok in filtered_tokens)
+
+
+def _validate_executable_schema(
+    *,
+    lesson: LessonRecord,
+    unresolved_by_signature: dict[str, dict[str, Any]],
+    strict_gap_signature_match: bool,
+    rejection_counters: dict[str, int] | None,
+) -> bool:
+    has_structured_gap = bool(
+        str(getattr(lesson, "reason_code", "")).strip()
+        or str(getattr(lesson, "gap_type", "")).strip()
+        or str(getattr(lesson, "gap_signature", "")).strip()
+    )
+    if not has_structured_gap:
+        # Legacy/generic lessons remain available unless strict signature mode
+        # requires binding every retrieved lesson to an unresolved gap.
+        if strict_gap_signature_match:
+            _bump_rejection(rejection_counters, "missing_trigger_gap_signature")
+            return False
+        return True
+
+    lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
+    if not lesson_signature:
+        _bump_rejection(rejection_counters, "missing_trigger_gap_signature")
+        return False
+    matched_gap = unresolved_by_signature.get(lesson_signature)
+    if strict_gap_signature_match and not matched_gap:
+        _bump_rejection(rejection_counters, "unbound_trigger_gap_signature")
+        return False
+
+    action_template = str(getattr(lesson, "action_template", "")).strip()
+    if not action_template:
+        _bump_rejection(rejection_counters, "missing_action_template")
+        return False
+    if _action_template_is_placeholder_like(action_template):
+        _bump_rejection(rejection_counters, "invalid_action_template_placeholder")
+        return False
+    if not _parse_action_tool_name(action_template) or not _action_template_has_named_args(action_template):
+        _bump_rejection(rejection_counters, "invalid_action_template_shape")
+        return False
+
+    expected_evidence = str(getattr(lesson, "expected_evidence", "")).strip()
+    if not expected_evidence:
+        _bump_rejection(rejection_counters, "missing_expected_evidence")
+        return False
+    if not _evidence_has_anchor(
+        expected_evidence=expected_evidence,
+        lesson=lesson,
+        matched_gap=matched_gap,
+    ):
+        _bump_rejection(rejection_counters, "expected_evidence_unanchored")
+        return False
+    return True
 
 
 def _candidate_has_anchor(
@@ -492,6 +616,9 @@ def _rank_lessons(
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    strict_gap_signature_match: bool = False,
+    enforce_executable_schema: bool = False,
+    rejection_counters: dict[str, int] | None = None,
     enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
     semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> list[RetrievalMatch]:
@@ -501,6 +628,13 @@ def _rank_lessons(
     if normalized_candidate_policy == CANDIDATE_POLICY_PROMOTED_ONLY:
         active = [record for record in active if str(record.status).strip().lower() == "promoted"]
     query_tag_set = {str(tag).strip() for tag in query_tags if str(tag).strip()}
+    unresolved_by_signature = {
+        str(gap.get("gap_signature", "")).strip(): gap
+        for gap in unresolved_gaps
+        if isinstance(gap, dict) and str(gap.get("gap_signature", "")).strip()
+    }
+    unresolved_signatures = set(unresolved_by_signature.keys())
+    strict_binding = bool(strict_gap_signature_match and unresolved_signatures)
     weight = max(0.0, float(score_multiplier))
     ranked: list[RetrievalMatch] = []
     semantic_index: SemanticIndex | None = None
@@ -510,6 +644,20 @@ def _rank_lessons(
         semantic_index = SemanticIndex.from_texts([lesson.rule_text for lesson in active])
 
     for lesson in active:
+        lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
+        if strict_binding and lesson_signature not in unresolved_signatures:
+            _bump_rejection(
+                rejection_counters,
+                "missing_trigger_gap_signature" if not lesson_signature else "unbound_trigger_gap_signature",
+            )
+            continue
+        if enforce_executable_schema and not _validate_executable_schema(
+            lesson=lesson,
+            unresolved_by_signature=unresolved_by_signature,
+            strict_gap_signature_match=strict_binding,
+            rejection_counters=rejection_counters,
+        ):
+            continue
         score = _build_score(
             lesson=lesson,
             query_fingerprint=query_fingerprint,
@@ -569,6 +717,9 @@ def retrieve_lessons(
     lane: str = LANE_STRICT,
     score_multiplier: float = 1.0,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    strict_gap_signature_match: bool = False,
+    enforce_executable_schema: bool = False,
+    rejection_counters: dict[str, int] | None = None,
     enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
     semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
@@ -583,6 +734,9 @@ def retrieve_lessons(
         lane=lane,
         score_multiplier=score_multiplier,
         candidate_policy=candidate_policy,
+        strict_gap_signature_match=strict_gap_signature_match,
+        enforce_executable_schema=enforce_executable_schema,
+        rejection_counters=rejection_counters,
         enable_semantic_scoring=enable_semantic_scoring,
         semantic_blend_weight=semantic_blend_weight,
     )
@@ -600,6 +754,9 @@ def retrieve_pre_run(
     query_tags: Sequence[str] = (),
     max_results: int = 8,
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    strict_gap_signature_match: bool = False,
+    enforce_executable_schema: bool = False,
+    rejection_counters: dict[str, int] | None = None,
     enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
     semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
@@ -617,6 +774,9 @@ def retrieve_pre_run(
         query_task_id=task_id,
         config=RetrievalConfig(max_results=max_results),
         candidate_policy=candidate_policy,
+        strict_gap_signature_match=strict_gap_signature_match,
+        enforce_executable_schema=enforce_executable_schema,
+        rejection_counters=rejection_counters,
         enable_semantic_scoring=enable_semantic_scoring,
         semantic_blend_weight=semantic_blend_weight,
     )
@@ -638,6 +798,9 @@ def retrieve_on_error(
     transfer_score_weight: float = DEFAULT_TRANSFER_SCORE_COEFFICIENT,
     unresolved_gaps: Sequence[dict[str, Any]] = (),
     candidate_policy: str = CANDIDATE_POLICY_ALL,
+    strict_gap_signature_match: bool = False,
+    enforce_executable_schema: bool = False,
+    rejection_counters: dict[str, int] | None = None,
     enable_semantic_scoring: bool = DEFAULT_ENABLE_SEMANTIC_SCORING,
     semantic_blend_weight: float = DEFAULT_SEMANTIC_BLEND_WEIGHT,
 ) -> tuple[list[RetrievalMatch], list[str]]:
@@ -696,6 +859,9 @@ def retrieve_on_error(
         query_task_id=normalized_task,
         lane=LANE_STRICT,
         candidate_policy=candidate_policy,
+        strict_gap_signature_match=strict_gap_signature_match,
+        enforce_executable_schema=enforce_executable_schema,
+        rejection_counters=rejection_counters,
         enable_semantic_scoring=enable_semantic_scoring,
         semantic_blend_weight=semantic_blend_weight,
     )
@@ -722,6 +888,9 @@ def retrieve_on_error(
         lane=LANE_TRANSFER,
         score_multiplier=transfer_score_weight,
         candidate_policy=candidate_policy,
+        strict_gap_signature_match=strict_gap_signature_match,
+        enforce_executable_schema=enforce_executable_schema,
+        rejection_counters=rejection_counters,
         enable_semantic_scoring=enable_semantic_scoring,
         semantic_blend_weight=semantic_blend_weight,
     )

@@ -35,6 +35,8 @@ def _record(
     reason_code: str = "",
     gap_type: str = "",
     gap_signature: str = "",
+    action_template: str = "",
+    expected_evidence: str = "",
 ) -> LessonRecord:
     rec = LessonRecord.from_candidate(
         session_id=session_id,
@@ -48,6 +50,8 @@ def _record(
         reason_code=reason_code,
         gap_type=gap_type,
         gap_signature=gap_signature,
+        action_template=action_template,
+        expected_evidence=expected_evidence,
     )
     return LessonRecord(**{**rec.__dict__, "reliability": reliability})
 
@@ -663,6 +667,119 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertTrue(matches)
             self.assertEqual(matches[0].lesson.lesson_id, structured.lesson_id)
 
+    def test_strict_gap_signature_match_filters_non_matching_lessons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            target = _record(
+                session_id=1973,
+                rule_text="WHEN gap_signature=required_query_mismatch|required_query|checkpoint_query: run_sqlite(sql=\"SELECT 1;\") EXPECT: required_query_mismatch|required_query|checkpoint_query",
+                fingerprints=("fp_exact",),
+                tags=("required_query",),
+                reliability=0.4,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+                action_template='run_sqlite(sql="SELECT 1;")',
+                expected_evidence="required_query_mismatch|required_query|checkpoint_query",
+            )
+            wrong_signature = _record(
+                session_id=1974,
+                rule_text="WHEN gap_signature=required_query_mismatch|required_query|other_query: run_sqlite(sql=\"SELECT 2;\") EXPECT: required_query_mismatch|required_query|other_query",
+                fingerprints=("fp_exact",),
+                tags=("required_query",),
+                reliability=0.9,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|other_query",
+                action_template='run_sqlite(sql="SELECT 2;")',
+                expected_evidence="required_query_mismatch|required_query|other_query",
+            )
+            upsert_lesson_records(path, [target, wrong_signature])
+            rejections: dict[str, int] = {}
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="required query mismatch",
+                fingerprint="fp_exact",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                query_tags=("required_query",),
+                max_results=2,
+                unresolved_gaps=[
+                    {
+                        "reason_code": "required_query_mismatch",
+                        "gap_type": "required_query",
+                        "gap_signature": "required_query_mismatch|required_query|checkpoint_query",
+                    }
+                ],
+                strict_gap_signature_match=True,
+                enforce_executable_schema=True,
+                rejection_counters=rejections,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertEqual(ids, [target.lesson_id])
+            self.assertGreaterEqual(int(rejections.get("unbound_trigger_gap_signature", 0)), 1)
+
+    def test_retrieval_schema_enforcement_rejects_non_executable_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            invalid = _record(
+                session_id=1975,
+                rule_text="Structured lesson missing action template.",
+                fingerprints=("fp_exact",),
+                tags=("required_query",),
+                reliability=0.8,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+                action_template="",
+                expected_evidence="required_query_mismatch|required_query|checkpoint_query",
+            )
+            valid = _record(
+                session_id=1976,
+                rule_text="Executable structured lesson.",
+                fingerprints=("fp_exact",),
+                tags=("required_query",),
+                reliability=0.4,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+                action_template='run_sqlite(sql="SELECT COUNT(*) FROM rejects;")',
+                expected_evidence="required_query_mismatch|required_query|checkpoint_query",
+            )
+            upsert_lesson_records(path, [invalid, valid])
+            rejections: dict[str, int] = {}
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="required query mismatch",
+                fingerprint="fp_exact",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                query_tags=("required_query",),
+                max_results=2,
+                unresolved_gaps=[
+                    {
+                        "reason_code": "required_query_mismatch",
+                        "gap_type": "required_query",
+                        "gap_signature": "required_query_mismatch|required_query|checkpoint_query",
+                    }
+                ],
+                strict_gap_signature_match=True,
+                enforce_executable_schema=True,
+                rejection_counters=rejections,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertIn(valid.lesson_id, ids)
+            self.assertNotIn(invalid.lesson_id, ids)
+            self.assertGreaterEqual(int(rejections.get("missing_action_template", 0)), 1)
+
     def test_candidate_policy_anchored_filters_weak_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "lessons_v2.jsonl"
@@ -820,6 +937,41 @@ class PromotionV2Tests(unittest.TestCase):
             apply_outcomes(path=path, outcomes=resolved_outcomes)
             promoted = load_lesson_records(path)[0]
             self.assertEqual(promoted.status, "promoted")
+
+    def test_structured_gap_lessons_suppress_after_repeated_same_signature_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            rec = _record(
+                session_id=1711,
+                rule_text="Fix required query mismatch by running checkpoint query.",
+                status="promoted",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|checkpoint_query",
+            )
+            upsert_lesson_records(path, [rec])
+            outcomes = [
+                LessonOutcome(
+                    lesson_id=rec.lesson_id,
+                    error_reduction=-0.1,
+                    step_efficiency_gain=0.0,
+                    gap_resolved=False,
+                    same_signature_failed=True,
+                ),
+                LessonOutcome(
+                    lesson_id=rec.lesson_id,
+                    error_reduction=-0.1,
+                    step_efficiency_gain=0.0,
+                    gap_resolved=False,
+                    same_signature_failed=True,
+                ),
+            ]
+            result = apply_outcomes(path=path, outcomes=outcomes)
+            suppressed = load_lesson_records(path)[0]
+            self.assertEqual(result["suppressed"], 1)
+            self.assertEqual(suppressed.status, "suppressed")
 
 
 if __name__ == "__main__":

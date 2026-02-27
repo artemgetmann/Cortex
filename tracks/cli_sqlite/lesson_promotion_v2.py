@@ -24,6 +24,7 @@ class LessonOutcome:
     major_regression: bool = False
     contradiction_lost: bool = False
     gap_resolved: bool | None = None
+    same_signature_failed: bool = False
 
 
 def compute_utility(
@@ -54,6 +55,7 @@ def _update_record(record: LessonRecord, outcome: LessonOutcome) -> LessonRecord
     major_regressions = record.major_regressions + (1 if outcome.major_regression else 0)
     contradiction_losses = record.contradiction_losses + (1 if outcome.contradiction_lost else 0)
     retrieval_count = record.retrieval_count + 1
+    same_signature_failed = bool(outcome.same_signature_failed)
 
     # Reliability tracks smoothed utility impact and stays in [0,1].
     utility_mapped = _clamp((utility + 1.0) / 2.0, 0.0, 1.0)
@@ -69,6 +71,11 @@ def _update_record(record: LessonRecord, outcome: LessonOutcome) -> LessonRecord
     # Suppression guards run first: harmful retrievals or contradiction losses
     # should immediately stop future retrieval amplification.
     if contradiction_losses > 0:
+        status = "suppressed"
+    elif same_signature_failed and harmful >= 2:
+        # Signature-scoped lessons that repeatedly activate and still leave the
+        # same gap unresolved are considered harmful for that signature and are
+        # suppressed to prevent retrieval loops.
         status = "suppressed"
     elif retrieval_count >= 3 and mean_utility <= 0.0:
         status = "suppressed"

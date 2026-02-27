@@ -3875,25 +3875,10 @@ def _run_cli_agent_impl(
             transfer_score_weight=transfer_retrieval_score_weight,
             unresolved_gaps=unresolved_gaps,
             candidate_policy=runtime_candidate_policy_effective,
+            strict_gap_signature_match=bool(structured_lessons_required),
+            enforce_executable_schema=bool(structured_lessons_required),
+            rejection_counters=metrics["v2_schema_rejection_counts"],
         )
-        if structured_lessons_required and latest_unresolved_gaps:
-            unresolved_signatures = {
-                str(row.get("gap_signature", "")).strip()
-                for row in latest_unresolved_gaps
-                if str(row.get("gap_signature", "")).strip()
-            }
-            if unresolved_signatures:
-                before_count = len(gap_matches)
-                gap_matches = [
-                    match
-                    for match in gap_matches
-                    if str(getattr(getattr(match, "lesson", None), "gap_signature", "")).strip() in unresolved_signatures
-                ]
-                dropped = max(0, before_count - len(gap_matches))
-                if dropped > 0:
-                    metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
-                        metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
-                    ) + dropped
         gap_hints: list[str] = []
         for match in gap_matches:
             lesson = getattr(match, "lesson", None)
@@ -4353,26 +4338,10 @@ def _run_cli_agent_impl(
                     transfer_score_weight=transfer_retrieval_score_weight,
                     unresolved_gaps=latest_unresolved_gaps,
                     candidate_policy=runtime_candidate_policy_effective,
+                    strict_gap_signature_match=bool(structured_lessons_required),
+                    enforce_executable_schema=bool(structured_lessons_required),
+                    rejection_counters=metrics["v2_schema_rejection_counts"],
                 )
-                if structured_lessons_required and latest_unresolved_gaps:
-                    unresolved_signatures = {
-                        str(row.get("gap_signature", "")).strip()
-                        for row in latest_unresolved_gaps
-                        if str(row.get("gap_signature", "")).strip()
-                    }
-                    if unresolved_signatures:
-                        before_count = len(v2_matches)
-                        v2_matches = [
-                            match
-                            for match in v2_matches
-                            if str(getattr(getattr(match, "lesson", None), "gap_signature", "")).strip()
-                            in unresolved_signatures
-                        ]
-                        dropped = max(0, before_count - len(v2_matches))
-                        if dropped > 0:
-                            metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
-                                metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
-                            ) + dropped
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
                 if v2_matches:
@@ -5319,15 +5288,17 @@ def _run_cli_agent_impl(
             count = max(1.0, bucket["count"])
             current_record = current_records_by_id.get(lesson_id)
             gap_resolved: bool | None = None
+            same_signature_failed = False
             if current_record is not None and (
                 str(current_record.reason_code).strip() or str(current_record.gap_type).strip()
             ):
                 candidate_signature = str(current_record.gap_signature).strip()
                 candidate_reason = str(current_record.reason_code).strip()
-                if candidate_signature and candidate_signature in unresolved_gap_signatures:
-                    gap_resolved = False
-                elif candidate_reason and candidate_reason in unresolved_reason_codes:
-                    gap_resolved = False
+                if candidate_signature:
+                    gap_resolved = candidate_signature not in unresolved_gap_signatures
+                    same_signature_failed = not bool(gap_resolved)
+                elif candidate_reason:
+                    gap_resolved = candidate_reason not in unresolved_reason_codes
                 else:
                     gap_resolved = True
             outcomes.append(
@@ -5339,6 +5310,7 @@ def _run_cli_agent_impl(
                     major_regression=bool(metrics.get("eval_score", 0.0) < 0.2 and metrics.get("tool_errors", 0) > 0),
                     contradiction_lost=False,
                     gap_resolved=gap_resolved,
+                    same_signature_failed=same_signature_failed,
                 )
             )
         for lesson_id, count in contradiction_loser_counts.items():
