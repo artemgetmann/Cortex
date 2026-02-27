@@ -1692,6 +1692,88 @@ def _build_sqlite_validator_guidance_from_contract(
     return "\n".join(lines)
 
 
+def _contract_pattern_to_hint_text(pattern: str, *, max_chars: int = 140) -> str:
+    """
+    Convert a regex-like contract pattern into a short, human-readable hint.
+
+    This keeps contract-derived guidance useful for smaller executor models
+    without hardcoding task-specific command recipes in Python.
+    """
+    text = str(pattern or "").strip()
+    if not text:
+        return ""
+    # Strip common regex wrappers/tokens so the model sees a likely command
+    # shape instead of raw regex noise.
+    simplified = text
+    for token in ("(?is)", "(?si)", "(?s)", "(?i)", "^", "$", "\\b"):
+        simplified = simplified.replace(token, "")
+    replacements = (
+        ("\\s+", " "),
+        ("\\s*", " "),
+        ("\\.", "."),
+        ("\\/", "/"),
+    )
+    for source, target in replacements:
+        simplified = simplified.replace(source, target)
+    simplified = re.sub(r"\s+", " ", simplified).strip()
+    if not simplified:
+        simplified = text
+    return _clip_text(simplified, max_chars=max_chars)
+
+
+def _build_contract_execution_guidance_from_contract(
+    *,
+    contract: dict[str, Any],
+    max_required: int = 4,
+    max_forbidden: int = 2,
+) -> str:
+    """
+    Build a generic contract-closure checklist from required/forbidden patterns.
+
+    Why this exists:
+    - Domain adapters can define contracts, but prompt guidance was sqlite-only.
+    - Tight-step tasks fail when models forget one required action.
+    - This gives every domain the same deterministic closure checklist source.
+    """
+    if not isinstance(contract, dict):
+        return ""
+    signals = contract.get("signals", {})
+    if not isinstance(signals, dict):
+        return ""
+    required = [str(row).strip() for row in signals.get("required_event_patterns", []) if str(row).strip()]
+    forbidden = [str(row).strip() for row in signals.get("forbidden_event_patterns", []) if str(row).strip()]
+    if not required and not forbidden:
+        return ""
+
+    lines: list[str] = [
+        "Deterministic contract closure checklist:",
+    ]
+    if required:
+        lines.append("- Required command/event coverage before stop:")
+        added_required = 0
+        for pattern in required:
+            hint = _contract_pattern_to_hint_text(pattern)
+            if not hint:
+                continue
+            lines.append(f"  - required: {hint}")
+            added_required += 1
+            if added_required >= max(1, int(max_required)):
+                break
+    if forbidden:
+        lines.append("- Forbidden command/event patterns to avoid:")
+        added_forbidden = 0
+        for pattern in forbidden:
+            hint = _contract_pattern_to_hint_text(pattern)
+            if not hint:
+                continue
+            lines.append(f"  - avoid: {hint}")
+            added_forbidden += 1
+            if added_forbidden >= max(1, int(max_forbidden)):
+                break
+    lines.append("- If checklist items are unmet, repair and verify before final stop.")
+    return "\n".join(lines)
+
+
 def _build_gap_row(*, reason_code: str, gap_type: str, detail: str) -> dict[str, Any]:
     text = str(detail).strip()
     return {
@@ -2720,17 +2802,24 @@ def prepare_cli_prompt_preview(
         lessons_text = f"{lessons_text}\n\n{v2_block}".strip()
     domain_fragment = adapter.system_prompt_fragment()
     runtime_contract: dict[str, Any] | None = None
-    if domain == "sqlite":
-        try:
-            runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
-        except Exception:
-            runtime_contract = None
+    try:
+        # Preview path uses task-level contract only (no session runtime
+        # override), which is still enough for deterministic checklist hints.
+        runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
+    except Exception:
+        runtime_contract = None
+    contract_checklist_guidance = _build_contract_execution_guidance_from_contract(
+        contract=runtime_contract or {},
+        max_required=4,
+        max_forbidden=2,
+    )
     validator_guidance = _build_sqlite_validator_guidance_from_contract(
         contract=runtime_contract or {},
         max_queries=4,
     ) if domain == "sqlite" else ""
-    if validator_guidance:
-        domain_fragment = f"{domain_fragment}\n{validator_guidance}\n"
+    guidance_chunks = [chunk for chunk in (contract_checklist_guidance, validator_guidance) if chunk]
+    if guidance_chunks:
+        domain_fragment = f"{domain_fragment}\n" + "\n\n".join(guidance_chunks) + "\n"
     if bootstrap:
         domain_fragment = re.sub(
             r"- Before starting.*?do not guess or invent skill_ref names\.\n",
@@ -3240,17 +3329,24 @@ def _run_cli_agent_impl(
 
     domain_fragment = adapter.system_prompt_fragment()
     runtime_contract: dict[str, Any] | None = None
-    if domain == "sqlite":
-        try:
-            runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
-        except Exception:
-            runtime_contract = None
+    try:
+        # Runtime path includes workspace override so session-seeded contracts
+        # (for transfer-hard variants) can drive prompt checklist guidance.
+        runtime_contract, _ = load_contract(TASKS_ROOT, task_id, work_dir=workspace.work_dir)
+    except Exception:
+        runtime_contract = None
+    contract_checklist_guidance = _build_contract_execution_guidance_from_contract(
+        contract=runtime_contract or {},
+        max_required=4,
+        max_forbidden=2,
+    )
     validator_guidance = _build_sqlite_validator_guidance_from_contract(
         contract=runtime_contract or {},
         max_queries=4,
     ) if domain == "sqlite" else ""
-    if validator_guidance:
-        domain_fragment = f"{domain_fragment}\n{validator_guidance}\n"
+    guidance_chunks = [chunk for chunk in (contract_checklist_guidance, validator_guidance) if chunk]
+    if guidance_chunks:
+        domain_fragment = f"{domain_fragment}\n" + "\n\n".join(guidance_chunks) + "\n"
     if bootstrap:
         # Strip skill-reading instructions to avoid wasting steps on read_skill
         # with invented refs (no skill docs exist in bootstrap mode)
