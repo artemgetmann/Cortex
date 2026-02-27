@@ -593,6 +593,8 @@ export async function maybeHandleCortexRoute(
   const lowered = normalized.toLowerCase();
   const scope = chatScope(chatId);
   const pending = pendingTasks.get(scope);
+  const taskIntent =
+    CORTEX_AUTO_TASK_ROUTING && looksLikeTaskIntent(normalized);
 
   if (startsWithAny(lowered, RUN_STATUS_PREFIXES)) {
     await sendStatusReply(ctx, normalized, chatId);
@@ -624,7 +626,7 @@ export async function maybeHandleCortexRoute(
       pendingTasks.delete(scope);
       // Keep natural-language task routing domain-agnostic. The Python
       // dispatcher infers domain/task when explicit controls are absent.
-      const runText = `/run ${pending.prompt}`;
+      const runText = `/learnrun attempts=3 ${pending.prompt}`;
       await runTaskAndReply(ctx, runText, chatId);
       return true;
     }
@@ -639,17 +641,32 @@ export async function maybeHandleCortexRoute(
 
   const activeRunId = activeRuns.get(scope)?.runId;
   if (activeRunId && !normalized.startsWith("/")) {
-    // During active runs, plain text is treated as steering input.
+    // If this message looks like a brand-new task request, route it through
+    // task-mode instead of hijacking it as followup steering.
+    if (taskIntent) {
+      if (!CORTEX_CONFIRMATION_ENABLED) {
+        const runText = `/learnrun attempts=3 ${normalized}`;
+        await runTaskAndReply(ctx, runText, chatId);
+        return true;
+      }
+      pendingTasks.set(scope, { prompt: normalized, createdAtMs: Date.now() });
+      await ctx.reply(
+        "This looks like a new task while another run exists. Reply 'yes' to run it via Cortex learning loop (3 attempts), or 'no' to keep chatting."
+      );
+      return true;
+    }
+    // During active runs, non-task plain text is treated as steering input.
     return handleCortexFollowupCommand(ctx, chatId, normalized);
   }
 
-  if (!CORTEX_AUTO_TASK_ROUTING || !looksLikeTaskIntent(normalized)) {
+  if (!taskIntent) {
     return false;
   }
 
   if (!CORTEX_CONFIRMATION_ENABLED) {
-    // Same domain-agnostic routing path as the confirmation flow.
-    const runText = `/run ${normalized}`;
+    // Same domain-agnostic routing path as the confirmation flow, but with
+    // learnrun semantics so memory loop can close in one user turn.
+    const runText = `/learnrun attempts=3 ${normalized}`;
     await runTaskAndReply(ctx, runText, chatId);
     return true;
   }

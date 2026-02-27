@@ -123,3 +123,19 @@ def test_dispatch_known_task_without_explicit_text_omits_task_override_flag() ->
     assert "--task-id" in cmd
     assert "incremental_reconcile" in cmd
     assert "--task" not in cmd
+
+
+def test_dispatch_plain_natural_task_routes_to_dynamic_run_plan() -> None:
+    payload = _run_dispatch(
+        text="Import a CSV of sales events into SQLite. Deduplicate by event_id and return category totals."
+    )
+    assert payload["mode"] == "run"
+    assert payload["plan"]["reason"] == "auto_task_intent"
+    assert payload["plan"]["attempts"] == 3
+    assert payload["plan"]["task_id"].startswith("openclaw_dynamic_")
+    assert payload["plan"]["domain"] == "sqlite"
+
+
+def test_dispatch_plain_non_task_text_stays_chat_mode() -> None:
+    payload = _run_dispatch(text="hey what is up")
+    assert payload["mode"] == "chat"

@@ -208,6 +208,32 @@ def _strip_natural_control_phrases(text: str) -> str:
     return _normalize_ws(cleaned)
 
 
+def _looks_like_task_intent(text: str) -> bool:
+    """
+    Conservative intent detector for zero-slash task routing.
+
+    Keeps normal chat in chat mode while allowing plain-language task requests
+    to enter the Cortex loop.
+    """
+    lowered = _normalize_ws(str(text or "")).lower()
+    if not lowered or lowered.startswith("/"):
+        return False
+    markers = (
+        "build",
+        "create",
+        "generate",
+        "fix",
+        "import",
+        "deduplicate",
+        "analyze",
+        "summarize",
+        "list files",
+        "show me",
+        "prepare",
+    )
+    return len(lowered) >= 24 and any(marker in lowered for marker in markers)
+
+
 def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
     event = str(row.get("event", "")).strip().lower()
     if not event:
@@ -443,11 +469,15 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
 
     is_run = any(lowered.startswith(prefix) for prefix in RUN_PREFIXES)
     is_learnrun = any(lowered.startswith(prefix) for prefix in LEARNRUN_PREFIXES)
+    auto_task_intent = False
     if not (is_run or is_learnrun):
-        return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="no_run_prefix")
+        if _looks_like_task_intent(normalized):
+            auto_task_intent = True
+        else:
+            return DispatchPlan(mode="chat", chat_scope=chat_scope, reason="no_run_prefix")
 
     run_prefixes = LEARNRUN_PREFIXES if is_learnrun else RUN_PREFIXES
-    payload = _strip_prefix(normalized, run_prefixes)
+    payload = normalized if auto_task_intent else _strip_prefix(normalized, run_prefixes)
     controls, payload_tail = _parse_keyvals(payload)
     cleaned_tail = _strip_natural_control_phrases(payload_tail)
     explicit_task_text = controls.get("task", "").strip()
@@ -474,7 +504,9 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
             task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
             task_text = free_text
 
-    default_attempts = 3 if is_learnrun else 1
+    # Plain natural-language auto-routed tasks should run the learning loop,
+    # not single-attempt chat semantics.
+    default_attempts = 3 if (is_learnrun or auto_task_intent) else 1
     attempts = _parse_attempts(controls.get("attempts", ""), default=default_attempts)
 
     max_steps_raw = controls.get("steps", "").strip()
@@ -515,7 +547,11 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         model_executor=model_executor,
         llm_backend=llm_backend,
         posttask_learn=posttask_learn,
-        reason="learnrun_prefix" if is_learnrun else "run_prefix",
+        reason=(
+            "auto_task_intent"
+            if auto_task_intent
+            else ("learnrun_prefix" if is_learnrun else "run_prefix")
+        ),
     )
 
 
