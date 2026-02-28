@@ -17,13 +17,25 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tracks.cli_sqlite import run_service
+from tracks.cli_sqlite.runtime_paths import resolve_runtime_lane, resolve_runtime_paths
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TRACK_DIR = ROOT_DIR / "tracks" / "cli_sqlite"
 TASKS_ROOT = TRACK_DIR / "tasks"
-SESSIONS_ROOT = TRACK_DIR / "sessions"
-LESSONS_V2_PATH = TRACK_DIR / "learning" / "lessons_v2.jsonl"
+# Dispatcher default lane is telegram so live bot runs stay isolated from
+# benchmark/programmatic memory unless a caller explicitly overrides lane.
+DISPATCH_RUNTIME_LANE = resolve_runtime_lane(os.environ.get("CORTEX_RUNTIME_LANE", "telegram"))
+RUNTIME_PATHS = resolve_runtime_paths(track_root=TRACK_DIR, lane=DISPATCH_RUNTIME_LANE)
+SESSIONS_ROOT = RUNTIME_PATHS.sessions_root
+LESSONS_V2_PATH = RUNTIME_PATHS.lessons_v2_path
+RUN_SERVICE_STATE_PATH = SESSIONS_ROOT / "run_service_state.json"
+RUN_SERVICE_LIFECYCLE_PATH = SESSIONS_ROOT / "run_lifecycle.jsonl"
+
+# Keep run-service state/lifecycle in the same lane as session + lesson files.
+os.environ.setdefault("CORTEX_RUNTIME_LANE", DISPATCH_RUNTIME_LANE)
+os.environ.setdefault(run_service.ENV_STATE_PATH, str(RUN_SERVICE_STATE_PATH))
+os.environ.setdefault(run_service.ENV_LIFECYCLE_PATH, str(RUN_SERVICE_LIFECYCLE_PATH))
 # Default to v15 for Telegram AGI runs so the live path uses the current
 # single-model OpenAI proof loop unless a caller explicitly opts into legacy.
 DISPATCH_PROFILE = str(os.environ.get("CORTEX_DISPATCH_PROFILE", "v15")).strip().lower()
@@ -640,9 +652,14 @@ def _run_task_once(
             "run_id": run_id,
             "dispatch_profile": DISPATCH_PROFILE,
             "runner": str(RUNNER),
+            "runtime_lane": DISPATCH_RUNTIME_LANE or "default",
         }
 
-    proc = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True)
+    run_env = dict(os.environ)
+    run_env["CORTEX_RUNTIME_LANE"] = DISPATCH_RUNTIME_LANE or ""
+    run_env[run_service.ENV_STATE_PATH] = str(RUN_SERVICE_STATE_PATH)
+    run_env[run_service.ENV_LIFECYCLE_PATH] = str(RUN_SERVICE_LIFECYCLE_PATH)
+    proc = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True, env=run_env)
     session_dir = SESSIONS_ROOT / f"session-{session_id:03d}"
     metrics_path = session_dir / "metrics.json"
     metrics: dict[str, Any] = {}
@@ -670,6 +687,7 @@ def _run_task_once(
         "run_status": run_row.status if run_row else None,
         "run": run_row.to_dict() if run_row else None,
         "run_followup_count": len(run_row.followups or []) if run_row else 0,
+        "runtime_lane": DISPATCH_RUNTIME_LANE or "default",
     }
 
 
@@ -745,6 +763,7 @@ def _status_payload(
         "mode": "status",
         "dispatch_profile": DISPATCH_PROFILE,
         "runner": str(RUNNER),
+        "runtime_lane": DISPATCH_RUNTIME_LANE or "default",
         "chat_scope": chat_scope,
         "run_id": run_id,
         "run": run_row.to_dict() if run_row else None,

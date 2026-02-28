@@ -54,7 +54,8 @@ bun run start
 
 Verify lesson persistence:
 ```bash
-tail -n 5 /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/learning/lessons_v2.jsonl
+tail -n 5 /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/runtime/telegram/learning/lessons_v2.jsonl
+ls -la /Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/runtime/telegram/sessions | tail -n 5
 ```
 
 ## Safe Parallel Service (Optional)

@@ -101,6 +101,7 @@ from tracks.cli_sqlite.self_edit_gate import (
     build_self_edit_manifest_entries,
     self_edit_allowed_refs,
 )
+from tracks.cli_sqlite.runtime_paths import resolve_runtime_paths
 from tracks.cli_sqlite.self_improve_cli import (
     SkillUpdate,
     apply_skill_updates,
@@ -124,14 +125,15 @@ TRACK_ROOT = Path(__file__).resolve().parent
 SKILLS_ROOT = TRACK_ROOT / "skills"
 MANIFEST_PATH = SKILLS_ROOT / "skills_manifest.json"
 TASKS_ROOT = TRACK_ROOT / "tasks"
-LEARNING_ROOT = TRACK_ROOT / "learning"
-SESSIONS_ROOT = TRACK_ROOT / "sessions"
-LESSONS_PATH = LEARNING_ROOT / "lessons.jsonl"
-LESSONS_V2_PATH = LEARNING_ROOT / "lessons_v2.jsonl"
-MEMORY_EVENTS_PATH = LEARNING_ROOT / "memory_events.jsonl"
-QUEUE_PATH = LEARNING_ROOT / "pending_skill_patches.json"
-PROMOTED_PATH = LEARNING_ROOT / "promoted_skill_patches.json"
-ESCALATION_STATE_PATH = LEARNING_ROOT / "critic_escalation_state.json"
+_RUNTIME_PATHS = resolve_runtime_paths(track_root=TRACK_ROOT)
+LEARNING_ROOT = _RUNTIME_PATHS.learning_root
+SESSIONS_ROOT = _RUNTIME_PATHS.sessions_root
+LESSONS_PATH = _RUNTIME_PATHS.lessons_path
+LESSONS_V2_PATH = _RUNTIME_PATHS.lessons_v2_path
+MEMORY_EVENTS_PATH = _RUNTIME_PATHS.memory_events_path
+QUEUE_PATH = _RUNTIME_PATHS.queue_path
+PROMOTED_PATH = _RUNTIME_PATHS.promoted_path
+ESCALATION_STATE_PATH = _RUNTIME_PATHS.escalation_state_path
 
 DEFAULT_EXECUTOR_MODEL = "claude-haiku-4-5"
 DEFAULT_CRITIC_MODEL = "claude-haiku-4-5"

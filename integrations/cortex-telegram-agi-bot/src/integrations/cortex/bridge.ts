@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import {
   CORTEX_BRIDGE_TIMEOUT_MS,
   CORTEX_DISPATCHER_PATH,
+  CORTEX_RUNTIME_LANE,
   CORTEX_ROOT,
 } from "../../config";
 
@@ -51,7 +52,13 @@ export async function runCortexDispatch(
     const child = spawn(
       "python3",
       [CORTEX_DISPATCHER_PATH, "--text", text, "--chat-id", chatId],
-      { cwd: CORTEX_ROOT }
+      {
+        cwd: CORTEX_ROOT,
+        env: {
+          ...process.env,
+          CORTEX_RUNTIME_LANE: CORTEX_RUNTIME_LANE || "telegram",
+        },
+      }
     );
 
     let stdout = "";

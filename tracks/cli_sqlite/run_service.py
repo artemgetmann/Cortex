@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from tracks.cli_sqlite.runtime_paths import resolve_runtime_paths
+
 
 TRACK_ROOT = Path(__file__).resolve().parent
 DEFAULT_STATE_PATH = TRACK_ROOT / "sessions" / "run_service_state.json"
@@ -191,7 +193,8 @@ def _normalize_state_path(state_path: Path | None) -> Path:
     env_path = str(os.getenv(ENV_STATE_PATH, "")).strip()
     if env_path:
         return Path(env_path).expanduser().resolve()
-    return DEFAULT_STATE_PATH.resolve()
+    runtime_paths = resolve_runtime_paths(track_root=TRACK_ROOT)
+    return (runtime_paths.sessions_root / "run_service_state.json").resolve()
 
 
 def _normalize_lifecycle_path(lifecycle_path: Path | None) -> Path:
@@ -200,7 +203,8 @@ def _normalize_lifecycle_path(lifecycle_path: Path | None) -> Path:
     env_path = str(os.getenv(ENV_LIFECYCLE_PATH, "")).strip()
     if env_path:
         return Path(env_path).expanduser().resolve()
-    return DEFAULT_LIFECYCLE_PATH.resolve()
+    runtime_paths = resolve_runtime_paths(track_root=TRACK_ROOT)
+    return (runtime_paths.sessions_root / "run_lifecycle.jsonl").resolve()
 
 
 def _append_lifecycle_row(path: Path, row: dict[str, Any]) -> None:

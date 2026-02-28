@@ -299,6 +299,11 @@ export const CORTEX_DISPATCHER_PATH = resolveFromWorkingDir(
 export const CORTEX_DISPATCH_PROFILE =
   process.env.CORTEX_DISPATCH_PROFILE || "v15";
 
+// Route Telegram runs into isolated Cortex runtime storage lane by default.
+// This keeps live bot memory separate from benchmark/programmatic memory.
+export const CORTEX_RUNTIME_LANE =
+  (process.env.CORTEX_RUNTIME_LANE || "telegram").trim() || "telegram";
+
 export const CORTEX_BRIDGE_TIMEOUT_MS = parseInt(
   process.env.CORTEX_BRIDGE_TIMEOUT_MS || "420000",
   10

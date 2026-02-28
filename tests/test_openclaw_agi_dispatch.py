@@ -35,6 +35,7 @@ def test_dispatch_known_task_from_run_command() -> None:
     assert plan["domain"] == "shell"
     assert result["dry_run"] is True
     assert result["ok"] is True
+    assert result["runtime_lane"] == "telegram"
 
 
 def test_dispatch_dynamic_task_id_is_stable_per_chat_scope() -> None:
@@ -50,6 +51,7 @@ def test_dispatch_dynamic_task_id_is_stable_per_chat_scope() -> None:
 def test_dispatch_status_mode() -> None:
     payload = _run_dispatch(text="/learn-status")
     assert payload["mode"] == "status"
+    assert payload["runtime_lane"] == "telegram"
     assert "lessons_total" in payload
     assert "error_count" in payload["latest_session"]
 
