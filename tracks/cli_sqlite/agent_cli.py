@@ -88,6 +88,11 @@ from tracks.cli_sqlite.openai_transport import (
     openai_chat_completions_request as _openai_chat_completions_request,
     openai_responses_request as _openai_responses_request,
 )
+from tracks.cli_sqlite.prompt_builder import (
+    DEFAULT_EXECUTOR_PROMPT_MODE,
+    build_executor_system_prompt,
+    normalize_executor_prompt_mode,
+)
 from tracks.cli_sqlite.run_observability import (
     append_self_edit_gate_event,
     append_lifecycle_event,
@@ -157,8 +162,6 @@ DEFAULT_BENCHMARK_PLACEBO = False
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
-EXECUTOR_PROMPT_MODES = ("full", "minimal")
-DEFAULT_EXECUTOR_PROMPT_MODE = "full"
 DEFAULT_CONTRACT_GAP_RETRY = True
 DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
 DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES = True
@@ -2329,32 +2332,17 @@ def _build_system_prompt(
     domain_fragment: str,
     executor_prompt_mode: str = DEFAULT_EXECUTOR_PROMPT_MODE,
 ) -> str:
-    prompt_mode = _normalize_executor_prompt_mode(executor_prompt_mode)
-    if prompt_mode == "minimal":
-        return (
-            "You are controlling a deterministic CLI task environment.\n"
-            "Use provided tools only. Verify concrete evidence before stopping.\n"
-            f"- Active task_id: {task_id}\n\n"
-            "Skills metadata:\n"
-            f"{skills_text}\n\n"
-            "Prior lessons:\n"
-            f"{lessons_text}\n"
-        )
-    return (
-        f"{domain_fragment}"
-        f"- Active task_id: {task_id}\n\n"
-        "Skills metadata:\n"
-        f"{skills_text}\n\n"
-        "Prior lessons:\n"
-        f"{lessons_text}\n"
+    return build_executor_system_prompt(
+        task_id=task_id,
+        skills_text=skills_text,
+        lessons_text=lessons_text,
+        domain_fragment=domain_fragment,
+        executor_prompt_mode=executor_prompt_mode,
     )
 
 
 def _normalize_executor_prompt_mode(mode: str | None) -> str:
-    normalized = str(mode or "").strip().lower()
-    if normalized in EXECUTOR_PROMPT_MODES:
-        return normalized
-    return DEFAULT_EXECUTOR_PROMPT_MODE
+    return normalize_executor_prompt_mode(mode)
 
 
 _PLACEBO_HINT_BANK: tuple[str, ...] = (
