@@ -16,6 +16,9 @@ This folder is split into active Memory V2 docs and archived historical tracks.
 ## Research
 - `docs/research/` - AGI ideation/reference artifacts (`agi-ideas-complete.md`, `agi-ideas.jsx`).
 
+## Ideas Backlog
+- `docs/ideas/` - one-file-per-idea roadmap for future architecture experiments not yet in active execution.
+
 ## Usage Rules
 - When updating behavior or implementation decisions, update active docs first.
 - Do not treat files in `docs/archive/` as current requirements.
