@@ -889,3 +889,24 @@ def test_validate_structured_model_lesson_allows_semantic_anchor_from_gap_detail
     assert ok is True
     assert reason == ""
     assert payload["trigger_gap_signature"].startswith("missing_required_event_pattern|required_event_pattern")
+
+
+def test_extract_action_template_from_legacy_shell_lesson() -> None:
+    lesson_text = (
+        "WRONG: source repo missing -> CORRECT: git init -b main source_repo. "
+        "WHY: required event pattern git init source_repo missing"
+    )
+    action = agent_cli._extract_action_template_from_legacy_lesson(
+        lesson_text=lesson_text,
+        executor_tool_name="run_bash",
+    )
+    assert action == 'run_bash(command="git init -b main source_repo")'
+
+
+def test_extract_action_template_from_legacy_sql_lesson() -> None:
+    lesson_text = "WRONG: missing reject count -> CORRECT: SELECT COUNT(*) FROM rejects;"
+    action = agent_cli._extract_action_template_from_legacy_lesson(
+        lesson_text=lesson_text,
+        executor_tool_name="run_sqlite",
+    )
+    assert action.startswith('run_sqlite(sql="SELECT COUNT(*) FROM rejects')

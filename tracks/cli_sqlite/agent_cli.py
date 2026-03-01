@@ -11,6 +11,7 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import anthropic
@@ -1026,6 +1027,56 @@ def _validate_structured_model_lesson(
         "action_template": action_template,
         "expected_evidence": expected_evidence,
     }
+
+
+def _extract_action_template_from_legacy_lesson(
+    *,
+    lesson_text: str,
+    executor_tool_name: str,
+) -> str:
+    """Extract executable action template from legacy free-text lesson content.
+
+    Why this exists:
+    - Strict mode expects structured lessons (`action_template`, `gap_signature`)
+      but legacy generators often emit only prose.
+    - We salvage clearly executable commands from prose (for example
+      `CORRECT: git init ...`) and convert them into tool-call templates.
+    """
+
+    text = str(lesson_text or "").strip()
+    if not text:
+        return ""
+
+    # If lesson already contains a tool-call snippet, keep it as-is when valid.
+    existing_call = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\))", text)
+    if existing_call:
+        candidate_call = " ".join(str(existing_call.group(1)).split()).strip()
+        if (
+            candidate_call
+            and not _action_template_is_placeholder_like(candidate_call)
+            and _action_template_has_named_args(candidate_call)
+        ):
+            return candidate_call
+
+    if str(executor_tool_name).strip() == "run_bash":
+        # Prefer explicit "CORRECT: <command>" span if present.
+        correct_match = re.search(r"CORRECT:\s*(.+?)(?:\s+WHY:|$)", text, re.IGNORECASE)
+        command_text = str(correct_match.group(1) if correct_match else text).strip()
+        command_text = command_text.strip("`").strip().rstrip(".").rstrip(";").strip()
+        if command_text and re.search(r"^(git|bash|sh|python|python3|cp|mv|rm|mkdir|echo|printf|cat|grep|sed|awk)\b", command_text):
+            escaped = command_text.replace("\\", "\\\\").replace('"', '\\"')
+            return f'run_bash(command="{escaped}")'
+        return ""
+
+    if str(executor_tool_name).strip() == "run_sqlite":
+        sql_match = re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b.+", text, re.IGNORECASE)
+        if not sql_match:
+            return ""
+        sql_text = str(sql_match.group(0)).strip().rstrip(".")
+        escaped_sql = sql_text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'run_sqlite(sql="{escaped_sql}")'
+
+    return ""
 
 
 def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
@@ -5213,6 +5264,7 @@ def _run_cli_agent_impl(
         allowed_action_tools = _allowed_action_tools_for_adapter(adapter=adapter, opaque_tools=opaque_tools)
         fallback_rules: list[str] = []
         source_lesson_rows: list[dict[str, Any]] = []
+        structured_model_rows_added = 0
         if structured_lessons_required and structured_gap_rows and bool(contract_gap_deterministic_recipes):
             # Deterministic fallback recipes are optional and controlled by
             # contract_gap_deterministic_recipes so benchmark arms can isolate
@@ -5280,6 +5332,7 @@ def _run_cli_agent_impl(
                         "source_kind": "model_structured",
                     }
                 )
+                structured_model_rows_added += 1
                 continue
             gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)] if structured_gap_rows else {}
             source_lesson_rows.append(
@@ -5291,6 +5344,57 @@ def _run_cli_agent_impl(
                     "source_kind": "model_legacy",
                 }
             )
+
+        if structured_lessons_required and structured_gap_rows and structured_model_rows_added == 0:
+            # Backfill path: recover executable structured lessons from legacy
+            # prose when strict JSON formatting fails. This keeps strict mode
+            # usable without deterministic domain recipes.
+            legacy_sources = list(lesson_result.filtered_lessons) + list(v2_reflection.filtered_lessons)
+            backfilled_count = 0
+            for idx, legacy_lesson in enumerate(legacy_sources):
+                legacy_text = str(getattr(legacy_lesson, "lesson", "")).strip()
+                if not legacy_text:
+                    continue
+                action_template = _extract_action_template_from_legacy_lesson(
+                    lesson_text=legacy_text,
+                    executor_tool_name=str(adapter.executor_tool_name),
+                )
+                if not action_template:
+                    continue
+                gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)]
+                trigger_signature = str(gap_row.get("gap_signature", "")).strip()
+                reason_code = str(gap_row.get("reason_code", "")).strip()
+                gap_type = str(gap_row.get("gap_type", "")).strip()
+                if not (trigger_signature and reason_code and gap_type):
+                    continue
+                evidence = trigger_signature
+                valid_backfill, _, payload = _validate_structured_model_lesson(
+                    lesson=SimpleNamespace(
+                        trigger_gap_signature=trigger_signature,
+                        reason_code=reason_code,
+                        gap_type=gap_type,
+                        action_template=action_template,
+                        expected_evidence=evidence,
+                    ),
+                    unresolved_gap_rows=structured_gap_rows,
+                    allowed_action_tools=allowed_action_tools,
+                )
+                if not valid_backfill:
+                    continue
+                source_lesson_rows.append(
+                    {
+                        "lesson_text": (
+                            f"WHEN gap_signature={payload['trigger_gap_signature']}: "
+                            f"{payload['action_template']} EXPECT: {payload['expected_evidence']}."
+                        ),
+                        "gap_row": gap_row,
+                        "action_template": str(payload["action_template"]).strip(),
+                        "expected_evidence": str(payload["expected_evidence"]).strip(),
+                        "source_kind": "legacy_backfill",
+                    }
+                )
+                backfilled_count += 1
+            metrics["v2_legacy_backfill_lessons"] = int(backfilled_count)
 
         # Deduplicate by normalized text to avoid writing noisy duplicates when
         # model output and deterministic recipe overlap semantically.
