@@ -127,13 +127,61 @@ def _extract_partial_json_fields(raw: str) -> dict[str, Any] | None:
     reasons: list[str] = []
     reasons_start = re.search(r'"reasons"\s*:\s*\[', text, flags=re.IGNORECASE)
     if reasons_start:
-        reasons_blob = text[reasons_start.end() :]
-        for match in re.finditer(r'"([^"\\]*(?:\\.[^"\\]*)*)"', reasons_blob):
+        # Restrict parsing to the reasons array segment only. Previous
+        # implementation scanned the remainder of the payload and accidentally
+        # captured keys from sibling objects (for example doc_grounding keys).
+        blob = text[reasons_start.end() :]
+        segment_chars: list[str] = []
+        depth = 1
+        in_string = False
+        escape = False
+        closed = False
+        for ch in blob:
+            if in_string:
+                segment_chars.append(ch)
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+                segment_chars.append(ch)
+                continue
+            if ch == "[":
+                depth += 1
+                segment_chars.append(ch)
+                continue
+            if ch == "]":
+                depth -= 1
+                if depth == 0:
+                    closed = True
+                    break
+                segment_chars.append(ch)
+                continue
+            segment_chars.append(ch)
+
+        segment = "".join(segment_chars)
+        if not closed:
+            # Truncated payload fallback: cut at the first sibling key marker.
+            sibling_key = re.search(
+                r',\s*"(?:doc_grounding|passed|score|raw_response|notes|meta)"\s*:',
+                segment,
+                flags=re.IGNORECASE,
+            )
+            if sibling_key:
+                segment = segment[: sibling_key.start()]
+
+        for match in re.finditer(r'"([^"\\]*(?:\\.[^"\\]*)*)"', segment):
             value = bytes(match.group(1), "utf-8").decode("unicode_escape")
             cleaned = str(value).strip()
             if cleaned:
                 reasons.append(cleaned)
-            if len(reasons) >= 6:
+            if len(reasons) >= 8:
                 break
 
     if not passed_match and not score_match and not reasons:

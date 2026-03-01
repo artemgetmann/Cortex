@@ -17,6 +17,7 @@ from tracks.cli_sqlite.agent_cli import (
     DEFAULT_DOC_MODE,
     DEFAULT_DOC_RETRIEVAL_MODE,
     DEFAULT_EXECUTOR_MODEL,
+    DEFAULT_EXECUTOR_PROMPT_MODE,
     DEFAULT_CONTRACT_GAP_RETRY,
     DEFAULT_CONTRACT_GAP_RETRY_STEPS,
     DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES,
@@ -168,6 +169,12 @@ def main() -> int:
         default="off",
         choices=["on", "off"],
         help="Whether to provide docs context to the executor prompt.",
+    )
+    ap.add_argument(
+        "--executor-prompt-mode",
+        default=DEFAULT_EXECUTOR_PROMPT_MODE,
+        choices=["full", "minimal"],
+        help="Executor system prompt mode: full keeps domain fragments, minimal uses generic tool-first prompt.",
     )
     ap.add_argument(
         "--judge-diagnostic",
@@ -355,6 +362,7 @@ def main() -> int:
             doc_retriever_model=str(args.doc_retriever_model).strip() or None,
             judge_docs=args.judge_docs == "on",
             executor_docs=args.executor_docs == "on",
+            executor_prompt_mode=args.executor_prompt_mode,
             judge_diagnostic=effective_judge_diagnostic,
             contract_gap_retry=bool(args.contract_gap_retry),
             contract_gap_retry_steps=max(0, int(args.contract_gap_retry_steps)),

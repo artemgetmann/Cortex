@@ -157,6 +157,8 @@ DEFAULT_BENCHMARK_PLACEBO = False
 DEFAULT_DOC_MODE = "none"
 DEFAULT_DOC_RETRIEVAL_MODE = "off"
 DEFAULT_DOC_BUDGET_TOKENS = 1200
+EXECUTOR_PROMPT_MODES = ("full", "minimal")
+DEFAULT_EXECUTOR_PROMPT_MODE = "full"
 DEFAULT_CONTRACT_GAP_RETRY = True
 DEFAULT_CONTRACT_GAP_RETRY_STEPS = 1
 DEFAULT_CONTRACT_GAP_DETERMINISTIC_RECIPES = True
@@ -2325,7 +2327,19 @@ def _build_system_prompt(
     skills_text: str,
     lessons_text: str,
     domain_fragment: str,
+    executor_prompt_mode: str = DEFAULT_EXECUTOR_PROMPT_MODE,
 ) -> str:
+    prompt_mode = _normalize_executor_prompt_mode(executor_prompt_mode)
+    if prompt_mode == "minimal":
+        return (
+            "You are controlling a deterministic CLI task environment.\n"
+            "Use provided tools only. Verify concrete evidence before stopping.\n"
+            f"- Active task_id: {task_id}\n\n"
+            "Skills metadata:\n"
+            f"{skills_text}\n\n"
+            "Prior lessons:\n"
+            f"{lessons_text}\n"
+        )
     return (
         f"{domain_fragment}"
         f"- Active task_id: {task_id}\n\n"
@@ -2334,6 +2348,13 @@ def _build_system_prompt(
         "Prior lessons:\n"
         f"{lessons_text}\n"
     )
+
+
+def _normalize_executor_prompt_mode(mode: str | None) -> str:
+    normalized = str(mode or "").strip().lower()
+    if normalized in EXECUTOR_PROMPT_MODES:
+        return normalized
+    return DEFAULT_EXECUTOR_PROMPT_MODE
 
 
 _PLACEBO_HINT_BANK: tuple[str, ...] = (
@@ -2378,6 +2399,35 @@ def _format_v2_lesson_block(
         )
         lines.append(f"- ({score_value:.2f}) {rule_text}")
     return "\n".join(lines), [value for value in lesson_ids if value]
+
+
+def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
+    """Store retriever-selected lessons in prompt artifacts as structured rows.
+
+    This keeps observability machine-readable and avoids ambiguous placeholder
+    keys (for example, dict key lists accidentally interpreted as lessons).
+    """
+    rows: list[dict[str, Any]] = []
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None:
+            continue
+        rows.append(
+            {
+                "lesson_id": str(getattr(lesson, "lesson_id", "")),
+                "status": str(getattr(lesson, "status", "")),
+                "task_id": str(getattr(lesson, "task_id", "")),
+                "domain": str(getattr(lesson, "domain", "")),
+                "rule_text": str(getattr(lesson, "rule_text", "")),
+                "reason_code": str(getattr(lesson, "reason_code", "")),
+                "gap_type": str(getattr(lesson, "gap_type", "")),
+                "gap_signature": str(getattr(lesson, "gap_signature", "")),
+                "score": float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0,
+                "lane": str(getattr(match, "lane", "")),
+            }
+        )
+    return rows
 
 
 def _format_legacy_placebo_lesson_block(
@@ -2820,11 +2870,13 @@ def prepare_cli_prompt_preview(
     doc_retrieval: str = DEFAULT_DOC_RETRIEVAL_MODE,
     doc_retriever_model: str | None = None,
     executor_docs: bool = False,
+    executor_prompt_mode: str = DEFAULT_EXECUTOR_PROMPT_MODE,
 ) -> CliPromptPreview:
     """Build the exact prompt/tools payload without executing a session."""
     # Workstream 1 only introduces mode plumbing; strict/legacy behavior split lands
     # in later workstreams but this keeps preview and runtime signatures aligned.
     learning_mode = _normalize_learning_mode(learning_mode)
+    executor_prompt_mode = _normalize_executor_prompt_mode(executor_prompt_mode)
     adapter = _resolve_adapter_with_mode(
         domain,
         cryptic_errors=cryptic_errors,
@@ -2918,6 +2970,7 @@ def prepare_cli_prompt_preview(
         skills_text=skills_text,
         lessons_text=lessons_text,
         domain_fragment=domain_fragment,
+        executor_prompt_mode=executor_prompt_mode,
     )
     normalized_doc_mode = normalize_doc_mode(doc_mode)
     normalized_doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
@@ -3003,6 +3056,7 @@ def run_cli_agent(
     doc_retriever_model: str | None = None,
     judge_docs: bool = False,
     executor_docs: bool = False,
+    executor_prompt_mode: str = DEFAULT_EXECUTOR_PROMPT_MODE,
     judge_diagnostic: bool = False,
     contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
     contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
@@ -3102,6 +3156,7 @@ def run_cli_agent(
             doc_retriever_model=doc_retriever_model,
             judge_docs=judge_docs,
             executor_docs=executor_docs,
+            executor_prompt_mode=executor_prompt_mode,
             judge_diagnostic=judge_diagnostic,
             contract_gap_retry=contract_gap_retry,
             contract_gap_retry_steps=contract_gap_retry_steps,
@@ -3208,6 +3263,7 @@ def _run_cli_agent_impl(
     doc_retriever_model: str | None = None,
     judge_docs: bool = False,
     executor_docs: bool = False,
+    executor_prompt_mode: str = DEFAULT_EXECUTOR_PROMPT_MODE,
     judge_diagnostic: bool = False,
     contract_gap_retry: bool = DEFAULT_CONTRACT_GAP_RETRY,
     contract_gap_retry_steps: int = DEFAULT_CONTRACT_GAP_RETRY_STEPS,
@@ -3237,6 +3293,7 @@ def _run_cli_agent_impl(
     transfer_retrieval_score_weight = max(0.0, float(transfer_retrieval_score_weight))
     doc_mode = normalize_doc_mode(doc_mode)
     doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
+    executor_prompt_mode = _normalize_executor_prompt_mode(executor_prompt_mode)
     doc_budget_tokens = max(128, int(doc_budget_tokens))
     contract_gap_retry_steps = max(0, min(1, int(contract_gap_retry_steps)))
     low_confidence_threshold = _clamp(float(low_confidence_threshold), 0.0, 1.0)
@@ -3447,6 +3504,7 @@ def _run_cli_agent_impl(
         skills_text=skills_text,
         lessons_text=lessons_text,
         domain_fragment=domain_fragment,
+        executor_prompt_mode=executor_prompt_mode,
     )
     if docs_executor_block:
         system_prompt += f"\n\n{docs_executor_block}\n"
@@ -5846,8 +5904,10 @@ def _run_cli_agent_impl(
             "task_payload": {"role": "user", "content": [{"type": "text", "text": task_text}]},
             "docs_context": docs_executor_block,
             "selected_lessons": {
-                "lessons_text": lessons_text,
+                "legacy_lessons_loaded": int(lessons_loaded),
+                "legacy_lessons_text": lessons_text,
                 "v2_prerun_lesson_ids": list(prerun_v2_ids),
+                "v2_prerun_matches": _serialize_prerun_v2_matches(prerun_v2_matches),
             },
             "skills": {
                 "routed_refs": list(routed_refs),

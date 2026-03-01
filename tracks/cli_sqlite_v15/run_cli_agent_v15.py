@@ -71,6 +71,10 @@ def _build_command(args: argparse.Namespace) -> list[str]:
         cmd.extend(["--run-id", args.run_id])
     if args.no_posttask_learn:
         cmd.append("--no-posttask-learn")
+    if str(args.executor_prompt_mode).strip():
+        cmd.extend(["--executor-prompt-mode", str(args.executor_prompt_mode).strip()])
+    if bool(args.no_require_skill_read):
+        cmd.append("--no-require-skill-read")
     if args.verbose:
         cmd.append("--verbose")
     return cmd
@@ -85,6 +89,17 @@ def main() -> int:
     parser.add_argument("--run-id", default="")
     parser.add_argument("--max-steps", type=int, default=6)
     parser.add_argument("--no-posttask-learn", action="store_true")
+    parser.add_argument(
+        "--executor-prompt-mode",
+        default="",
+        choices=["", "full", "minimal"],
+        help="Optional experimental override. Empty keeps locked default behavior.",
+    )
+    parser.add_argument(
+        "--no-require-skill-read",
+        action="store_true",
+        help="Optional experimental override to disable skill-read gate.",
+    )
     parser.add_argument("--verbose", action="store_true")
     # Dispatcher currently passes these flags. Keep parser compatibility so we
     # can hard-lock behavior without breaking call sites.

@@ -17,3 +17,14 @@ def test_extract_partial_json_fields_recovers_truncated_payload() -> None:
 
 def test_extract_partial_json_fields_returns_none_without_fields() -> None:
     assert _extract_partial_json_fields("just normal text") is None
+
+
+def test_extract_partial_json_fields_ignores_sibling_keys_after_reasons() -> None:
+    raw = (
+        '{"passed": true, "score": 1.0, "reasons": '
+        '["rows match expected", "duplicates tracked"], '
+        '"doc_grounding": [{"source_id":"step_4","note":"used"}]'
+    )
+    parsed = _extract_partial_json_fields(raw)
+    assert parsed is not None
+    assert parsed["reasons"] == ["rows match expected", "duplicates tracked"]

@@ -25,6 +25,8 @@ def test_v15_run_wrapper_ignores_transport_overrides() -> None:
         run_id="run_42",
         max_steps=6,
         no_posttask_learn=False,
+        no_require_skill_read=False,
+        executor_prompt_mode="",
         verbose=False,
         model_executor="claude-opus-4-6",
         llm_backend="anthropic",
@@ -41,3 +43,23 @@ def test_v15_run_wrapper_ignores_transport_overrides() -> None:
     assert "anthropic" not in text
     assert "claude-opus-4-6" not in text
 
+
+def test_v15_run_wrapper_accepts_experimental_prompt_and_skill_gate_overrides() -> None:
+    args = Namespace(
+        task_id="shell_git_transfer_hotfix",
+        task="",
+        domain="shell",
+        session=43,
+        run_id="run_43",
+        max_steps=6,
+        no_posttask_learn=False,
+        no_require_skill_read=True,
+        executor_prompt_mode="minimal",
+        verbose=False,
+        model_executor="",
+        llm_backend="",
+    )
+    cmd = _build_command(args)
+    text = " ".join(cmd)
+    assert "--executor-prompt-mode minimal" in text
+    assert "--no-require-skill-read" in text
