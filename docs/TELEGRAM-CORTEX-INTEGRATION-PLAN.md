@@ -1,7 +1,7 @@
 # Telegram-Cortex Integration Plan (80/20)
 
 Owner: Cortex core
-Status: in-progress
+Status: done
 Scope: thin integration only (no new memory algorithms)
 
 ## North Star
@@ -54,6 +54,21 @@ Tradeoff:
 - Unit tests pass.
 - Dispatcher dry-run shows lane=telegram.
 - Live smoke creates session + lessons in telegram lane only.
+
+Completed evidence (2026-03-01):
+- Tests:
+  - `python3 -m pytest tracks/cli_sqlite/tests/test_runtime_paths.py tests/test_openclaw_agi_dispatch.py -q` -> `23 passed`
+  - `cd integrations/cortex-telegram-agi-bot && bun run typecheck` -> passed
+- Non-dry natural-language smoke via dispatcher:
+  - command: `python3 integrations/openclaw_agi_dispatch.py --chat-id tg-final-smoke --text "Import a CSV of sales events into SQLite. Deduplicate by event_id, track rejects, and return category totals. Use only 5 steps."`
+  - result: `runtime_lane=telegram`, `attempts=3`, `ok=true`
+  - run IDs: `run_1772371227042_00000048`, `run_1772371271829_00000075`, `run_1772371306392_00000076`
+  - session IDs: `1035`, `1062`, `1063`
+  - artifacts confirmed:
+    - `tracks/cli_sqlite/runtime/telegram/sessions/session-1035/metrics.json`
+    - `tracks/cli_sqlite/runtime/telegram/sessions/session-1062/metrics.json`
+    - `tracks/cli_sqlite/runtime/telegram/sessions/session-1063/metrics.json`
+    - `tracks/cli_sqlite/runtime/telegram/learning/lessons_v2.jsonl`
 
 ## Acceptance criteria
 
