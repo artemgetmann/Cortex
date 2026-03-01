@@ -686,17 +686,17 @@ class RetrievalV2Tests(unittest.TestCase):
             )
             wrong_signature = _record(
                 session_id=1974,
-                rule_text="WHEN gap_signature=required_query_mismatch|required_query|other_query: run_sqlite(sql=\"SELECT 2;\") EXPECT: required_query_mismatch|required_query|other_query",
+                rule_text="WHEN gap_signature=missing_required_pattern|required_sql_pattern|other_query: run_sqlite(sql=\"SELECT 2;\") EXPECT: missing_required_pattern|required_sql_pattern|other_query",
                 fingerprints=("fp_exact",),
                 tags=("required_query",),
                 reliability=0.9,
                 domain="sqlite",
                 task_id="incremental_reconcile",
-                reason_code="required_query_mismatch",
-                gap_type="required_query",
-                gap_signature="required_query_mismatch|required_query|other_query",
+                reason_code="missing_required_pattern",
+                gap_type="required_sql_pattern",
+                gap_signature="missing_required_pattern|required_sql_pattern|other_query",
                 action_template='run_sqlite(sql="SELECT 2;")',
-                expected_evidence="required_query_mismatch|required_query|other_query",
+                expected_evidence="missing_required_pattern|required_sql_pattern|other_query",
             )
             upsert_lesson_records(path, [target, wrong_signature])
             rejections: dict[str, int] = {}
@@ -722,6 +722,48 @@ class RetrievalV2Tests(unittest.TestCase):
             ids = [match.lesson.lesson_id for match in matches]
             self.assertEqual(ids, [target.lesson_id])
             self.assertGreaterEqual(int(rejections.get("unbound_trigger_gap_signature", 0)), 1)
+
+    def test_strict_gap_signature_match_falls_back_to_reason_and_gap_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            fallback = _record(
+                session_id=1977,
+                rule_text="WHEN required_query_mismatch+required_query: run_sqlite(sql=\"SELECT checkpoint FROM events;\") EXPECT: required_query_mismatch|required_query",
+                fingerprints=("fp_exact",),
+                tags=("required_query",),
+                reliability=0.6,
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|other_query",
+                action_template='run_sqlite(sql="SELECT checkpoint FROM events;")',
+                expected_evidence="required_query_mismatch|required_query|run checkpoint query",
+            )
+            upsert_lesson_records(path, [fallback])
+            rejections: dict[str, int] = {}
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="required query mismatch",
+                fingerprint="fp_exact",
+                domain="sqlite",
+                task_id="incremental_reconcile",
+                query_tags=("required_query",),
+                max_results=2,
+                unresolved_gaps=[
+                    {
+                        "reason_code": "required_query_mismatch",
+                        "gap_type": "required_query",
+                        "gap_signature": "required_query_mismatch|required_query|checkpoint_query",
+                    }
+                ],
+                strict_gap_signature_match=True,
+                enforce_executable_schema=True,
+                rejection_counters=rejections,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertIn(fallback.lesson_id, ids)
+            self.assertEqual(int(rejections.get("unbound_trigger_gap_signature", 0)), 0)
 
     def test_retrieval_schema_enforcement_rejects_non_executable_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

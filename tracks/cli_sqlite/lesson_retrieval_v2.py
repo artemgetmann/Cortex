@@ -265,14 +265,14 @@ def _validate_executable_schema(
     *,
     lesson: LessonRecord,
     unresolved_by_signature: dict[str, dict[str, Any]],
+    unresolved_gaps: Sequence[dict[str, Any]],
     strict_gap_signature_match: bool,
     rejection_counters: dict[str, int] | None,
 ) -> bool:
-    has_structured_gap = bool(
-        str(getattr(lesson, "reason_code", "")).strip()
-        or str(getattr(lesson, "gap_type", "")).strip()
-        or str(getattr(lesson, "gap_signature", "")).strip()
-    )
+    lesson_reason = str(getattr(lesson, "reason_code", "")).strip()
+    lesson_gap_type = str(getattr(lesson, "gap_type", "")).strip()
+    lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
+    has_structured_gap = bool(lesson_reason or lesson_gap_type or lesson_signature)
     if not has_structured_gap:
         # Legacy/generic lessons remain available unless strict signature mode
         # requires binding every retrieved lesson to an unresolved gap.
@@ -281,14 +281,22 @@ def _validate_executable_schema(
             return False
         return True
 
-    lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
-    if not lesson_signature:
-        _bump_rejection(rejection_counters, "missing_trigger_gap_signature")
-        return False
-    matched_gap = unresolved_by_signature.get(lesson_signature)
+    matched_gap = unresolved_by_signature.get(lesson_signature) if lesson_signature else None
     if strict_gap_signature_match and not matched_gap:
-        _bump_rejection(rejection_counters, "unbound_trigger_gap_signature")
-        return False
+        # Strict mode is still deterministic, but now allows a narrow fallback:
+        # bind by (reason_code, gap_type) when signature is missing/drifted.
+        if lesson_reason and lesson_gap_type:
+            for gap in unresolved_gaps:
+                if not isinstance(gap, dict):
+                    continue
+                reason = str(gap.get("reason_code", "")).strip()
+                gap_type = str(gap.get("gap_type", "")).strip()
+                if lesson_reason == reason and lesson_gap_type == gap_type:
+                    matched_gap = gap
+                    break
+        if not matched_gap:
+            _bump_rejection(rejection_counters, "unbound_trigger_gap_signature")
+            return False
 
     action_template = str(getattr(lesson, "action_template", "")).strip()
     if not action_template:
@@ -633,8 +641,18 @@ def _rank_lessons(
         for gap in unresolved_gaps
         if isinstance(gap, dict) and str(gap.get("gap_signature", "")).strip()
     }
+    unresolved_reason_gap_pairs = {
+        (
+            str(gap.get("reason_code", "")).strip(),
+            str(gap.get("gap_type", "")).strip(),
+        )
+        for gap in unresolved_gaps
+        if isinstance(gap, dict)
+        and str(gap.get("reason_code", "")).strip()
+        and str(gap.get("gap_type", "")).strip()
+    }
     unresolved_signatures = set(unresolved_by_signature.keys())
-    strict_binding = bool(strict_gap_signature_match and unresolved_signatures)
+    strict_binding = bool(strict_gap_signature_match and (unresolved_signatures or unresolved_reason_gap_pairs))
     weight = max(0.0, float(score_multiplier))
     ranked: list[RetrievalMatch] = []
     semantic_index: SemanticIndex | None = None
@@ -645,15 +663,24 @@ def _rank_lessons(
 
     for lesson in active:
         lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
-        if strict_binding and lesson_signature not in unresolved_signatures:
-            _bump_rejection(
-                rejection_counters,
-                "missing_trigger_gap_signature" if not lesson_signature else "unbound_trigger_gap_signature",
+        lesson_reason = str(getattr(lesson, "reason_code", "")).strip()
+        lesson_gap_type = str(getattr(lesson, "gap_type", "")).strip()
+        if strict_binding:
+            has_structured_binding = bool(lesson_signature or lesson_reason or lesson_gap_type)
+            if not has_structured_binding:
+                _bump_rejection(rejection_counters, "missing_trigger_gap_signature")
+                continue
+            signature_bound = bool(lesson_signature and lesson_signature in unresolved_signatures)
+            reason_gap_bound = bool(
+                lesson_reason and lesson_gap_type and (lesson_reason, lesson_gap_type) in unresolved_reason_gap_pairs
             )
-            continue
+            if not signature_bound and not reason_gap_bound:
+                _bump_rejection(rejection_counters, "unbound_trigger_gap_signature")
+                continue
         if enforce_executable_schema and not _validate_executable_schema(
             lesson=lesson,
             unresolved_by_signature=unresolved_by_signature,
+            unresolved_gaps=unresolved_gaps,
             strict_gap_signature_match=strict_binding,
             rejection_counters=rejection_counters,
         ):
