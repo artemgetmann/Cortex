@@ -168,3 +168,36 @@ def test_run_cli_agent_script_accepts_shell_domain(
 
 def test_memory_timeline_treats_shell_as_executor_tool() -> None:
     assert memory_timeline_demo._is_executor_tool("run_bash") is True
+
+
+def test_shell_adapter_returns_hotfix_base_deterministic_recipe() -> None:
+    adapter = ShellAdapter()
+    recipes = adapter.deterministic_gap_recipes(
+        task_id="shell_git_transfer_hotfix",
+        unresolved_gaps=[
+            {
+                "reason_code": "missing_required_event_pattern",
+                "gap_type": "required_event_pattern",
+                "detail": "(?is)git\\s+format-patch\\s+-1\\s+HEAD\\s+--stdout",
+            }
+        ],
+        max_items=3,
+    )
+    assert len(recipes) == 1
+    recipe = recipes[0]
+    assert recipe.startswith('run_bash(command="')
+    assert "git init source_repo" in recipe
+    assert "git init target_repo" in recipe
+    assert "git format-patch -1 HEAD --stdout > ../hotfix.patch" in recipe
+    assert "git am ../hotfix.patch" in recipe
+    assert "GIT_TRANSFER_OK target=target_repo branch=main patches=1 file=hotfix.txt" in recipe
+
+
+def test_shell_adapter_deterministic_recipe_not_returned_for_other_tasks() -> None:
+    adapter = ShellAdapter()
+    recipes = adapter.deterministic_gap_recipes(
+        task_id="shell_excel_build_report",
+        unresolved_gaps=[],
+        max_items=3,
+    )
+    assert recipes == []

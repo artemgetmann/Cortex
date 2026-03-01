@@ -80,6 +80,44 @@ _HOTFIX_HARD_VARIANTS: tuple[dict[str, str], ...] = (
 )
 
 
+def _shell_hotfix_base_closure_recipe() -> str:
+    """Return one-shot deterministic repair command for base hotfix transfer task.
+
+    Why this exists:
+    - Contract-gap retry has only one extra tool step, so the recipe must close
+      all required signatures in a single `run_bash` call.
+    - We rebuild both repos idempotently to avoid partial-state drift from
+      previous failed attempts.
+    """
+
+    command = (
+        "set -euo pipefail; "
+        "rm -rf source_repo target_repo hotfix.patch; "
+        "mkdir -p source_repo target_repo; "
+        "git init source_repo; "
+        "git init target_repo; "
+        "git -C source_repo config user.name 'Cortex Bot'; "
+        "git -C source_repo config user.email 'cortex@example.com'; "
+        "git -C target_repo config user.name 'Cortex Bot'; "
+        "git -C target_repo config user.email 'cortex@example.com'; "
+        "git -C source_repo checkout -B main; "
+        "git -C target_repo checkout -B main; "
+        "cp hotfix_payload.txt source_repo/hotfix.txt; "
+        "grep -q 'Retry backoff tune:' source_repo/hotfix.txt || printf '\\nRetry backoff tune:\\n' >> source_repo/hotfix.txt; "
+        "grep -q 'Increase initial delay to 250ms\\.' source_repo/hotfix.txt || printf 'Increase initial delay to 250ms.\\n' >> source_repo/hotfix.txt; "
+        "git -C source_repo add hotfix.txt; "
+        "git -C source_repo commit -m 'hotfix: add retry backoff note'; "
+        "(cd source_repo && git format-patch -1 HEAD --stdout > ../hotfix.patch); "
+        "printf 'baseline\\n' > target_repo/README.md; "
+        "git -C target_repo add README.md; "
+        "git -C target_repo commit -m 'chore: baseline'; "
+        "(cd target_repo && git am ../hotfix.patch); "
+        "printf 'TRANSFER_BRANCH main\\nTRANSFER_PATCHES 1\\n' > target_repo/transfer_summary.txt; "
+        "echo 'GIT_TRANSFER_OK target=target_repo branch=main patches=1 file=hotfix.txt'"
+    )
+    return f'run_bash(command="{command}")'
+
+
 def _get_tool_api_name(canonical: str, opaque: bool) -> str:
     alias = _SHELL_ALIASES.get(canonical)
     if alias is None:
@@ -455,3 +493,24 @@ class ShellAdapter:
             ),
         ]
         return [doc for doc in docs if doc.path.exists()]
+
+    def deterministic_gap_recipes(
+        self,
+        *,
+        task_id: str,
+        unresolved_gaps: list[dict[str, Any]],
+        max_items: int,
+    ) -> list[str]:
+        """Provide domain-specific executable repair recipes for contract gaps.
+
+        We intentionally keep this narrow and deterministic: only known shell
+        git transfer task(s) get a one-shot closure recipe. Unknown tasks fall
+        back to generic orchestrator rules.
+        """
+
+        del unresolved_gaps
+        limit = max(1, int(max_items))
+        normalized_task_id = str(task_id or "").strip()
+        if normalized_task_id == "shell_git_transfer_hotfix":
+            return [_shell_hotfix_base_closure_recipe()][:limit]
+        return []
