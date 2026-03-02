@@ -41,13 +41,19 @@ class _FakeRetrievalMatch:
         rule_text: str,
         lane: str = "strict",
         gap_signature: str = "",
+        reason_code: str = "",
+        gap_type: str = "",
+        score: float = 1.0,
     ) -> None:
         self.lesson = SimpleNamespace(
             lesson_id=lesson_id,
             rule_text=rule_text,
             gap_signature=gap_signature,
+            reason_code=reason_code,
+            gap_type=gap_type,
         )
         self.lane = lane
+        self.score = SimpleNamespace(score=score)
 
 
 class _FakeMessages:
@@ -586,6 +592,82 @@ def test_deterministic_gap_fix_recipes_sqlite_emit_command_recipe() -> None:
     assert recipes[0].startswith("[deterministic_recipe domain=sqlite task_id=retry_task]")
     assert "run_sqlite(sql=" in recipes[0]
     assert "SELECT COUNT(*) AS c FROM rejects;" in recipes[0]
+
+
+def test_adaptive_gap_lesson_cap_counts_distinct_gap_families() -> None:
+    unresolved = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|q1",
+        },
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|q2",
+        },
+        {
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|p1",
+        },
+        {
+            "reason_code": "matched_forbidden_pattern",
+            "gap_type": "forbidden_sql_pattern",
+            "gap_signature": "matched_forbidden_pattern|forbidden_sql_pattern|drop",
+        },
+    ]
+    cap = agent_cli._adaptive_gap_lesson_cap(unresolved_gaps=unresolved, min_cap=1, max_cap=3)
+    assert cap == 3
+
+
+def test_select_gap_targeted_matches_keeps_one_per_family() -> None:
+    unresolved = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|q1",
+        },
+        {
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|p1",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="a1",
+            rule_text="fix q1 primary",
+            gap_signature="required_query_mismatch|required_query|q1",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            score=0.90,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="a2",
+            rule_text="fix q1 duplicate",
+            gap_signature="required_query_mismatch|required_query|q1",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            score=0.85,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="b1",
+            rule_text="fix p1 primary",
+            gap_signature="missing_required_event_pattern|required_event_pattern|p1",
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            score=0.80,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=3,
+        min_score=0.20,
+    )
+    selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
+    assert selected_ids == ["a1", "b1"]
 
 
 def test_contract_gap_retry_injects_deterministic_recipe_hints(

@@ -2673,6 +2673,113 @@ def _select_high_signal_prerun_matches(
     return selected
 
 
+def _gap_family_key_from_row(gap_row: dict[str, Any]) -> str:
+    """Build a stable family key for one unresolved gap row."""
+    signature = str(gap_row.get("gap_signature", "")).strip()
+    if signature:
+        return f"sig:{signature}"
+    reason = str(gap_row.get("reason_code", "")).strip()
+    gap_type = str(gap_row.get("gap_type", "")).strip()
+    if reason or gap_type:
+        return f"rg:{reason}|{gap_type}"
+    detail = str(gap_row.get("detail", "")).strip()
+    return f"detail:{detail}" if detail else ""
+
+
+def _gap_family_key_from_lesson(lesson: Any) -> str:
+    """Build a stable family key for one lesson row."""
+    signature = str(getattr(lesson, "gap_signature", "")).strip()
+    if signature:
+        return f"sig:{signature}"
+    reason = str(getattr(lesson, "reason_code", "")).strip()
+    gap_type = str(getattr(lesson, "gap_type", "")).strip()
+    if reason or gap_type:
+        return f"rg:{reason}|{gap_type}"
+    return ""
+
+
+def _adaptive_gap_lesson_cap(
+    *,
+    unresolved_gaps: list[dict[str, Any]],
+    min_cap: int = 1,
+    max_cap: int = 3,
+) -> int:
+    """
+    Set lesson injection cap from unresolved-gap diversity.
+
+    First-principles:
+    - one dominant gap => one focused lesson
+    - multiple distinct gap families => allow up to three lessons
+    """
+    minimum = max(1, int(min_cap))
+    maximum = max(minimum, int(max_cap))
+    families = {
+        key
+        for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
+        if key
+    }
+    if not families:
+        return minimum
+    return max(minimum, min(maximum, len(families)))
+
+
+def _select_gap_targeted_matches(
+    *,
+    matches: list[Any],
+    unresolved_gaps: list[dict[str, Any]],
+    max_lessons: int,
+    min_score: float = 0.25,
+) -> list[Any]:
+    """
+    Keep retrieval focused: up to N lessons, one per gap family.
+
+    Why:
+    - prevents duplicate hints for the same unresolved blocker
+    - avoids context flooding from many low-value lessons
+    """
+    if not matches:
+        return []
+    cap = max(1, int(max_lessons))
+    threshold = float(min_score)
+    unresolved_families = {
+        key
+        for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
+        if key
+    }
+    selected: list[Any] = []
+    seen_lesson_ids: set[str] = set()
+    used_families: set[str] = set()
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_lesson_ids:
+            continue
+        score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
+        if score_value < threshold:
+            continue
+        family_key = _gap_family_key_from_lesson(lesson)
+        if unresolved_families:
+            if not family_key or family_key not in unresolved_families:
+                continue
+            if family_key in used_families:
+                continue
+            used_families.add(family_key)
+        selected.append(match)
+        seen_lesson_ids.add(lesson_id)
+        if len(selected) >= cap:
+            break
+    if selected:
+        return selected
+    if unresolved_families:
+        # Strict unresolved-gap mode should prefer no hint over wrong hint.
+        return []
+    # No explicit unresolved gap context available: fallback to top-ranked rows.
+    return list(matches[:cap])
+
+
 def _load_recent_eval_scores(
     *,
     sessions_root: Path,
@@ -3357,7 +3464,9 @@ def _run_cli_agent_impl(
         # one promoted lesson exists. Fall back to anchored retrieval to bootstrap.
         runtime_candidate_policy_effective = DEFAULT_RUNTIME_CANDIDATE_POLICY
         promoted_warmup_fallback = True
-    legacy_lessons_enabled = not benchmark_promoted_only
+    # In strict structured mode, legacy free-text hints are intentionally disabled
+    # so learning signal comes from executable V2 lessons only.
+    legacy_lessons_enabled = (not benchmark_promoted_only) and (not bool(structured_lessons_required))
     runtime_temperature: float | None = 0.0 if benchmark_deterministic else None
     transfer_retrieval_policy = _resolve_transfer_retrieval_policy(
         enable_transfer_retrieval=enable_transfer_retrieval,
@@ -4050,6 +4159,7 @@ def _run_cli_agent_impl(
                     if validator_result.error:
                         validator_evidence.append(f"validator_error={_clip_text(str(validator_result.error), max_chars=400)}")
 
+        gap_cap = _adaptive_gap_lesson_cap(unresolved_gaps=unresolved_gaps, min_cap=1, max_cap=3)
         gap_matches, _ = retrieve_on_error(
             path=LESSONS_V2_PATH,
             error_text=gap_query,
@@ -4057,7 +4167,7 @@ def _run_cli_agent_impl(
             domain=domain,
             task_id=task_id,
             query_tags=gap_tags,
-            max_results=2,
+            max_results=8,
             include_domainless=False,
             enable_transfer=enable_transfer_retrieval,
             transfer_policy=transfer_retrieval_policy,
@@ -4069,6 +4179,14 @@ def _run_cli_agent_impl(
             enforce_executable_schema=bool(structured_lessons_required),
             rejection_counters=metrics["v2_schema_rejection_counts"],
         )
+        gap_matches = _select_gap_targeted_matches(
+            matches=gap_matches,
+            unresolved_gaps=unresolved_gaps,
+            max_lessons=gap_cap,
+            min_score=0.30,
+        )
+        metrics["contract_gap_adaptive_lesson_cap"] = int(gap_cap)
+        metrics["contract_gap_lessons_selected"] = int(len(gap_matches))
         gap_hints: list[str] = []
         for match in gap_matches:
             lesson = getattr(match, "lesson", None)
@@ -4513,6 +4631,11 @@ def _run_cli_agent_impl(
                     )
 
                 v2_hints: list[str] = []
+                on_error_cap = _adaptive_gap_lesson_cap(
+                    unresolved_gaps=latest_unresolved_gaps,
+                    min_cap=1,
+                    max_cap=3,
+                )
                 v2_matches, conflict_losers = retrieve_on_error(
                     path=LESSONS_V2_PATH,
                     error_text=error_text,
@@ -4520,7 +4643,7 @@ def _run_cli_agent_impl(
                     domain=domain,
                     task_id=task_id,
                     query_tags=error_tags,
-                    max_results=2,
+                    max_results=8,
                     include_domainless=False,
                     enable_transfer=enable_transfer_retrieval,
                     transfer_policy=transfer_retrieval_policy,
@@ -4532,6 +4655,14 @@ def _run_cli_agent_impl(
                     enforce_executable_schema=bool(structured_lessons_required),
                     rejection_counters=metrics["v2_schema_rejection_counts"],
                 )
+                v2_matches = _select_gap_targeted_matches(
+                    matches=v2_matches,
+                    unresolved_gaps=latest_unresolved_gaps,
+                    max_lessons=on_error_cap,
+                    min_score=0.25,
+                )
+                metrics["v2_on_error_adaptive_lesson_cap"] = int(on_error_cap)
+                metrics["v2_on_error_lessons_selected"] = int(len(v2_matches))
                 for loser in conflict_losers:
                     contradiction_loser_counts[loser] += 1
                 if v2_matches:
@@ -4601,7 +4732,7 @@ def _run_cli_agent_impl(
 
                 # Legacy fallback keeps older runs usable while v2 memory warms up.
                 legacy_hints: list[str] = []
-                if not v2_hints and loaded_lesson_objects:
+                if not v2_hints and loaded_lesson_objects and not bool(structured_lessons_required):
                     # Guard legacy fallback to the active task only. Legacy rows
                     # do not carry reliable domain metadata, so unrestricted
                     # cross-task matching can leak wrong-tool syntax hints.
