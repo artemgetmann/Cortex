@@ -69,6 +69,19 @@ def _openai_timeout_seconds() -> float:
         return 120.0
 
 
+def _should_send_temperature(*, model: str) -> bool:
+    """
+    GPT-5 Responses models reject `temperature`.
+    Keep this disabled by default, with an env override for experiments.
+    """
+    if str(os.getenv("OPENAI_AGENTS_SDK_USE_TEMPERATURE", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    model_name = str(model or "").strip().lower()
+    if model_name.startswith("gpt-5"):
+        return False
+    return False
+
+
 def _run_async(coro: Any) -> Any:
     """
     Execute SDK async calls from the sync runtime loop.
@@ -257,11 +270,13 @@ def _fetch_model_response_via_openai_agents_sdk(
             timeout=_openai_timeout_seconds(),
         )
         model_obj = openai_responses_model_cls(model=model, openai_client=client)
-        model_settings = model_settings_cls(
-            temperature=temperature,
-            max_tokens=max(0, int(max_tokens)),
-            parallel_tool_calls=False,
-        )
+        model_settings_kwargs: dict[str, Any] = {
+            "max_tokens": max(0, int(max_tokens)),
+            "parallel_tool_calls": False,
+        }
+        if temperature is not None and _should_send_temperature(model=model):
+            model_settings_kwargs["temperature"] = float(temperature)
+        model_settings = model_settings_cls(**model_settings_kwargs)
         input_items = anthropic_messages_to_openai_responses_input(messages=messages)
         sdk_tools = _build_agents_function_tools(tools=tools, function_tool_cls=function_tool_cls)
         return await model_obj.get_response(
