@@ -89,6 +89,10 @@ from tracks.cli_sqlite.openai_transport import (
     openai_chat_completions_request as _openai_chat_completions_request,
     openai_responses_request as _openai_responses_request,
 )
+from tracks.cli_sqlite.openai_agents_sdk_transport import (
+    OpenAIAgentsSDKCompatClient as _OpenAIAgentsSDKCompatClient,
+    create_executor_response_via_openai_agents_sdk as _create_executor_response_via_openai_agents_sdk,
+)
 from tracks.cli_sqlite.prompt_builder import (
     DEFAULT_EXECUTOR_PROMPT_MODE,
     build_executor_system_prompt,
@@ -146,7 +150,7 @@ DEFAULT_CRITIC_MODEL = "claude-haiku-4-5"
 SONNET_MODEL = "claude-sonnet-4-5"
 OPUS_MODEL = "claude-opus-4-6"
 OPENAI_DEFAULT_MODEL = "gpt-5-nano"
-LLM_BACKENDS = tuple((*SHARED_LLM_BACKENDS, "openai"))
+LLM_BACKENDS = tuple((*SHARED_LLM_BACKENDS, "openai", "openai_agents_sdk"))
 READ_SKILL_TOOL_NAME = "read_skill"
 SHOW_FIXTURE_TOOL_NAME = "show_fixture"
 COMPUTER_TOOL_NAME = "computer"
@@ -2054,7 +2058,7 @@ def _clip_text(text: str, *, max_chars: int = 4000) -> str:
 
 def _normalize_llm_backend(value: str) -> str:
     normalized = str(value or "").strip().lower()
-    if normalized == "openai":
+    if normalized in {"openai", "openai_agents_sdk"}:
         return normalized
     return normalize_llm_backend(normalized)
 
@@ -3480,10 +3484,14 @@ def _run_cli_agent_impl(
         if not anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when llm_backend=anthropic.")
         client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=3)
-    elif llm_backend == "openai":
+    elif llm_backend in {"openai", "openai_agents_sdk"}:
         if not openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required when llm_backend=openai.")
-        client = _OpenAICompatClient(api_key=openai_api_key)
+            raise RuntimeError("OPENAI_API_KEY is required when llm_backend is an OpenAI transport.")
+        client = (
+            _OpenAICompatClient(api_key=openai_api_key)
+            if llm_backend == "openai"
+            else _OpenAIAgentsSDKCompatClient(api_key=openai_api_key)
+        )
     else:
         client = ClaudePrintClient()
     adapter = _resolve_adapter_with_mode(
@@ -3692,7 +3700,7 @@ def _run_cli_agent_impl(
     # Simplified architecture removes the separate judge model and reuses executor.
     if architecture_mode == "simplified":
         effective_judge_model = model_executor
-    elif llm_backend == "openai":
+    elif llm_backend in {"openai", "openai_agents_sdk"}:
         # Keep OpenAI runs self-contained unless caller explicitly overrides judge model.
         effective_judge_model = model_judge or model_executor
     else:
@@ -4369,6 +4377,15 @@ def _run_cli_agent_impl(
             assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
         elif llm_backend == "openai":
             assistant_blocks, usage = _create_executor_response_via_openai(
+                api_key=openai_api_key,
+                model=model_executor,
+                system_prompt=system_prompt,
+                tools=tools,
+                messages=messages,
+                temperature=runtime_temperature,
+            )
+        elif llm_backend == "openai_agents_sdk":
+            assistant_blocks, usage = _create_executor_response_via_openai_agents_sdk(
                 api_key=openai_api_key,
                 model=model_executor,
                 system_prompt=system_prompt,

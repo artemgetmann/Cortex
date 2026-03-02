@@ -121,7 +121,10 @@ def main() -> int:
         "--llm-backend",
         default=DEFAULT_LLM_BACKEND,
         choices=LLM_BACKENDS,
-        help="Executor transport: anthropic (API), claude_print (`claude -p`), or openai (Chat Completions API).",
+        help=(
+            "Executor transport: anthropic (API), claude_print (`claude -p`), "
+            "openai (compat transport), or openai_agents_sdk (OpenAI Agents SDK model transport)."
+        ),
     )
     ap.add_argument(
         "--cost-profile",
@@ -258,8 +261,9 @@ def main() -> int:
     args = ap.parse_args()
 
     effective_backend = args.llm_backend
-    default_executor_model = OPENAI_DEFAULT_MODEL if effective_backend == "openai" else DEFAULT_EXECUTOR_MODEL
-    default_critic_model = OPENAI_DEFAULT_MODEL if effective_backend == "openai" else DEFAULT_CRITIC_MODEL
+    openai_backend_selected = effective_backend in {"openai", "openai_agents_sdk"}
+    default_executor_model = OPENAI_DEFAULT_MODEL if openai_backend_selected else DEFAULT_EXECUTOR_MODEL
+    default_critic_model = OPENAI_DEFAULT_MODEL if openai_backend_selected else DEFAULT_CRITIC_MODEL
     effective_executor_model = (
         (args.model_executor.strip() or default_executor_model)
         if _cli_flag_provided("--model-executor")
@@ -272,7 +276,7 @@ def main() -> int:
     )
     if _cli_flag_provided("--model-judge"):
         effective_judge_model = args.model_judge.strip() if args.model_judge else None
-    elif effective_backend == "openai":
+    elif openai_backend_selected:
         effective_judge_model = effective_executor_model
     else:
         effective_judge_model = None
@@ -288,7 +292,7 @@ def main() -> int:
         cfg = load_config()
     except RuntimeError:
         # Non-Anthropic transports can run without ANTHROPIC_API_KEY.
-        if effective_backend in {"claude_print", "openai"}:
+        if effective_backend in {"claude_print", "openai", "openai_agents_sdk"}:
             cfg = SimpleNamespace(anthropic_api_key="")
         else:
             raise
