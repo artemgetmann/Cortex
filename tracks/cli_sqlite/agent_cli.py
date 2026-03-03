@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
 import re
@@ -39,6 +37,7 @@ from tracks.cli_sqlite.docs_pipeline import (
 )
 from tracks.cli_sqlite import contract_gap_guidance as _contract_gap_guidance
 from tracks.cli_sqlite import verification_runtime_helpers as _verification_runtime_helpers
+from tracks.cli_sqlite import runtime_misc_helpers as _runtime_misc_helpers
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session, load_contract, unresolved_contract_gaps
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
@@ -629,29 +628,11 @@ def _build_reflection_prompt(
     reason: str,
     include_dependency_fallback: bool = False,
 ) -> str:
-    """
-    Create a deterministic reflection request for stuck/error-heavy runs.
-
-    The prompt explicitly requests diagnosis + smallest correction, then
-    instructs the model to continue with tool use in the same turn.
-    """
-    reason_line = f"Trigger: {reason}." if reason else "Trigger: error escalation."
-    prompt = (
-        "Reflection required before the next tool call.\n"
-        f"{reason_line}\n"
-        f"Last error: {error_text.strip()}\n"
-        f"Fingerprint: {fingerprint}\n"
-        "Explain why the failure happened and the smallest corrective change. "
-        "Then proceed with the next tool call."
-    )
-    if not include_dependency_fallback:
-        return prompt
-    return (
-        f"{prompt}\n"
-        "Deterministic fallback check:\n"
-        "- Treat this fingerprint as a repeated dependency/setup failure.\n"
-        "- Do not repeat the same failing setup path.\n"
-        "- Choose the smallest local alternative that avoids the missing dependency."
+    return _runtime_misc_helpers._build_reflection_prompt(
+        error_text=error_text,
+        fingerprint=fingerprint,
+        reason=reason,
+        include_dependency_fallback=include_dependency_fallback,
     )
 
 
@@ -1201,11 +1182,12 @@ def _run_shell_hotfix_transfer_closure_check(*, workspace: DomainWorkspace, task
 
 
 def _is_dependency_or_setup_failure(*, error_text: str, error_tags: list[str]) -> bool:
-    tags = {str(tag).strip().lower() for tag in error_tags if str(tag).strip()}
-    if tags & DEPENDENCY_SETUP_TAGS:
-        return True
-    lowered = str(error_text or "").strip().lower()
-    return any(pattern.search(lowered) for pattern in DEPENDENCY_SETUP_PATTERNS)
+    return _runtime_misc_helpers._is_dependency_or_setup_failure(
+        error_text=error_text,
+        error_tags=error_tags,
+        dependency_setup_tags=DEPENDENCY_SETUP_TAGS,
+        dependency_setup_patterns=DEPENDENCY_SETUP_PATTERNS,
+    )
 
 
 def _clip_text(text: str, *, max_chars: int = 4000) -> str:
@@ -1220,72 +1202,25 @@ def _normalize_llm_backend(value: str) -> str:
 
 
 def _hash_base64_png(image_b64: str | None) -> str | None:
-    if not isinstance(image_b64, str):
-        return None
-    try:
-        data = base64.b64decode(image_b64.encode("ascii"), validate=True)
-    except Exception:
-        return None
-    digest = hashlib.sha256(data).hexdigest()
-    return f"sha256:{digest}"
+    return _runtime_misc_helpers._hash_base64_png(image_b64)
 
 
 def _normalize_coordinate(coord: Any) -> tuple[int, int] | None:
-    if not (isinstance(coord, (list, tuple)) and len(coord) == 2):
-        return None
-    try:
-        x = int(coord[0])
-        y = int(coord[1])
-    except (TypeError, ValueError):
-        return None
-    return x, y
+    return _runtime_misc_helpers._normalize_coordinate(coord)
 
 
 def _normalize_region(region: Any) -> tuple[int, int, int, int] | None:
-    if not (isinstance(region, (list, tuple)) and len(region) == 4):
-        return None
-    try:
-        coords = tuple(int(value) for value in region)
-    except (TypeError, ValueError):
-        return None
-    return coords
+    return _runtime_misc_helpers._normalize_region(region)
 
 
 def _extract_computer_use_metadata(tool_input: Any, result: Any) -> dict[str, Any]:
-    if not isinstance(tool_input, dict):
-        return {}
-    metadata: dict[str, Any] = {}
-
-    action = tool_input.get("action")
-    if isinstance(action, str) and action.strip():
-        metadata["action"] = action.strip()
-
-    coordinate = _normalize_coordinate(tool_input.get("coordinate"))
-    if coordinate:
-        metadata["coordinate"] = [coordinate[0], coordinate[1]]
-
-    start = _normalize_coordinate(tool_input.get("start_coordinate"))
-    if start:
-        metadata["start_coordinate"] = [start[0], start[1]]
-    end = _normalize_coordinate(tool_input.get("coordinate"))
-    if end and start:
-        metadata["end_coordinate"] = [end[0], end[1]]
-
-    region = _normalize_region(tool_input.get("region"))
-    if region:
-        metadata["region"] = [region[0], region[1], region[2], region[3]]
-        if metadata.get("action") == "zoom":
-            metadata["zoom_region"] = metadata["region"]
-
-    screenshot_hash = _hash_base64_png(getattr(result, "base64_image_png", None))
-    if screenshot_hash:
-        metadata["screenshot_hash"] = screenshot_hash
-
-    modifiers = tool_input.get("modifiers")
-    if isinstance(modifiers, (list, tuple)) and modifiers:
-        metadata["modifiers"] = [str(mod).strip() for mod in modifiers if str(mod).strip()]
-
-    return metadata
+    return _runtime_misc_helpers._extract_computer_use_metadata(
+        tool_input,
+        result,
+        normalize_coordinate_func=_normalize_coordinate,
+        normalize_region_func=_normalize_region,
+        hash_base64_png_func=_hash_base64_png,
+    )
 
 
 def _clamp(value: float, low: float, high: float) -> float:
