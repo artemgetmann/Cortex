@@ -195,6 +195,59 @@ def test_executor_transport_bridges_callback_only_turn_into_tool_use(monkeypatch
     assert usage["reasoning_only_turn"] is False
 
 
+def test_executor_transport_missing_call_id_uses_callback_bridge(monkeypatch) -> None:
+    def _fake_runner_turn(**_: Any) -> openai_agents_sdk_transport._RunnerTurnResult:
+        return openai_agents_sdk_transport._RunnerTurnResult(
+            output_items=[
+                {
+                    "type": "function_call",
+                    "name": "run_bash",
+                    # Missing call_id from raw output; callback should recover it.
+                    "arguments": "{\"command\": \"echo bridged\"}",
+                }
+            ],
+            usage=_FakeUsage(),
+            response_id="resp_sdk_missing_call_id",
+            request_id="req_sdk_missing_call_id",
+            previous_response_id_sent="",
+            continuity_mode="full_history",
+            input_item_count=1,
+            full_input_item_count=1,
+            callback_invocations=[
+                {
+                    "tool_name": "run_bash",
+                    "tool_call_id": "call_from_callback",
+                    "raw_arguments": "{\"command\": \"echo bridged\"}",
+                    "parsed_input": {"command": "echo bridged"},
+                }
+            ],
+            continuation_input_items=[],
+            source_message_count=1,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
+        )
+
+    monkeypatch.setattr(
+        openai_agents_sdk_transport,
+        "_run_runner_turn_via_openai_agents_sdk",
+        _fake_runner_turn,
+    )
+
+    blocks, usage = openai_agents_sdk_transport.create_executor_response_via_openai_agents_sdk(
+        api_key="test",
+        model="gpt-5-nano",
+        system_prompt="system",
+        tools=[{"name": "run_bash", "description": "run bash", "input_schema": {"type": "object"}}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "do it"}]}],
+    )
+
+    tool_use = next(block for block in blocks if block["type"] == "tool_use")
+    assert tool_use["id"] == "call_from_callback"
+    assert usage["sdk_callback_bridge_used"] is True
+    assert usage["sdk_no_tool_reason_effective"] == ""
+
+
 def test_build_agents_function_tools_captures_deferred_callback_output() -> None:
     class _FakeFunctionTool:
         def __init__(self, **kwargs: Any) -> None:

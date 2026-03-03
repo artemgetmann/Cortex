@@ -411,7 +411,18 @@ def _response_output_items_to_assistant_blocks(
             continue
         if tool_input is None:
             continue
-        call_id = str(payload.get("call_id", "")).strip() or f"toolu_openai_sdk_{uuid.uuid4().hex[:12]}_{idx}"
+        call_id = str(payload.get("call_id", "")).strip()
+        if not call_id:
+            # Never fabricate call IDs: Responses continuity requires
+            # function_call_output.call_id to match the original model call_id.
+            # If call_id is missing, callback-bridge may still recover it from
+            # SDK tool context; otherwise we surface a warning and treat the
+            # turn as non-executable.
+            text_parts.append(
+                "[openai_agents_sdk_tool_parse_error] function_call missing call_id; "
+                "skipping raw tool block to preserve continuity."
+            )
+            continue
         assistant_blocks.append({"type": "tool_use", "id": call_id, "name": tool_name, "input": tool_input})
 
     merged_text = "\n".join(part for part in text_parts if part).strip()
