@@ -37,6 +37,7 @@ from tracks.cli_sqlite.docs_pipeline import (
     normalize_doc_retrieval_mode,
     write_doc_artifacts,
 )
+from tracks.cli_sqlite import contract_gap_guidance as _contract_gap_guidance
 from tracks.cli_sqlite.eval_cli import evaluate_cli_session, load_contract, unresolved_contract_gaps
 from tracks.cli_sqlite.judge_llm import JudgeResult, default_judge_model, llm_judge
 from tracks.cli_sqlite.knowledge_provider import LocalDocsKnowledgeProvider
@@ -52,6 +53,7 @@ from tracks.cli_sqlite.loop_watchdog import (
 )
 from tracks.cli_sqlite.error_capture import ErrorEvent, build_error_fingerprint, extract_tags
 from tracks.cli_sqlite.lesson_promotion_v2 import LessonOutcome, apply_outcomes
+from tracks.cli_sqlite import lesson_selection_policy as _lesson_selection_policy
 from tracks.cli_sqlite.lesson_retrieval_v2 import (
     CANDIDATE_POLICY_ANCHORED,
     CANDIDATE_POLICY_PROMOTED_ONLY,
@@ -660,104 +662,17 @@ def _format_contract_gap_retry_prompt(
     validator_evidence: list[str] | None = None,
     max_items: int = 5,
 ) -> str:
-    lines = [
-        "Deterministic contract gap check found unresolved requirements.",
-        "Execute one focused correction step now. Do not stop yet.",
-        "Unresolved gaps:",
-    ]
-    for index, gap in enumerate(unresolved_gaps[:max_items], start=1):
-        reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
-        gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
-        detail = str(gap.get("detail", "")).strip()
-        suffix = f" detail={detail}" if detail else ""
-        lines.append(f"{index}. reason_code={reason} gap_type={gap_type}{suffix}")
-        if reason == "required_query_mismatch":
-            query_id = str(gap.get("query_id", "")).strip()
-            query_sql = str(gap.get("query_sql", "")).strip()
-            expected_rows = gap.get("expected_rows", [])
-            actual_rows = gap.get("actual_rows", [])
-            if query_id:
-                lines.append(f"   - query_id={query_id}")
-            if query_sql:
-                lines.append(f"   - query_sql={query_sql}")
-            if isinstance(expected_rows, list):
-                lines.append(f"   - expected_rows={json.dumps(expected_rows, ensure_ascii=True)}")
-            if isinstance(actual_rows, list):
-                lines.append(f"   - actual_rows={json.dumps(actual_rows, ensure_ascii=True)}")
-            lines.append(
-                "   - correction rule: align database state so query_sql output exactly matches expected_rows."
-            )
-        elif reason == "matched_forbidden_pattern":
-            lines.append(
-                "   - correction rule: do not emit any SQL matching this forbidden pattern."
-            )
-            lines.append(
-                "   - correction rule: use non-destructive alternatives only (INSERT/UPDATE/SELECT)."
-            )
-        elif reason == "too_many_errors":
-            lines.append(
-                "   - correction rule: keep next attempt deterministic with one mutating block max, then verify via SELECT queries."
-            )
-            lines.append(
-                "   - correction rule: if verification still fails, stop and report remaining mismatch instead of guessing."
-            )
-    validator_rows = [str(row).strip() for row in (validator_evidence or []) if str(row).strip()]
-    if validator_rows:
-        lines.append("Deterministic validator evidence:")
-        for row in validator_rows[:4]:
-            lines.append(f"- {row}")
-    deterministic_rows = [str(row).strip() for row in (deterministic_recipes or []) if str(row).strip()]
-    if deterministic_rows:
-        # Keep deterministic repair instructions in a dedicated section so the
-        # executor can prioritize machine-like closure steps before free-form hints.
-        lines.append("Deterministic repair block (execute exactly):")
-        for row in deterministic_rows[:2]:
-            lines.append(f"- {row}")
-        lines.append("No alternate plan: run the listed steps exactly before stopping.")
-    extra = [str(row).strip() for row in (injected_hints or []) if str(row).strip()]
-    if extra:
-        lines.append("Prior lessons matching these gaps:")
-        for hint in extra[:2]:
-            lines.append(f"- {hint}")
-    lines.append("Return tool calls only after this message.")
-    return "\n".join(lines)
+    return _contract_gap_guidance._format_contract_gap_retry_prompt(
+        unresolved_gaps=unresolved_gaps,
+        deterministic_recipes=deterministic_recipes,
+        injected_hints=injected_hints,
+        validator_evidence=validator_evidence,
+        max_items=max_items,
+    )
 
 
 def _fallback_rule_for_gap(gap: dict[str, Any]) -> str:
-    reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
-    gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
-    detail = str(gap.get("detail", "")).strip()
-    if reason == "required_query_mismatch":
-        query_id = str(gap.get("query_id", "")).strip() or "required_query"
-        query_sql = str(gap.get("query_sql", "")).strip()
-        expected_rows = gap.get("expected_rows", [])
-        query_suffix = f" query_sql={query_sql}" if query_sql else ""
-        expected_suffix = (
-            f" expected_rows={json.dumps(expected_rows, ensure_ascii=True)}"
-            if isinstance(expected_rows, list)
-            else ""
-        )
-        return (
-            f"When reason_code={reason}, reconcile data so {query_id} matches exactly."
-            f"{query_suffix}{expected_suffix}"
-        )
-    if reason == "too_many_errors":
-        budget_detail = detail or "error budget exhausted"
-        return (
-            "When reason_code=too_many_errors, treat it as a strict error-budget breach "
-            f"({budget_detail}). On next attempt use one deterministic mutating SQL block at most, "
-            "then run required SELECT verification queries and stop."
-        )
-    if reason == "matched_forbidden_pattern":
-        pattern_text = detail or str(gap.get("gap_signature", "")).strip() or "forbidden_sql_pattern"
-        return (
-            "When reason_code=matched_forbidden_pattern, never emit SQL matching "
-            f"{pattern_text}. Use non-destructive alternatives only (INSERT/UPDATE/SELECT) "
-            "and verify required queries before stop."
-        )
-    if detail:
-        return f"When reason_code={reason}, resolve gap_type={gap_type} by fixing: {detail}."
-    return f"When reason_code={reason}, resolve gap_type={gap_type} before stopping."
+    return _contract_gap_guidance._fallback_rule_for_gap(gap)
 
 
 def _adapter_deterministic_gap_fix_recipes(
@@ -767,29 +682,12 @@ def _adapter_deterministic_gap_fix_recipes(
     unresolved_gaps: list[dict[str, Any]],
     max_items: int,
 ) -> list[str]:
-    """Ask adapter for deterministic recipes, if the adapter exposes this hook.
-
-    Why this exists:
-    - Keeps core orchestrator domain-agnostic.
-    - Allows optional domain recipes without hardcoding per-domain logic here.
-    """
-    if adapter is None:
-        return []
-    hook = getattr(adapter, "deterministic_gap_recipes", None)
-    if not callable(hook):
-        return []
-    try:
-        rows = hook(task_id=task_id, unresolved_gaps=unresolved_gaps, max_items=max_items)
-    except Exception:
-        return []
-    if not isinstance(rows, list):
-        return []
-    clean: list[str] = []
-    for row in rows:
-        text = " ".join(str(row).split()).strip()
-        if text:
-            clean.append(text)
-    return clean
+    return _contract_gap_guidance._adapter_deterministic_gap_fix_recipes(
+        adapter=adapter,
+        task_id=task_id,
+        unresolved_gaps=unresolved_gaps,
+        max_items=max_items,
+    )
 
 
 def _deterministic_gap_fix_recipes(
@@ -800,50 +698,13 @@ def _deterministic_gap_fix_recipes(
     unresolved_gaps: list[dict[str, Any]],
     max_items: int = 3,
 ) -> list[str]:
-    """Build deterministic gap-fix recipes from unresolved contract gaps.
-
-    First-principles split:
-    - generic reason_code/gap_type fallback works for any domain/task.
-    - optional domain-specific recipes provide executable command templates.
-    """
-    normalized_domain = str(domain).strip().lower()
-    normalized_task_id = str(task_id).strip()
-    dedup: set[str] = set()
-    recipes: list[str] = []
-    adapter_recipes = _adapter_deterministic_gap_fix_recipes(
+    return _contract_gap_guidance._deterministic_gap_fix_recipes(
         adapter=adapter,
-        task_id=normalized_task_id,
+        domain=domain,
+        task_id=task_id,
         unresolved_gaps=unresolved_gaps,
         max_items=max_items,
     )
-    for row in adapter_recipes:
-        payload = f"[deterministic_recipe domain={normalized_domain} task_id={normalized_task_id}] {row}"
-        key = payload.lower()
-        if key in dedup:
-            continue
-        dedup.add(key)
-        recipes.append(payload)
-        if len(recipes) >= max(1, int(max_items)):
-            return recipes
-
-    for row in unresolved_gaps:
-        if not isinstance(row, dict):
-            continue
-        recipe = _fallback_rule_for_gap(row)
-        text = " ".join(str(recipe).split()).strip()
-        if not text:
-            continue
-        # Include compact routing context so retrieval matching can anchor by
-        # domain/task without overfitting to one exact task string.
-        payload = f"[deterministic_recipe domain={normalized_domain} task_id={normalized_task_id}] {text}"
-        key = payload.lower()
-        if key in dedup:
-            continue
-        dedup.add(key)
-        recipes.append(payload)
-        if len(recipes) >= max(1, int(max_items)):
-            break
-    return recipes
 
 
 def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
@@ -1445,31 +1306,10 @@ def _build_low_confidence_clarifying_question(
     missing_verification_lines: list[str],
     unresolved_gaps: list[dict[str, Any]],
 ) -> str:
-    """
-    Build a deterministic clarification request when probes are inconclusive.
-
-    No model generation is used here; output is template-based and stable.
-    """
-    if missing_verification_lines:
-        quoted = ", ".join(f"`{line}`" for line in missing_verification_lines[:3])
-        return (
-            f"Low-confidence verification for task `{task_id}` is inconclusive. "
-            f"Please confirm the exact expected verification line(s): {quoted}."
-        )
-    if unresolved_gaps:
-        gap = unresolved_gaps[0]
-        reason = str(gap.get("reason_code", "")).strip() or "unknown_reason"
-        gap_type = str(gap.get("gap_type", "")).strip() or "unknown_gap"
-        detail = str(gap.get("detail", "")).strip()
-        detail_suffix = f" detail={detail}" if detail else ""
-        return (
-            f"Low-confidence verification for task `{task_id}` needs one deterministic success signal. "
-            f"Current unresolved gap: reason_code={reason} gap_type={gap_type}{detail_suffix}. "
-            "Please provide exact expected output (line/file/query rows)."
-        )
-    return (
-        f"Low-confidence verification for task `{task_id}` is inconclusive. "
-        "Please provide one deterministic success signal: exact stdout line, file path+content, or SQL query rows."
+    return _contract_gap_guidance._build_low_confidence_clarifying_question(
+        task_id=task_id,
+        missing_verification_lines=missing_verification_lines,
+        unresolved_gaps=unresolved_gaps,
     )
 
 
@@ -1478,72 +1318,17 @@ def _build_sqlite_validator_guidance_from_contract(
     contract: dict[str, Any],
     max_queries: int = 4,
 ) -> str:
-    """
-    Render deterministic validator steps from CONTRACT required queries.
-
-    This keeps validation protocol machine-driven (contract source of truth)
-    instead of relying on ad-hoc prompt prose per task.
-    """
-    if not isinstance(contract, dict):
-        return ""
-    signals = contract.get("signals", {})
-    if not isinstance(signals, dict):
-        return ""
-    required_queries = signals.get("required_queries", [])
-    if not isinstance(required_queries, list) or not required_queries:
-        return ""
-    lines = [
-        "Deterministic validator protocol (from CONTRACT):",
-        "- Before final stop, run these validator queries with run_sqlite and verify expected rows exactly.",
-    ]
-    added = 0
-    for row in required_queries:
-        if not isinstance(row, dict):
-            continue
-        query_id = str(row.get("id", "")).strip() or f"query_{added + 1}"
-        query_sql = str(row.get("sql", "")).strip()
-        expected_rows = row.get("expected_rows", [])
-        if not query_sql:
-            continue
-        lines.append(f"- validator[{query_id}] sql={query_sql}")
-        if isinstance(expected_rows, list):
-            lines.append(f"  expected_rows={json.dumps(expected_rows, ensure_ascii=True)}")
-        added += 1
-        if added >= max(1, int(max_queries)):
-            break
-    if added <= 0:
-        return ""
-    lines.append("- If any validator mismatches, correct data and rerun validators before stopping.")
-    return "\n".join(lines)
+    return _contract_gap_guidance._build_sqlite_validator_guidance_from_contract(
+        contract=contract,
+        max_queries=max_queries,
+    )
 
 
 def _contract_pattern_to_hint_text(pattern: str, *, max_chars: int = 140) -> str:
-    """
-    Convert a regex-like contract pattern into a short, human-readable hint.
-
-    This keeps contract-derived guidance useful for smaller executor models
-    without hardcoding task-specific command recipes in Python.
-    """
-    text = str(pattern or "").strip()
-    if not text:
-        return ""
-    # Strip common regex wrappers/tokens so the model sees a likely command
-    # shape instead of raw regex noise.
-    simplified = text
-    for token in ("(?is)", "(?si)", "(?s)", "(?i)", "^", "$", "\\b"):
-        simplified = simplified.replace(token, "")
-    replacements = (
-        ("\\s+", " "),
-        ("\\s*", " "),
-        ("\\.", "."),
-        ("\\/", "/"),
+    return _contract_gap_guidance._contract_pattern_to_hint_text(
+        pattern,
+        max_chars=max_chars,
     )
-    for source, target in replacements:
-        simplified = simplified.replace(source, target)
-    simplified = re.sub(r"\s+", " ", simplified).strip()
-    if not simplified:
-        simplified = text
-    return _clip_text(simplified, max_chars=max_chars)
 
 
 def _build_contract_execution_guidance_from_contract(
@@ -1552,61 +1337,19 @@ def _build_contract_execution_guidance_from_contract(
     max_required: int = 4,
     max_forbidden: int = 2,
 ) -> str:
-    """
-    Build a generic contract-closure checklist from required/forbidden patterns.
-
-    Why this exists:
-    - Domain adapters can define contracts, but prompt guidance was sqlite-only.
-    - Tight-step tasks fail when models forget one required action.
-    - This gives every domain the same deterministic closure checklist source.
-    """
-    if not isinstance(contract, dict):
-        return ""
-    signals = contract.get("signals", {})
-    if not isinstance(signals, dict):
-        return ""
-    required = [str(row).strip() for row in signals.get("required_event_patterns", []) if str(row).strip()]
-    forbidden = [str(row).strip() for row in signals.get("forbidden_event_patterns", []) if str(row).strip()]
-    if not required and not forbidden:
-        return ""
-
-    lines: list[str] = [
-        "Deterministic contract closure checklist:",
-    ]
-    if required:
-        lines.append("- Required command/event coverage before stop:")
-        added_required = 0
-        for pattern in required:
-            hint = _contract_pattern_to_hint_text(pattern)
-            if not hint:
-                continue
-            lines.append(f"  - required: {hint}")
-            added_required += 1
-            if added_required >= max(1, int(max_required)):
-                break
-    if forbidden:
-        lines.append("- Forbidden command/event patterns to avoid:")
-        added_forbidden = 0
-        for pattern in forbidden:
-            hint = _contract_pattern_to_hint_text(pattern)
-            if not hint:
-                continue
-            lines.append(f"  - avoid: {hint}")
-            added_forbidden += 1
-            if added_forbidden >= max(1, int(max_forbidden)):
-                break
-    lines.append("- If checklist items are unmet, repair and verify before final stop.")
-    return "\n".join(lines)
+    return _contract_gap_guidance._build_contract_execution_guidance_from_contract(
+        contract=contract,
+        max_required=max_required,
+        max_forbidden=max_forbidden,
+    )
 
 
 def _build_gap_row(*, reason_code: str, gap_type: str, detail: str) -> dict[str, Any]:
-    text = str(detail).strip()
-    return {
-        "reason_code": reason_code,
-        "gap_type": gap_type,
-        "detail": text,
-        "gap_signature": f"{reason_code}|{gap_type}|{text}",
-    }
+    return _contract_gap_guidance._build_gap_row(
+        reason_code=reason_code,
+        gap_type=gap_type,
+        detail=detail,
+    )
 
 
 def _is_shell_hotfix_transfer_task(task_id: str) -> bool:
@@ -2044,20 +1787,12 @@ def _normalize_executor_prompt_mode(mode: str | None) -> str:
     return normalize_executor_prompt_mode(mode)
 
 
-_PLACEBO_HINT_BANK: tuple[str, ...] = (
-    "Re-read the task goal and verify all required outputs before stopping.",
-    "Use deterministic checks and avoid guessing when a requirement is unclear.",
-    "Confirm filenames, query outputs, and exact required patterns before finalizing.",
-    "Prioritize contract closure over stylistic or optional cleanup steps.",
-    "When errors recur, simplify the plan and verify intermediate outputs explicitly.",
-)
-
-
 def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> str:
-    token = f"{domain}|{task_id}|{lesson_id}".encode("utf-8", "ignore")
-    digest = hashlib.sha256(token).hexdigest()
-    idx = int(digest[:8], 16) % len(_PLACEBO_HINT_BANK)
-    return f"PLACEBO_CONTROL[{digest[:6]}]: {_PLACEBO_HINT_BANK[idx]}"
+    return _lesson_selection_policy._placebo_hint_for_lesson(
+        lesson_id=lesson_id,
+        task_id=task_id,
+        domain=domain,
+    )
 
 
 def _format_v2_lesson_block(
@@ -2067,54 +1802,16 @@ def _format_v2_lesson_block(
     task_id: str = "",
     domain: str = "",
 ) -> tuple[str, list[str]]:
-    if not matches:
-        return "", []
-    lines = ["Memory V2 lessons (high-signal):"]
-    lesson_ids: list[str] = []
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", ""))
-        lesson_ids.append(lesson_id)
-        score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
-        rule_text = (
-            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
-            if use_placebo
-            else str(getattr(lesson, "rule_text", ""))
-        )
-        lines.append(f"- ({score_value:.2f}) {rule_text}")
-    return "\n".join(lines), [value for value in lesson_ids if value]
+    return _lesson_selection_policy._format_v2_lesson_block(
+        matches=matches,
+        use_placebo=use_placebo,
+        task_id=task_id,
+        domain=domain,
+    )
 
 
 def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
-    """Store retriever-selected lessons in prompt artifacts as structured rows.
-
-    This keeps observability machine-readable and avoids ambiguous placeholder
-    keys (for example, dict key lists accidentally interpreted as lessons).
-    """
-    rows: list[dict[str, Any]] = []
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None:
-            continue
-        rows.append(
-            {
-                "lesson_id": str(getattr(lesson, "lesson_id", "")),
-                "status": str(getattr(lesson, "status", "")),
-                "task_id": str(getattr(lesson, "task_id", "")),
-                "domain": str(getattr(lesson, "domain", "")),
-                "rule_text": str(getattr(lesson, "rule_text", "")),
-                "reason_code": str(getattr(lesson, "reason_code", "")),
-                "gap_type": str(getattr(lesson, "gap_type", "")),
-                "gap_signature": str(getattr(lesson, "gap_signature", "")),
-                "score": float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0,
-                "lane": str(getattr(match, "lane", "")),
-            }
-        )
-    return rows
+    return _lesson_selection_policy._serialize_prerun_v2_matches(matches)
 
 
 def _format_legacy_placebo_lesson_block(
@@ -2124,53 +1821,20 @@ def _format_legacy_placebo_lesson_block(
     task_id: str,
     domain: str,
 ) -> str:
-    if lessons_loaded <= 0:
-        return "No prior lessons loaded."
-    lines = [
-        "CRITICAL lessons from previous sessions — control placeholders (content hidden):",
-    ]
-    emitted = 0
-    for lesson in lessons:
-        if emitted >= lessons_loaded:
-            break
-        session_id = int(getattr(lesson, "session_id", 0) or 0)
-        category = str(getattr(lesson, "category", "")).strip().lower() or "insight"
-        lesson_text = str(getattr(lesson, "lesson", "")).strip()
-        seed = f"{session_id}:{category}:{lesson_text[:48]}"
-        lines.append(
-            "- [control] "
-            + _placebo_hint_for_lesson(
-                lesson_id=f"legacy:{seed}",
-                task_id=task_id,
-                domain=domain,
-            )
-        )
-        emitted += 1
-    while emitted < lessons_loaded:
-        lines.append(
-            "- [control] "
-            + _placebo_hint_for_lesson(
-                lesson_id=f"legacy:pad:{emitted}",
-                task_id=task_id,
-                domain=domain,
-            )
-        )
-        emitted += 1
-    return "\n".join(lines)
+    return _lesson_selection_policy._format_legacy_placebo_lesson_block(
+        lessons=lessons,
+        lessons_loaded=lessons_loaded,
+        task_id=task_id,
+        domain=domain,
+    )
 
 
 def _has_promoted_v2_lesson_for_task(*, path: Path, task_id: str, domain: str) -> bool:
-    normalized_domain = str(domain).strip().lower()
-    for record in load_lesson_records(path):
-        if str(getattr(record, "status", "")).strip().lower() != "promoted":
-            continue
-        if str(getattr(record, "task_id", "")).strip() != task_id:
-            continue
-        record_domain = str(getattr(record, "domain", "")).strip().lower()
-        if record_domain and record_domain != normalized_domain:
-            continue
-        return True
-    return False
+    return _lesson_selection_policy._has_promoted_v2_lesson_for_task(
+        path=path,
+        task_id=task_id,
+        domain=domain,
+    )
 
 
 def _select_high_signal_prerun_matches(
@@ -2181,169 +1845,21 @@ def _select_high_signal_prerun_matches(
     max_results: int = 4,
     min_score: float = 0.55,
 ) -> list[Any]:
-    """
-    Keep pre-run memory injection small and targeted.
-
-    Why this exists:
-    - pre-run lesson blobs can become noisy and dilute tool execution quality
-    - task/domain exact matches should dominate broad historical hints
-    """
-    if not matches:
-        return []
-
-    def _is_dynamic_task(task_ref: str) -> bool:
-        text = str(task_ref or "").strip().lower()
-        # Telegram/OpenClaw natural-language tasks are materialized with a
-        # dynamic id. These tasks rarely start with strong fingerprint/tag
-        # anchors, so they need a softer fallback path to bootstrap retrieval.
-        return text.startswith("openclaw_dynamic_") or text.startswith("dynamic_")
-
-    def _has_structured_gap_fields(lesson_obj: Any) -> bool:
-        return bool(
-            str(getattr(lesson_obj, "reason_code", "")).strip()
-            or str(getattr(lesson_obj, "gap_type", "")).strip()
-            or str(getattr(lesson_obj, "gap_signature", "")).strip()
-        )
-
-    def _fallback_semantic_anchor(score_obj: Any) -> bool:
-        # Keep fallback deterministic and conservative. We only consider
-        # lessons that have at least minimal lexical/semantic overlap.
-        text_sim = float(getattr(score_obj, "text_similarity", 0.0) or 0.0)
-        sem_sim = float(getattr(score_obj, "semantic_similarity", 0.0) or 0.0)
-        return text_sim >= 0.02 or sem_sim >= 0.10
-
-    normalized_domain = str(domain).strip().lower()
-    limit = max(0, int(max_results))
-    threshold = float(min_score)
-    selected: list[Any] = []
-    seen_ids: set[str] = set()
-
-    # Pass 1: exact task+domain matches with non-trivial score.
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None or score is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-        if not lesson_id or lesson_id in seen_ids:
-            continue
-        if str(getattr(lesson, "task_id", "")).strip() != task_id:
-            continue
-        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
-        if lesson_domain and lesson_domain != normalized_domain:
-            continue
-        if float(getattr(score, "score", 0.0) or 0.0) < threshold:
-            continue
-        selected.append(match)
-        seen_ids.add(lesson_id)
-        if len(selected) >= limit:
-            return selected
-
-    # Pass 2: same-domain fallback for remaining slots.
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None or score is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-        if not lesson_id or lesson_id in seen_ids:
-            continue
-        if str(getattr(lesson, "domain", "")).strip().lower() != normalized_domain:
-            continue
-        if float(getattr(score, "score", 0.0) or 0.0) < threshold:
-            continue
-        selected.append(match)
-        seen_ids.add(lesson_id)
-        if len(selected) >= limit:
-            break
-
-    if selected or not _is_dynamic_task(task_id):
-        return selected
-
-    # Pass 3 (dynamic-task fallback): exact task-id matches with low scores.
-    # Why this exists:
-    # - dynamic tasks start without stable trigger fingerprints/tags
-    # - strict threshold filtering can drop all lessons even after repeated
-    #   failures on the same task_id
-    # Guardrails:
-    # - only for dynamic task ids
-    # - only for lessons without structured gap signatures
-    # - requires at least minimal semantic/lexical anchor
-    dynamic_min_score = 0.05
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None or score is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-        if not lesson_id or lesson_id in seen_ids:
-            continue
-        if str(getattr(lesson, "task_id", "")).strip() != task_id:
-            continue
-        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
-        if lesson_domain and lesson_domain != normalized_domain:
-            continue
-        if _has_structured_gap_fields(lesson):
-            continue
-        if float(getattr(score, "score", 0.0) or 0.0) < dynamic_min_score:
-            continue
-        if not _fallback_semantic_anchor(score):
-            continue
-        selected.append(match)
-        seen_ids.add(lesson_id)
-        if len(selected) >= limit:
-            break
-
-    if selected:
-        return selected
-
-    # Pass 4 (dynamic semantic backfill): same-domain/domainless legacy lessons.
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None or score is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-        if not lesson_id or lesson_id in seen_ids:
-            continue
-        if _has_structured_gap_fields(lesson):
-            continue
-        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
-        if lesson_domain and lesson_domain != normalized_domain:
-            continue
-        if not _fallback_semantic_anchor(score):
-            continue
-        selected.append(match)
-        seen_ids.add(lesson_id)
-        if len(selected) >= limit:
-            break
-
-    return selected
+    return _lesson_selection_policy._select_high_signal_prerun_matches(
+        matches=matches,
+        task_id=task_id,
+        domain=domain,
+        max_results=max_results,
+        min_score=min_score,
+    )
 
 
 def _gap_family_key_from_row(gap_row: dict[str, Any]) -> str:
-    """Build a stable family key for one unresolved gap row."""
-    signature = str(gap_row.get("gap_signature", "")).strip()
-    if signature:
-        return f"sig:{signature}"
-    reason = str(gap_row.get("reason_code", "")).strip()
-    gap_type = str(gap_row.get("gap_type", "")).strip()
-    if reason or gap_type:
-        return f"rg:{reason}|{gap_type}"
-    detail = str(gap_row.get("detail", "")).strip()
-    return f"detail:{detail}" if detail else ""
+    return _lesson_selection_policy._gap_family_key_from_row(gap_row)
 
 
 def _gap_family_key_from_lesson(lesson: Any) -> str:
-    """Build a stable family key for one lesson row."""
-    signature = str(getattr(lesson, "gap_signature", "")).strip()
-    if signature:
-        return f"sig:{signature}"
-    reason = str(getattr(lesson, "reason_code", "")).strip()
-    gap_type = str(getattr(lesson, "gap_type", "")).strip()
-    if reason or gap_type:
-        return f"rg:{reason}|{gap_type}"
-    return ""
+    return _lesson_selection_policy._gap_family_key_from_lesson(lesson)
 
 
 def _adaptive_gap_lesson_cap(
@@ -2352,23 +1868,11 @@ def _adaptive_gap_lesson_cap(
     min_cap: int = 1,
     max_cap: int = 3,
 ) -> int:
-    """
-    Set lesson injection cap from unresolved-gap diversity.
-
-    First-principles:
-    - one dominant gap => one focused lesson
-    - multiple distinct gap families => allow up to three lessons
-    """
-    minimum = max(1, int(min_cap))
-    maximum = max(minimum, int(max_cap))
-    families = {
-        key
-        for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
-        if key
-    }
-    if not families:
-        return minimum
-    return max(minimum, min(maximum, len(families)))
+    return _lesson_selection_policy._adaptive_gap_lesson_cap(
+        unresolved_gaps=unresolved_gaps,
+        min_cap=min_cap,
+        max_cap=max_cap,
+    )
 
 
 def _select_gap_targeted_matches(
@@ -2378,54 +1882,12 @@ def _select_gap_targeted_matches(
     max_lessons: int,
     min_score: float = 0.25,
 ) -> list[Any]:
-    """
-    Keep retrieval focused: up to N lessons, one per gap family.
-
-    Why:
-    - prevents duplicate hints for the same unresolved blocker
-    - avoids context flooding from many low-value lessons
-    """
-    if not matches:
-        return []
-    cap = max(1, int(max_lessons))
-    threshold = float(min_score)
-    unresolved_families = {
-        key
-        for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
-        if key
-    }
-    selected: list[Any] = []
-    seen_lesson_ids: set[str] = set()
-    used_families: set[str] = set()
-    for match in matches:
-        lesson = getattr(match, "lesson", None)
-        score = getattr(match, "score", None)
-        if lesson is None:
-            continue
-        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-        if not lesson_id or lesson_id in seen_lesson_ids:
-            continue
-        score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
-        if score_value < threshold:
-            continue
-        family_key = _gap_family_key_from_lesson(lesson)
-        if unresolved_families:
-            if not family_key or family_key not in unresolved_families:
-                continue
-            if family_key in used_families:
-                continue
-            used_families.add(family_key)
-        selected.append(match)
-        seen_lesson_ids.add(lesson_id)
-        if len(selected) >= cap:
-            break
-    if selected:
-        return selected
-    if unresolved_families:
-        # Strict unresolved-gap mode should prefer no hint over wrong hint.
-        return []
-    # No explicit unresolved gap context available: fallback to top-ranked rows.
-    return list(matches[:cap])
+    return _lesson_selection_policy._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved_gaps,
+        max_lessons=max_lessons,
+        min_score=min_score,
+    )
 
 
 def _load_recent_eval_scores(
@@ -3239,6 +2701,8 @@ def _run_cli_agent_impl(
         "no_tool_call_steps": 0,
         "no_tool_call_steps_by_backend": {},
         "no_tool_recovery_prompts": 0,
+        "sdk_no_tool_continuity_resets": 0,
+        "sdk_no_tool_continuity_reset_steps": [],
         "tool_validation_errors": 0,
         "tool_validation_retry_attempts": 0,
         "tool_validation_retry_capped_events": 0,
@@ -3892,6 +3356,14 @@ def _run_cli_agent_impl(
                 "output_item_type_counts",
                 "function_call_count",
                 "text_block_count",
+                "continuity_mode",
+                "sdk_tool_choice_effective",
+                "sdk_callback_invocation_count",
+                "sdk_callback_bridge_used",
+                "sdk_local_no_tool_retry_attempted",
+                "sdk_local_no_tool_retry_succeeded",
+                "sdk_local_no_tool_retry_error",
+                "sdk_local_no_tool_retry_forced_full_history",
             ):
                 if key in usage:
                     response_diag[key] = usage.get(key)
@@ -4319,6 +3791,17 @@ def _run_cli_agent_impl(
                 )
             if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
                 continue
+            if llm_backend == "openai_agents_sdk" and sdk_execution_state is not None:
+                # SDK runner continuity can get stuck in repeated delta-mode
+                # reasoning turns after a no-tool response. Reset continuity
+                # cursor so the next step uses a fresh full-history turn.
+                sdk_execution_state.previous_response_id = None
+                sdk_execution_state.last_source_message_count = 0
+                sdk_execution_state.continuation_input_items = []
+                metrics["sdk_no_tool_continuity_resets"] = int(metrics.get("sdk_no_tool_continuity_resets", 0) or 0) + 1
+                reset_steps = list(metrics.get("sdk_no_tool_continuity_reset_steps", []) or [])
+                reset_steps.append(int(step))
+                metrics["sdk_no_tool_continuity_reset_steps"] = reset_steps
             if should_inject_no_tool_recovery_prompt(
                 step=step,
                 max_steps=max_steps,

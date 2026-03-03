@@ -621,7 +621,7 @@ def _run_runner_turn_via_openai_agents_sdk(
             model_settings = model_settings_cls(**model_settings_kwargs)
 
         system_instructions = _extract_system_prompt_text(system_prompt)
-        if tools_present and execution_context and tool_choice_policy == "required":
+        if tools_present and execution_context and tool_choice_policy in {"auto", "required"}:
             system_instructions = f"{_tool_call_enforcement_prefix()}\n\n{system_instructions}".strip()
 
         agent = agent_cls(
@@ -694,6 +694,32 @@ def create_executor_response_via_openai_agents_sdk(
     execution_state: OpenAIAgentsSDKExecutionState | None = None,
     execution_context: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def _blocks_from_turn_result(
+        result: _RunnerTurnResult,
+    ) -> tuple[list[dict[str, Any]], bool, int]:
+        local_output_items = list(result.output_items)
+        local_assistant_blocks = _response_output_items_to_assistant_blocks(
+            output_items=local_output_items,
+            allowed_tool_names=allowed_tool_names,
+        )
+        local_has_tool_use = any(
+            isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+            for block in local_assistant_blocks
+        )
+        local_bridge_used = False
+        if not local_has_tool_use and result.callback_invocations:
+            bridged_blocks, bridge_warnings = _callback_invocations_to_assistant_blocks(
+                callback_invocations=result.callback_invocations,
+                allowed_tool_names=allowed_tool_names,
+            )
+            if bridge_warnings:
+                local_assistant_blocks.insert(0, {"type": "text", "text": "\n".join(bridge_warnings)})
+            if bridged_blocks:
+                local_bridge_used = True
+                local_assistant_blocks.extend(bridged_blocks)
+                local_has_tool_use = True
+        return local_assistant_blocks, local_bridge_used, len(local_output_items)
+
     turn_result = _run_runner_turn_via_openai_agents_sdk(
         api_key=api_key,
         model=model,
@@ -711,25 +737,57 @@ def create_executor_response_via_openai_agents_sdk(
         for tool in tools
         if isinstance(tool, dict) and str(tool.get("name", "")).strip()
     }
-    assistant_blocks = _response_output_items_to_assistant_blocks(
-        output_items=output_items,
-        allowed_tool_names=allowed_tool_names,
-    )
-    has_tool_use = any(
-        isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
-        for block in assistant_blocks
-    )
-    callback_bridge_used = False
-    if not has_tool_use and turn_result.callback_invocations:
-        bridged_blocks, bridge_warnings = _callback_invocations_to_assistant_blocks(
-            callback_invocations=turn_result.callback_invocations,
-            allowed_tool_names=allowed_tool_names,
+    assistant_blocks, callback_bridge_used, output_item_count = _blocks_from_turn_result(turn_result)
+
+    no_tool_candidate = (
+        bool(execution_context)
+        and bool(turn_result.tools_present)
+        and int(_output_item_diagnostics(output_items).get("function_call_count", 0) or 0) == 0
+        and int(len(turn_result.callback_invocations)) == 0
+        and not any(
+            isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+            for block in assistant_blocks
         )
-        if bridge_warnings:
-            assistant_blocks.insert(0, {"type": "text", "text": "\n".join(bridge_warnings)})
-        if bridged_blocks:
-            callback_bridge_used = True
-            assistant_blocks.extend(bridged_blocks)
+    )
+    local_retry_enabled = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }
+    local_retry_attempted = False
+    local_retry_succeeded = False
+    local_retry_error = ""
+    local_retry_forced_full_history = False
+    if no_tool_candidate and local_retry_enabled:
+        local_retry_attempted = True
+        local_retry_forced_full_history = True
+        try:
+            retry_result = _run_runner_turn_via_openai_agents_sdk(
+                api_key=api_key,
+                model=model,
+                system_prompt=system_prompt,
+                messages=messages,
+                tools=tools,
+                max_tokens=1800,
+                temperature=temperature,
+                execution_state=None,
+                execution_context=execution_context,
+            )
+            retry_blocks, retry_bridge_used, retry_output_count = _blocks_from_turn_result(retry_result)
+            retry_has_tool = any(
+                isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+                for block in retry_blocks
+            )
+            if retry_has_tool:
+                turn_result = retry_result
+                output_items = list(turn_result.output_items)
+                assistant_blocks = retry_blocks
+                callback_bridge_used = retry_bridge_used
+                output_item_count = retry_output_count
+                local_retry_succeeded = True
+        except Exception as exc:
+            local_retry_error = f"{type(exc).__name__}:{exc}"
 
     if execution_state is not None:
         execution_state.turns = int(execution_state.turns) + 1
@@ -770,6 +828,20 @@ def create_executor_response_via_openai_agents_sdk(
                     if isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
                 )
             ),
+            "sdk_tool_enforcement_prefix_applied": bool(
+                turn_result.tools_present and execution_context and turn_result.tool_choice_requested in {"auto", "required"}
+            ),
+            "sdk_no_tool_candidate": bool(no_tool_candidate),
+            "sdk_no_tool_reason": (
+                "reasoning_only_no_callbacks"
+                if no_tool_candidate
+                else ""
+            ),
+            "sdk_local_no_tool_retry_attempted": bool(local_retry_attempted),
+            "sdk_local_no_tool_retry_succeeded": bool(local_retry_succeeded),
+            "sdk_local_no_tool_retry_error": str(local_retry_error or ""),
+            "sdk_local_no_tool_retry_forced_full_history": bool(local_retry_forced_full_history),
+            "sdk_output_item_count_effective": int(output_item_count),
         }
     )
     if execution_state is not None:
