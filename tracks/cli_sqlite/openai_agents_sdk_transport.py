@@ -762,12 +762,17 @@ def create_executor_response_via_openai_agents_sdk(
     assistant_blocks, callback_bridge_used, output_item_count = _blocks_from_turn_result(turn_result)
 
     initial_output_diag = _output_item_diagnostics(output_items)
+    # Treat any turn with no executable tool_use blocks as a no-tool candidate.
+    #
+    # Why this is broader than "function_call_count == 0":
+    # - SDK can return function_call items that we cannot safely execute
+    #   (for example malformed arguments / bridge mismatch).
+    # - In that case, the runtime still has no actionable tool call and should
+    #   run the same retry behavior as pure reasoning-only turns.
     no_tool_candidate = (
         bool(execution_context)
         and bool(turn_result.tools_present)
-        and int(initial_output_diag.get("function_call_count", 0) or 0) == 0
-        and int(len(turn_result.callback_invocations)) == 0
-        and not _assistant_blocks_have_tool_use(assistant_blocks)
+        and (not _assistant_blocks_have_tool_use(assistant_blocks))
     )
     local_retry_enabled = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "1")).strip().lower() not in {
         "0",
@@ -806,11 +811,31 @@ def create_executor_response_via_openai_agents_sdk(
         except Exception as exc:
             local_retry_error = f"{type(exc).__name__}:{exc}"
 
+    effective_output_diag = _output_item_diagnostics(output_items)
+    effective_has_tool_use = _assistant_blocks_have_tool_use(assistant_blocks)
+    continuity_reset_due_unconsumed_function_call = (
+        bool(execution_context)
+        and bool(turn_result.tools_present)
+        and int(effective_output_diag.get("function_call_count", 0) or 0) > 0
+        and (not effective_has_tool_use)
+    )
+
     if execution_state is not None:
         execution_state.turns = int(execution_state.turns) + 1
         execution_state.last_source_message_count = int(turn_result.source_message_count)
-        execution_state.continuation_input_items = _clone_input_items(turn_result.continuation_input_items)
-        execution_state.previous_response_id = turn_result.response_id or None
+        # Defensive continuity guard:
+        # If SDK reported function_call items but we produced no executable
+        # tool_use blocks, the next `previous_response_id` continuation may
+        # hard-fail with "No tool output found for function call <id>".
+        #
+        # Resetting continuation state here forces a fresh full-history turn,
+        # avoiding a broken response-chain carry-over.
+        if continuity_reset_due_unconsumed_function_call:
+            execution_state.continuation_input_items = []
+            execution_state.previous_response_id = None
+        else:
+            execution_state.continuation_input_items = _clone_input_items(turn_result.continuation_input_items)
+            execution_state.previous_response_id = turn_result.response_id or None
 
     usage_payload = _coerce_usage_payload(
         usage=turn_result.usage,
@@ -818,14 +843,24 @@ def create_executor_response_via_openai_agents_sdk(
         response_id=turn_result.response_id,
         request_id=turn_result.request_id,
     )
-    effective_output_diag = _output_item_diagnostics(output_items)
     effective_reasoning_only_turn = (
         bool(execution_context)
         and bool(turn_result.tools_present)
         and int(effective_output_diag.get("function_call_count", 0) or 0) == 0
         and int(len(turn_result.callback_invocations)) == 0
-        and (not _assistant_blocks_have_tool_use(assistant_blocks))
+        and (not effective_has_tool_use)
     )
+    effective_no_tool_turn = (
+        bool(execution_context)
+        and bool(turn_result.tools_present)
+        and (not effective_has_tool_use)
+    )
+    effective_no_tool_reason = ""
+    if effective_no_tool_turn:
+        if int(effective_output_diag.get("function_call_count", 0) or 0) > 0:
+            effective_no_tool_reason = "function_call_unusable"
+        else:
+            effective_no_tool_reason = "reasoning_only_no_callbacks"
     usage_payload.update(effective_output_diag)
     usage_payload.update(
         {
@@ -863,20 +898,23 @@ def create_executor_response_via_openai_agents_sdk(
             ),
             "sdk_no_tool_candidate": bool(no_tool_candidate),
             "sdk_no_tool_reason": (
-                "reasoning_only_no_callbacks"
+                (
+                    "function_call_unusable"
+                    if int(initial_output_diag.get("function_call_count", 0) or 0) > 0
+                    else "reasoning_only_no_callbacks"
+                )
                 if no_tool_candidate
                 else ""
             ),
-            "sdk_no_tool_reason_effective": (
-                "reasoning_only_no_callbacks"
-                if effective_reasoning_only_turn
-                else ""
-            ),
+            "sdk_no_tool_reason_effective": str(effective_no_tool_reason or ""),
             "sdk_local_no_tool_retry_attempted": bool(local_retry_attempted),
             "sdk_local_no_tool_retry_succeeded": bool(local_retry_succeeded),
             "sdk_local_no_tool_retry_error": str(local_retry_error or ""),
             "sdk_local_no_tool_retry_forced_full_history": bool(local_retry_forced_full_history),
             "sdk_output_item_count_effective": int(output_item_count),
+            "sdk_continuity_reset_due_unconsumed_function_call": bool(
+                continuity_reset_due_unconsumed_function_call
+            ),
             # Canonical SDK diagnostics consumed by runtime event/metrics logic.
             "reasoning_only_turn": bool(effective_reasoning_only_turn),
             "retry_attempted": bool(local_retry_attempted),

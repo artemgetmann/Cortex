@@ -294,6 +294,66 @@ def test_executor_transport_sets_reasoning_only_diag_when_no_tool_and_retry_disa
     assert usage["sdk_no_tool_reason_effective"] == "reasoning_only_no_callbacks"
 
 
+def test_executor_transport_resets_continuity_on_unusable_function_call(monkeypatch) -> None:
+    monkeypatch.setenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "0")
+    state = openai_agents_sdk_transport.OpenAIAgentsSDKExecutionState(
+        previous_response_id="resp_prev_chain",
+        last_source_message_count=1,
+        continuation_input_items=[{"role": "user", "content": [{"type": "input_text", "text": "carry"}]}],
+        turns=1,
+    )
+
+    def _fake_runner_turn(**_: Any) -> openai_agents_sdk_transport._RunnerTurnResult:
+        return openai_agents_sdk_transport._RunnerTurnResult(
+            output_items=[
+                {
+                    "type": "function_call",
+                    "name": "run_bash",
+                    "call_id": "call_bad_args",
+                    # Intentionally malformed so no executable tool_use block is emitted.
+                    "arguments": "{not-json",
+                }
+            ],
+            usage=_FakeUsage(),
+            response_id="resp_sdk_unusable",
+            request_id="req_sdk_unusable",
+            previous_response_id_sent="resp_prev_chain",
+            continuity_mode="delta_since_previous_response",
+            input_item_count=1,
+            full_input_item_count=2,
+            callback_invocations=[],
+            continuation_input_items=[{"role": "assistant", "content": [{"type": "output_text", "text": "x"}]}],
+            source_message_count=2,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
+        )
+
+    monkeypatch.setattr(
+        openai_agents_sdk_transport,
+        "_run_runner_turn_via_openai_agents_sdk",
+        _fake_runner_turn,
+    )
+
+    blocks, usage = openai_agents_sdk_transport.create_executor_response_via_openai_agents_sdk(
+        api_key="test",
+        model="gpt-5-nano",
+        system_prompt="system",
+        tools=[{"name": "run_bash", "description": "run bash", "input_schema": {"type": "object"}}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "do it"}]}],
+        execution_state=state,
+    )
+
+    assert blocks and blocks[0]["type"] == "text"
+    assert "openai_agents_sdk_tool_parse_error" in blocks[0]["text"]
+    assert usage["reasoning_only_turn"] is False
+    assert usage["sdk_no_tool_reason_effective"] == "function_call_unusable"
+    assert usage["sdk_continuity_reset_due_unconsumed_function_call"] is True
+    # Continuity reset must drop response-id chaining to avoid function_call_output mismatch errors.
+    assert state.previous_response_id is None
+    assert state.continuation_input_items == []
+
+
 def test_executor_transport_sets_retry_flags_when_local_retry_recovers_tool_call(monkeypatch) -> None:
     monkeypatch.setenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "1")
     call_count = {"n": 0}
