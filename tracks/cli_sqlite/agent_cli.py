@@ -20,20 +20,18 @@ from claude_print_client import ClaudePrintClient
 from claude_print_runtime import (
     DEFAULT_LLM_BACKEND,
     LLM_BACKENDS as SHARED_LLM_BACKENDS,
-    assistant_blocks_from_claude_print_payload,
-    build_claude_print_env,
     clip_text,
-    extract_first_json_object,
-    normalize_claude_print_effort,
     normalize_llm_backend,
-    render_message_history_for_claude_print,
-    resolve_claude_print_model,
+)
+from tracks.cli_sqlite.agent_runtime_context import build_runtime_prompt_context
+from tracks.cli_sqlite.agent_transport_router import (
+    create_executor_response_via_claude_print as _create_executor_response_via_claude_print,
+    request_executor_turn,
 )
 from config import CortexConfig
 from tracks.cli_sqlite.adapter_registry import resolve_adapter, resolve_adapter_with_mode
 from tracks.cli_sqlite.domain_adapter import DomainAdapter, DomainWorkspace, ToolResult
 from tracks.cli_sqlite.docs_pipeline import (
-    DocumentationBundle,
     build_documentation_bundle,
     normalize_doc_mode,
     normalize_doc_retrieval_mode,
@@ -83,15 +81,9 @@ from tracks.cli_sqlite.learning_cli import (
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
 from tracks.cli_sqlite.openai_transport import (
     OpenAICompatClient as _OpenAICompatClient,
-    OpenAICompatMessagesAPI as _OpenAICompatMessagesAPI,
-    anthropic_messages_to_openai_responses_input as _anthropic_messages_to_openai_responses_input,
-    create_executor_response_via_openai as _create_executor_response_via_openai,
-    openai_chat_completions_request as _openai_chat_completions_request,
-    openai_responses_request as _openai_responses_request,
 )
 from tracks.cli_sqlite.openai_agents_sdk_transport import (
     OpenAIAgentsSDKCompatClient as _OpenAIAgentsSDKCompatClient,
-    create_executor_response_via_openai_agents_sdk as _create_executor_response_via_openai_agents_sdk,
 )
 from tracks.cli_sqlite.prompt_builder import (
     DEFAULT_EXECUTOR_PROMPT_MODE,
@@ -2064,125 +2056,6 @@ def _normalize_llm_backend(value: str) -> str:
     return normalize_llm_backend(normalized)
 
 
-def _render_message_history_for_claude_print(messages: list[dict[str, Any]]) -> str:
-    return render_message_history_for_claude_print(messages, max_messages=20)
-
-
-def _extract_first_json_object(raw: str) -> dict[str, Any]:
-    return extract_first_json_object(raw, max_error_chars=500)
-
-
-def _assistant_blocks_from_claude_print_payload(
-    *,
-    payload: dict[str, Any],
-    allowed_tool_names: set[str],
-) -> list[dict[str, Any]]:
-    return assistant_blocks_from_claude_print_payload(
-        payload=payload,
-        allowed_tool_names=allowed_tool_names,
-    )
-
-
-def _create_executor_response_via_claude_print(
-    *,
-    model: str,
-    system_prompt: str,
-    tools: list[dict[str, Any]],
-    messages: list[dict[str, Any]],
-    prompt_logger: Callable[[str], None] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run one executor turn via `claude -p` and return synthetic assistant blocks."""
-    tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
-    allowed_tool_names = {name for name in tool_names if name}
-    tools_for_prompt = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        name = str(tool.get("name", "")).strip()
-        if not name:
-            continue
-        tools_for_prompt.append(
-            {
-                "name": name,
-                "description": str(tool.get("description", "")).strip(),
-                "input_schema": tool.get("input_schema", {}),
-            }
-        )
-    history_text = _render_message_history_for_claude_print(messages)
-    prompt = (
-        "You are the planner for a tool-using loop.\n"
-        "Return exactly one JSON object with this shape:\n"
-        "{\n"
-        '  "assistant_text": "short reasoning",\n'
-        '  "tool_calls": [{"name":"tool_name","input":{...}}]\n'
-        "}\n"
-        "Rules:\n"
-        "- Use ONLY tools listed below.\n"
-        "- tool_calls may contain multiple calls, or be empty if task is done.\n"
-        "- input must match each tool input_schema.\n"
-        "- Do not wrap JSON in markdown.\n\n"
-        f"SYSTEM_PROMPT:\n{system_prompt}\n\n"
-        f"TOOLS:\n{json.dumps(tools_for_prompt, ensure_ascii=True, indent=2, sort_keys=True)}\n\n"
-        f"MESSAGE_HISTORY:\n{history_text}\n"
-    )
-    if prompt_logger is not None:
-        prompt_logger(prompt)
-    timeout_s = max(10, int(os.getenv("CORTEX_CLAUDE_PRINT_TIMEOUT_S", "90")))
-    requested_model, effective_model = resolve_claude_print_model(
-        model,
-        fallback_model=DEFAULT_EXECUTOR_MODEL,
-    )
-    effort = normalize_claude_print_effort(None, default="high")
-    cmd = [
-        "claude",
-        "-p",
-        prompt,
-        "--output-format",
-        "text",
-        "--tools",
-        "",
-        "--effort",
-        effort,
-    ]
-    cmd.extend(["--model", effective_model])
-    cmd_env = build_claude_print_env()
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-            env=cmd_env,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"claude -p executor turn timed out after {timeout_s}s. "
-            "Try lowering prompt size, using a faster model, or increasing CORTEX_CLAUDE_PRINT_TIMEOUT_S."
-        ) from exc
-    stdout = str(proc.stdout or "")
-    stderr = str(proc.stderr or "")
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "claude -p executor turn failed "
-            f"(code={proc.returncode}): {_clip_text(stderr or stdout, max_chars=800)}"
-        )
-    payload = _extract_first_json_object(stdout)
-    blocks = _assistant_blocks_from_claude_print_payload(
-        payload=payload,
-        allowed_tool_names=allowed_tool_names,
-    )
-    usage = {
-        "backend": "claude_print",
-        "model": effective_model,
-        "requested_model": requested_model,
-        "effort": effort,
-        "stdout_chars": len(stdout),
-        "stderr_chars": len(stderr),
-    }
-    return blocks, usage
-
-
 def _hash_base64_png(image_b64: str | None) -> str | None:
     if not isinstance(image_b64, str):
         return None
@@ -3034,62 +2907,6 @@ def prepare_cli_prompt_preview(
         semi_helpful_errors=semi_helpful_errors,
         mixed_errors=mixed_errors,
     )
-    task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
-    if bootstrap:
-        task_text = re.sub(r"- Read the .*?skill document.*?\n", "", task_text)
-        task_text = re.sub(r",?\s*read_skill,?", "", task_text)
-
-    # Prompt assembly mirrors run_cli_agent to guarantee dump parity.
-    skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
-    if bootstrap:
-        routed_entries: list[SkillManifestEntry] = []
-        routed_refs: list[str] = []
-        required_skill_refs: set[str] = set()
-        skills_text = (
-            "(bootstrap mode — no skill docs available, ignore any task instructions about reading skills. "
-            "Learn from trial, error messages, and prior lessons below.)"
-        )
-    else:
-        routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
-        routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
-        routed_refs = [entry.skill_ref for entry in routed_entries]
-        required_skill_refs = _required_skill_refs_for_domain(
-            routed_refs=routed_refs,
-            domain=domain,
-            require_skill_read=require_skill_read,
-            task_id=task_id,
-        )
-        skills_text = manifest_summaries_text(routed_entries)
-
-    domain_keywords = adapter.quality_keywords()
-    lessons_text, _ = load_relevant_lessons(
-        path=LESSONS_PATH,
-        task_id=task_id,
-        task=task_text,
-        max_lessons=12,
-        max_sessions=8,
-        domain_keywords=domain_keywords,
-    )
-    migrate_legacy_lessons(legacy_path=LESSONS_PATH, v2_path=LESSONS_V2_PATH)
-    v2_matches, _ = retrieve_pre_run(
-        path=LESSONS_V2_PATH,
-        task_id=task_id,
-        domain=domain,
-        task_text=task_text,
-        max_results=8,
-        candidate_policy=DEFAULT_RUNTIME_CANDIDATE_POLICY,
-    )
-    v2_matches = _select_high_signal_prerun_matches(
-        matches=v2_matches,
-        task_id=task_id,
-        domain=domain,
-        max_results=4,
-        min_score=0.55,
-    )
-    v2_block, _ = _format_v2_lesson_block(v2_matches)
-    if v2_block:
-        lessons_text = f"{lessons_text}\n\n{v2_block}".strip()
-    domain_fragment = adapter.system_prompt_fragment()
     runtime_contract: dict[str, Any] | None = None
     try:
         # Preview path uses task-level contract only (no session runtime
@@ -3097,74 +2914,68 @@ def prepare_cli_prompt_preview(
         runtime_contract, _ = load_contract(TASKS_ROOT, task_id)
     except Exception:
         runtime_contract = None
-    contract_checklist_guidance = _build_contract_execution_guidance_from_contract(
-        contract=runtime_contract or {},
-        max_required=4,
-        max_forbidden=2,
-    )
-    validator_guidance = _build_sqlite_validator_guidance_from_contract(
-        contract=runtime_contract or {},
-        max_queries=4,
-    ) if domain == "sqlite" else ""
-    guidance_chunks = [chunk for chunk in (contract_checklist_guidance, validator_guidance) if chunk]
-    if guidance_chunks:
-        domain_fragment = f"{domain_fragment}\n" + "\n\n".join(guidance_chunks) + "\n"
-    if bootstrap:
-        domain_fragment = re.sub(
-            r"- Before starting.*?do not guess or invent skill_ref names\.\n",
-            "",
-            domain_fragment,
-            flags=re.DOTALL,
-        )
-    system_prompt = _build_system_prompt(
-        task_id=task_id,
-        skills_text=skills_text,
-        lessons_text=lessons_text,
-        domain_fragment=domain_fragment,
-        executor_prompt_mode=executor_prompt_mode,
-    )
     normalized_doc_mode = normalize_doc_mode(doc_mode)
     normalized_doc_retrieval = normalize_doc_retrieval_mode(doc_retrieval)
-    if executor_docs and normalized_doc_mode != "none":
-        docs_bundle = build_documentation_bundle(
-            task_text=task_text,
-            track_root=TRACK_ROOT,
-            docs_manifest=adapter.docs_manifest(),
-            documentation=documentation,
-            mode=normalized_doc_mode,
-            retrieval_mode=normalized_doc_retrieval,
-            budget_tokens=int(doc_budget_tokens),
-            retriever_model=doc_retriever_model,
-            llm_client=None,
-            max_chunks=10,
-        )
-        docs_block = docs_bundle.render_for_prompt(max_chars=8000)
-        if docs_block:
-            system_prompt += f"\n\n{docs_block}\n"
-    if required_skill_refs:
-        executor_tool = adapter.executor_tool_name
-        system_prompt += (
-            "\nSkill gate requirement:\n"
-            f"- Before first {executor_tool} call, read at least one of: {sorted(required_skill_refs)}\n"
-        )
-    if opaque_tools:
-        system_prompt += "\nTool names are opaque. Read your routed skills for usage semantics.\n"
     task_dir = TASKS_ROOT / task_id
     if not task_dir.exists():
         raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
     fixture_refs = sorted(p.name for p in task_dir.glob("*.csv"))
     if (task_dir / "task.md").exists():
         fixture_refs.append("task.md")
-    tools = adapter.tool_defs(fixture_refs, opaque=opaque_tools)
-    if bootstrap:
-        read_skill_api_name = "read_skill" if not opaque_tools else "probe"
-        tools = [tool for tool in tools if tool.get("name") != read_skill_api_name]
+    prompt_context = build_runtime_prompt_context(
+        task_id=task_id,
+        task=task,
+        domain=domain,
+        adapter=adapter,
+        track_root=TRACK_ROOT,
+        tasks_root=TASKS_ROOT,
+        skills_root=SKILLS_ROOT,
+        manifest_path=MANIFEST_PATH,
+        lessons_path=LESSONS_PATH,
+        lessons_v2_path=LESSONS_V2_PATH,
+        fixture_refs=fixture_refs,
+        bootstrap=bootstrap,
+        require_skill_read=require_skill_read,
+        opaque_tools=opaque_tools,
+        legacy_lessons_enabled=True,
+        benchmark_placebo=False,
+        runtime_candidate_policy_effective=DEFAULT_RUNTIME_CANDIDATE_POLICY,
+        runtime_contract=runtime_contract,
+        llm_client=None,
+        documentation=documentation,
+        doc_mode=normalized_doc_mode,
+        doc_retrieval=normalized_doc_retrieval,
+        doc_budget_tokens=int(doc_budget_tokens),
+        doc_retriever_model=doc_retriever_model,
+        preload_docs_bundle=bool(executor_docs and normalized_doc_mode != "none"),
+        executor_docs=executor_docs,
+        judge_docs=False,
+        docs_prompt_max_chars=8000,
+        executor_prompt_mode=executor_prompt_mode,
+        load_task_text_fn=_load_task_text,
+        prioritize_domain_routed_entries_fn=_prioritize_domain_routed_entries,
+        required_skill_refs_for_domain_fn=_required_skill_refs_for_domain,
+        select_high_signal_prerun_matches_fn=_select_high_signal_prerun_matches,
+        format_v2_lesson_block_fn=_format_v2_lesson_block,
+        format_legacy_placebo_lesson_block_fn=_format_legacy_placebo_lesson_block,
+        build_system_prompt_fn=_build_system_prompt,
+        build_contract_execution_guidance_fn=_build_contract_execution_guidance_from_contract,
+        build_sqlite_validator_guidance_fn=_build_sqlite_validator_guidance_from_contract,
+        build_skill_manifest_fn=build_skill_manifest,
+        route_manifest_entries_fn=route_manifest_entries,
+        manifest_summaries_text_fn=manifest_summaries_text,
+        load_relevant_lessons_fn=load_relevant_lessons,
+        migrate_legacy_lessons_fn=migrate_legacy_lessons,
+        retrieve_pre_run_fn=retrieve_pre_run,
+        load_lesson_objects_fn=load_lesson_objects,
+        build_documentation_bundle_fn=build_documentation_bundle,
+    )
 
     return CliPromptPreview(
-        task_text=task_text,
-        system_prompt=system_prompt,
-        lessons_text=lessons_text,
-        tools=tools,
+        task_text=prompt_context.task_text,
+        system_prompt=prompt_context.system_prompt,
+        lessons_text=prompt_context.lessons_text,
+        tools=prompt_context.tools,
     )
 
 
@@ -3502,15 +3313,6 @@ def _run_cli_agent_impl(
         mixed_errors=mixed_errors,
     )
 
-    # Load task text: explicit arg > task.md file > fallback
-    task_text = task.strip() if isinstance(task, str) and task.strip() else _load_task_text(TASKS_ROOT, task_id)
-
-    if bootstrap:
-        # Strip read_skill references from task text to prevent wasted steps.
-        # Task file unchanged on disk — only the runtime prompt is modified.
-        task_text = re.sub(r"- Read the .*?skill document.*?\n", "", task_text)
-        task_text = re.sub(r",?\s*read_skill,?", "", task_text)
-
     paths = ensure_session(session_id, sessions_root=SESSIONS_ROOT, reset_existing=True)
 
     # Prepare domain workspace
@@ -3518,6 +3320,89 @@ def _run_cli_agent_impl(
     if not task_dir.exists():
         raise FileNotFoundError(f"Unknown task id: {task_id!r} (missing {task_dir})")
     workspace: DomainWorkspace = adapter.prepare_workspace(task_dir, paths.session_dir)
+
+    # Build full manifest always (needed for posttask learning even in bootstrap)
+    skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
+    self_edit_manifest_entries = build_self_edit_manifest_entries(track_root=TRACK_ROOT) if bool(self_edit_mode) else []
+    self_edit_mode_active = bool(self_edit_mode) and bool(self_edit_manifest_entries)
+    self_edit_refs = {entry.skill_ref for entry in self_edit_manifest_entries}
+
+    runtime_contract: dict[str, Any] | None = None
+    try:
+        # Runtime path includes workspace override so session-seeded contracts
+        # (for transfer-hard variants) can drive prompt checklist guidance.
+        runtime_contract, _ = load_contract(TASKS_ROOT, task_id, work_dir=workspace.work_dir)
+    except Exception:
+        runtime_contract = None
+    prompt_context = build_runtime_prompt_context(
+        task_id=task_id,
+        task=task,
+        domain=domain,
+        adapter=adapter,
+        track_root=TRACK_ROOT,
+        tasks_root=TASKS_ROOT,
+        skills_root=SKILLS_ROOT,
+        manifest_path=MANIFEST_PATH,
+        lessons_path=LESSONS_PATH,
+        lessons_v2_path=LESSONS_V2_PATH,
+        fixture_refs=sorted(workspace.fixture_paths.keys()),
+        bootstrap=bootstrap,
+        require_skill_read=require_skill_read,
+        opaque_tools=opaque_tools,
+        legacy_lessons_enabled=legacy_lessons_enabled,
+        benchmark_placebo=benchmark_placebo,
+        runtime_candidate_policy_effective=runtime_candidate_policy_effective,
+        runtime_contract=runtime_contract,
+        llm_client=client,
+        documentation=documentation,
+        doc_mode=doc_mode,
+        doc_retrieval=doc_retrieval,
+        doc_budget_tokens=doc_budget_tokens,
+        doc_retriever_model=doc_retriever_model,
+        preload_docs_bundle=True,
+        executor_docs=executor_docs,
+        judge_docs=judge_docs,
+        docs_prompt_max_chars=9000,
+        executor_prompt_mode=executor_prompt_mode,
+        load_task_text_fn=_load_task_text,
+        prioritize_domain_routed_entries_fn=_prioritize_domain_routed_entries,
+        required_skill_refs_for_domain_fn=_required_skill_refs_for_domain,
+        select_high_signal_prerun_matches_fn=_select_high_signal_prerun_matches,
+        format_v2_lesson_block_fn=_format_v2_lesson_block,
+        format_legacy_placebo_lesson_block_fn=_format_legacy_placebo_lesson_block,
+        build_system_prompt_fn=_build_system_prompt,
+        build_contract_execution_guidance_fn=_build_contract_execution_guidance_from_contract,
+        build_sqlite_validator_guidance_fn=_build_sqlite_validator_guidance_from_contract,
+        build_skill_manifest_fn=build_skill_manifest,
+        route_manifest_entries_fn=route_manifest_entries,
+        manifest_summaries_text_fn=manifest_summaries_text,
+        load_relevant_lessons_fn=load_relevant_lessons,
+        migrate_legacy_lessons_fn=migrate_legacy_lessons,
+        retrieve_pre_run_fn=retrieve_pre_run,
+        load_lesson_objects_fn=load_lesson_objects,
+        build_documentation_bundle_fn=build_documentation_bundle,
+    )
+    docs_bundle = prompt_context.docs_bundle
+    if docs_bundle is None:
+        raise RuntimeError("Runtime docs bundle missing while preload_docs_bundle=True.")
+
+    task_text = prompt_context.task_text
+    routed_entries = prompt_context.routed_entries
+    routed_refs = prompt_context.routed_refs
+    required_skill_refs = prompt_context.required_skill_refs
+    lessons_text = prompt_context.lessons_text
+    lessons_loaded = prompt_context.lessons_loaded
+    prerun_v2_matches = prompt_context.prerun_v2_matches
+    prerun_v2_ids = prompt_context.prerun_v2_ids
+    loaded_lesson_objects = prompt_context.loaded_lesson_objects
+    docs_executor_block = prompt_context.docs_executor_block
+    docs_judge_block = prompt_context.docs_judge_block
+    docs_prompt_available = prompt_context.docs_prompt_available
+    docs_selected_source_ids = prompt_context.docs_selected_source_ids
+    docs_read_error_entries = prompt_context.docs_read_error_entries
+    system_prompt = prompt_context.system_prompt
+    tools = prompt_context.tools
+
     verification_spec = _load_verification_spec(
         tasks_root=TASKS_ROOT,
         task_id=task_id,
@@ -3531,159 +3416,9 @@ def _run_cli_agent_impl(
         else []
     )
 
-    # Build full manifest always (needed for posttask learning even in bootstrap)
-    skill_manifest_entries = build_skill_manifest(skills_root=SKILLS_ROOT, manifest_path=MANIFEST_PATH)
-    self_edit_manifest_entries = build_self_edit_manifest_entries(track_root=TRACK_ROOT) if bool(self_edit_mode) else []
-    self_edit_mode_active = bool(self_edit_mode) and bool(self_edit_manifest_entries)
-    self_edit_refs = {entry.skill_ref for entry in self_edit_manifest_entries}
-
-    if bootstrap:
-        # Bootstrap mode: no skill docs, agent must learn from scratch via lessons
-        routed_entries: list[SkillManifestEntry] = []
-        routed_refs: list[str] = []
-        required_skill_refs: set[str] = set()
-        skills_text = (
-            "(bootstrap mode — no skill docs available, ignore any task instructions about reading skills. "
-            "Learn from trial, error messages, and prior lessons below.)"
-        )
-    else:
-        routed_entries = route_manifest_entries(task=task_text, entries=skill_manifest_entries, top_k=2)
-        routed_entries = _prioritize_domain_routed_entries(entries=routed_entries, domain=domain)
-        routed_refs = [entry.skill_ref for entry in routed_entries]
-        required_skill_refs = _required_skill_refs_for_domain(
-            routed_refs=routed_refs,
-            domain=domain,
-            require_skill_read=require_skill_read,
-            task_id=task_id,
-        )
-        skills_text = manifest_summaries_text(routed_entries)
-    domain_keywords = adapter.quality_keywords()
-    if legacy_lessons_enabled:
-        lessons_text, lessons_loaded = load_relevant_lessons(
-            path=LESSONS_PATH,
-            task_id=task_id,
-            task=task_text,
-            max_lessons=12,
-            max_sessions=8,
-            domain_keywords=domain_keywords,
-        )
-    else:
-        lessons_text, lessons_loaded = "No prior lessons loaded.", 0
-    # Keep V2 backward-compatible with legacy lessons by migrating legacy rows
-    # into the v2 store before retrieval. The migration is idempotent.
-    migrate_legacy_lessons(legacy_path=LESSONS_PATH, v2_path=LESSONS_V2_PATH)
-    prerun_v2_matches, _ = retrieve_pre_run(
-        path=LESSONS_V2_PATH,
-        task_id=task_id,
-        domain=domain,
-        task_text=task_text,
-        max_results=8,
-        candidate_policy=runtime_candidate_policy_effective,
-    )
-    prerun_v2_matches = _select_high_signal_prerun_matches(
-        matches=prerun_v2_matches,
-        task_id=task_id,
-        domain=domain,
-        max_results=4,
-        min_score=0.55,
-    )
-    prerun_v2_block, prerun_v2_ids = _format_v2_lesson_block(
-        prerun_v2_matches,
-        use_placebo=benchmark_placebo,
-        task_id=task_id,
-        domain=domain,
-    )
-    # Load lesson objects for error-triggered injection during the run
-    loaded_lesson_objects = load_lesson_objects(
-        path=LESSONS_PATH,
-        task_id=task_id,
-        domain_keywords=domain_keywords,
-    ) if legacy_lessons_enabled else []
-    if benchmark_placebo and lessons_loaded > 0:
-        lessons_text = _format_legacy_placebo_lesson_block(
-            lessons=loaded_lesson_objects,
-            lessons_loaded=lessons_loaded,
-            task_id=task_id,
-            domain=domain,
-        )
-    if prerun_v2_block:
-        lessons_text = f"{lessons_text}\n\n{prerun_v2_block}".strip()
-    docs_bundle: DocumentationBundle = build_documentation_bundle(
-        task_text=task_text,
-        track_root=TRACK_ROOT,
-        docs_manifest=adapter.docs_manifest(),
-        documentation=documentation,
-        mode=doc_mode,
-        retrieval_mode=doc_retrieval,
-        budget_tokens=doc_budget_tokens,
-        retriever_model=doc_retriever_model,
-        llm_client=client,
-        max_chunks=10,
-    )
-    # Render once so metrics and runtime behavior share the exact same payload.
-    docs_executor_block = docs_bundle.render_for_prompt(max_chars=9000) if executor_docs else ""
-    docs_judge_block = docs_bundle.render_for_prompt(max_chars=9000) if judge_docs else ""
-    docs_prompt_available = bool(docs_bundle.brief.strip())
-    docs_selected_source_ids = sorted({chunk.source_id for chunk in docs_bundle.selected_chunks})
-    docs_read_error_entries = [dict(row) for row in docs_bundle.load_errors]
-
-    domain_fragment = adapter.system_prompt_fragment()
-    runtime_contract: dict[str, Any] | None = None
-    try:
-        # Runtime path includes workspace override so session-seeded contracts
-        # (for transfer-hard variants) can drive prompt checklist guidance.
-        runtime_contract, _ = load_contract(TASKS_ROOT, task_id, work_dir=workspace.work_dir)
-    except Exception:
-        runtime_contract = None
-    contract_checklist_guidance = _build_contract_execution_guidance_from_contract(
-        contract=runtime_contract or {},
-        max_required=4,
-        max_forbidden=2,
-    )
-    validator_guidance = _build_sqlite_validator_guidance_from_contract(
-        contract=runtime_contract or {},
-        max_queries=4,
-    ) if domain == "sqlite" else ""
-    guidance_chunks = [chunk for chunk in (contract_checklist_guidance, validator_guidance) if chunk]
-    if guidance_chunks:
-        domain_fragment = f"{domain_fragment}\n" + "\n\n".join(guidance_chunks) + "\n"
-    if bootstrap:
-        # Strip skill-reading instructions to avoid wasting steps on read_skill
-        # with invented refs (no skill docs exist in bootstrap mode)
-        domain_fragment = re.sub(
-            r"- Before starting.*?do not guess or invent skill_ref names\.\n",
-            "",
-            domain_fragment,
-            flags=re.DOTALL,
-        )
-    system_prompt = _build_system_prompt(
-        task_id=task_id,
-        skills_text=skills_text,
-        lessons_text=lessons_text,
-        domain_fragment=domain_fragment,
-        executor_prompt_mode=executor_prompt_mode,
-    )
-    if docs_executor_block:
-        system_prompt += f"\n\n{docs_executor_block}\n"
-    if required_skill_refs:
-        executor_tool = adapter.executor_tool_name
-        system_prompt += (
-            "\nSkill gate requirement:\n"
-            f"- Before first {executor_tool} call, read at least one of: {sorted(required_skill_refs)}\n"
-        )
-    if opaque_tools:
-        system_prompt += (
-            "\nTool names are opaque. Read your routed skills for usage semantics.\n"
-        )
-
     alias_map = adapter.build_alias_map(opaque=opaque_tools)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task_text}]}]
-    tools = adapter.tool_defs(sorted(workspace.fixture_paths.keys()), opaque=opaque_tools)
-    if bootstrap:
-        # Remove read_skill from tool list — no skill docs in bootstrap mode
-        read_skill_api_name = "read_skill" if not opaque_tools else "probe"
-        tools = [t for t in tools if t.get("name") != read_skill_api_name]
     # Build a name->schema map for tool-agnostic input validation. This keeps
     # validation structural (required keys, primitive types) instead of semantic.
     tool_schema_map = build_tool_schema_map(tools)
@@ -4361,51 +4096,19 @@ def _run_cli_agent_impl(
             "tools": _clone_json(tools),
         }
         executor_input_bundles.append(executor_input_bundle)
-        if llm_backend == "anthropic":
-            if client is None:
-                raise RuntimeError("Anthropic client unavailable while llm_backend=anthropic.")
-            request: dict[str, Any] = {
-                "model": model_executor,
-                "max_tokens": 1800,
-                "system": system_prompt,
-                "tools": tools,
-                "messages": messages,
-            }
-            if runtime_temperature is not None:
-                request["temperature"] = float(runtime_temperature)
-            response = client.messages.create(**request)
-            try:
-                usage = response.usage.model_dump()  # type: ignore[attr-defined]
-            except Exception:
-                usage_obj = getattr(response, "usage", None)
-                usage = usage_obj.model_dump() if usage_obj is not None and hasattr(usage_obj, "model_dump") else {}
-            assistant_blocks = [block.model_dump() for block in response.content]  # type: ignore[attr-defined]
-        elif llm_backend == "openai":
-            assistant_blocks, usage = _create_executor_response_via_openai(
-                api_key=openai_api_key,
-                model=model_executor,
-                system_prompt=system_prompt,
-                tools=tools,
-                messages=messages,
-                temperature=runtime_temperature,
-            )
-        elif llm_backend == "openai_agents_sdk":
-            assistant_blocks, usage = _create_executor_response_via_openai_agents_sdk(
-                api_key=openai_api_key,
-                model=model_executor,
-                system_prompt=system_prompt,
-                tools=tools,
-                messages=messages,
-                temperature=runtime_temperature,
-            )
-        else:
-            assistant_blocks, usage = _create_executor_response_via_claude_print(
-                model=model_executor,
-                system_prompt=system_prompt,
-                tools=tools,
-                messages=messages,
-                prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
-            )
+        assistant_blocks, usage = request_executor_turn(
+            llm_backend=llm_backend,
+            client=client,
+            openai_api_key=openai_api_key,
+            model=model_executor,
+            system_prompt=system_prompt,
+            tools=tools,
+            messages=messages,
+            runtime_temperature=runtime_temperature,
+            prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
+            claude_print_fallback_model=DEFAULT_EXECUTOR_MODEL,
+            claude_print_request_fn=_create_executor_response_via_claude_print,
+        )
         metrics["usage"].append(usage)
         # Keep compact per-turn response-shape diagnostics when transports
         # provide them (for example OpenAI Agents SDK output item summaries).
