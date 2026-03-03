@@ -139,6 +139,15 @@ def _tool_call_enforcement_prefix() -> str:
     )
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = str(os.getenv(name, str(default))).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 def _run_async(coro: Any) -> Any:
     """
     Execute SDK async calls from the sync runtime loop.
@@ -726,7 +735,7 @@ def create_executor_response_via_openai_agents_sdk(
         system_prompt=system_prompt,
         messages=messages,
         tools=tools,
-        max_tokens=1800,
+        max_tokens=_int_env("CORTEX_OPENAI_AGENTS_SDK_MAX_TOKENS", 1800),
         temperature=temperature,
         execution_state=execution_state,
         execution_context=execution_context,
@@ -769,7 +778,7 @@ def create_executor_response_via_openai_agents_sdk(
                 system_prompt=system_prompt,
                 messages=messages,
                 tools=tools,
-                max_tokens=1800,
+                max_tokens=_int_env("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY_MAX_TOKENS", 3600),
                 temperature=temperature,
                 execution_state=None,
                 execution_context=execution_context,
@@ -820,6 +829,11 @@ def create_executor_response_via_openai_agents_sdk(
             "sdk_tools_present": bool(turn_result.tools_present),
             "sdk_tool_choice_requested": str(turn_result.tool_choice_requested or ""),
             "sdk_tool_choice_effective": str(turn_result.tool_choice_effective or ""),
+            "sdk_max_tokens_requested": _int_env("CORTEX_OPENAI_AGENTS_SDK_MAX_TOKENS", 1800),
+            "sdk_local_retry_max_tokens_requested": _int_env(
+                "CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY_MAX_TOKENS",
+                3600,
+            ),
             "sdk_callback_bridge_used": bool(callback_bridge_used),
             "sdk_callback_bridge_tool_count": int(
                 sum(
