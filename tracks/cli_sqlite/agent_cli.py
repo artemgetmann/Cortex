@@ -84,6 +84,7 @@ from tracks.cli_sqlite.openai_transport import (
 )
 from tracks.cli_sqlite.openai_agents_sdk_transport import (
     OpenAIAgentsSDKCompatClient as _OpenAIAgentsSDKCompatClient,
+    OpenAIAgentsSDKExecutionState as _OpenAIAgentsSDKExecutionState,
 )
 from tracks.cli_sqlite.prompt_builder import (
     DEFAULT_EXECUTOR_PROMPT_MODE,
@@ -4074,6 +4075,7 @@ def _run_cli_agent_impl(
     step = 1
     validation_retries_this_step = 0
     validation_retry_capped_this_step = False
+    sdk_execution_state = _OpenAIAgentsSDKExecutionState() if llm_backend == "openai_agents_sdk" else None
     while step <= max_steps:
         metrics["steps"] = step
         if on_lifecycle_event is not None:
@@ -4108,6 +4110,8 @@ def _run_cli_agent_impl(
             prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
             claude_print_fallback_model=DEFAULT_EXECUTOR_MODEL,
             claude_print_request_fn=_create_executor_response_via_claude_print,
+            sdk_execution_state=sdk_execution_state,
+            sdk_execution_context=True,
         )
         metrics["usage"].append(usage)
         # Keep compact per-turn response-shape diagnostics when transports

@@ -15,6 +15,7 @@ from claude_print_runtime import (
     resolve_claude_print_model,
 )
 from tracks.cli_sqlite.openai_agents_sdk_transport import (
+    OpenAIAgentsSDKExecutionState,
     create_executor_response_via_openai_agents_sdk as _create_executor_response_via_openai_agents_sdk,
 )
 from tracks.cli_sqlite.openai_transport import (
@@ -158,6 +159,8 @@ def request_executor_turn(
     runtime_temperature: float | None,
     prompt_logger: Callable[[str], None] | None = None,
     claude_print_fallback_model: str,
+    sdk_execution_state: OpenAIAgentsSDKExecutionState | None = None,
+    sdk_execution_context: bool = True,
     openai_request_fn: Callable[..., tuple[list[dict[str, Any]], dict[str, Any]]] = _create_executor_response_via_openai,
     openai_agents_request_fn: Callable[..., tuple[list[dict[str, Any]], dict[str, Any]]] = _create_executor_response_via_openai_agents_sdk,
     claude_print_request_fn: Callable[..., tuple[list[dict[str, Any]], dict[str, Any]]] = create_executor_response_via_claude_print,
@@ -207,6 +210,8 @@ def request_executor_turn(
             tools=tools,
             messages=messages,
             temperature=runtime_temperature,
+            execution_state=sdk_execution_state,
+            execution_context=bool(sdk_execution_context),
         )
 
     return claude_print_request_fn(
@@ -217,4 +222,3 @@ def request_executor_turn(
         prompt_logger=prompt_logger,
         fallback_model=claude_print_fallback_model,
     )
-
