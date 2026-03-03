@@ -82,6 +82,37 @@ def _should_send_temperature(*, model: str) -> bool:
     return False
 
 
+def _tool_choice_policy() -> str:
+    """
+    Runtime policy for SDK tool selection.
+
+    Why this exists:
+    - Some SDK/model combinations tend to return plain text and stop early.
+    - We want a deterministic way to bias execution toward tool calls during
+      benchmark/task runs without changing core loop semantics.
+    """
+    raw = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_TOOL_CHOICE", "required")).strip().lower()
+    if raw in {"none", "off"}:
+        return "none"
+    if raw in {"auto", "required"}:
+        return raw
+    return "required"
+
+
+def _tool_call_enforcement_prefix() -> str:
+    """
+    Prefix injected into SDK system instructions when tools are present.
+
+    First principles:
+    - If the model emits no function call, Cortex cannot execute and learn.
+    - This deterministic instruction is a guardrail, not task-specific logic.
+    """
+    return (
+        "TOOL EXECUTION POLICY: When function tools are available, you must call a tool. "
+        "Do not stop with text-only output until at least one function call is emitted in this turn."
+    )
+
+
 def _run_async(coro: Any) -> Any:
     """
     Execute SDK async calls from the sync runtime loop.
@@ -239,6 +270,37 @@ def _coerce_usage_payload(*, usage: Any, model: str, response_id: str, request_i
     }
 
 
+def _output_item_diagnostics(output_items: list[Any]) -> dict[str, Any]:
+    """
+    Build compact diagnostics for SDK response shape.
+
+    This helps debug early-stop behavior where model returns text-only output.
+    """
+    type_counts: dict[str, int] = {}
+    function_call_count = 0
+    text_block_count = 0
+    for item in output_items:
+        payload = _item_to_dict(item)
+        item_type = str(payload.get("type", "")).strip().lower() or "unknown"
+        type_counts[item_type] = int(type_counts.get(item_type, 0)) + 1
+        if item_type == "function_call":
+            function_call_count += 1
+        if item_type == "message":
+            content = payload.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    block_payload = _item_to_dict(block)
+                    block_type = str(block_payload.get("type", "")).strip().lower()
+                    if block_type in {"output_text", "text"}:
+                        text_block_count += 1
+    return {
+        "output_item_count": len(output_items),
+        "output_item_type_counts": type_counts,
+        "function_call_count": function_call_count,
+        "text_block_count": text_block_count,
+    }
+
+
 def _fetch_model_response_via_openai_agents_sdk(
     *,
     api_key: str,
@@ -270,17 +332,30 @@ def _fetch_model_response_via_openai_agents_sdk(
             timeout=_openai_timeout_seconds(),
         )
         model_obj = openai_responses_model_cls(model=model, openai_client=client)
+        sdk_tools = _build_agents_function_tools(tools=tools, function_tool_cls=function_tool_cls)
+        tools_present = bool(sdk_tools)
+        tool_choice_policy = _tool_choice_policy()
         model_settings_kwargs: dict[str, Any] = {
             "max_tokens": max(0, int(max_tokens)),
             "parallel_tool_calls": False,
         }
+        # Keep this best-effort because SDK versions differ in supported fields.
+        if tools_present and tool_choice_policy in {"auto", "required"}:
+            model_settings_kwargs["tool_choice"] = tool_choice_policy
         if temperature is not None and _should_send_temperature(model=model):
             model_settings_kwargs["temperature"] = float(temperature)
-        model_settings = model_settings_cls(**model_settings_kwargs)
+        try:
+            model_settings = model_settings_cls(**model_settings_kwargs)
+        except TypeError:
+            # Backward-compatible fallback for SDK versions without `tool_choice`.
+            model_settings_kwargs.pop("tool_choice", None)
+            model_settings = model_settings_cls(**model_settings_kwargs)
         input_items = anthropic_messages_to_openai_responses_input(messages=messages)
-        sdk_tools = _build_agents_function_tools(tools=tools, function_tool_cls=function_tool_cls)
+        system_instructions = _extract_system_prompt_text(system_prompt)
+        if tools_present and tool_choice_policy == "required":
+            system_instructions = f"{_tool_call_enforcement_prefix()}\n\n{system_instructions}".strip()
         return await model_obj.get_response(
-            system_instructions=_extract_system_prompt_text(system_prompt),
+            system_instructions=system_instructions,
             input=input_items,
             model_settings=model_settings,
             tools=sdk_tools,
@@ -329,6 +404,7 @@ def create_executor_response_via_openai_agents_sdk(
         response_id=str(getattr(model_response, "response_id", "")).strip(),
         request_id=str(getattr(model_response, "request_id", "")).strip(),
     )
+    usage_payload.update(_output_item_diagnostics(output_items))
     return assistant_blocks, usage_payload
 
 

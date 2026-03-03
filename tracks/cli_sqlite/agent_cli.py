@@ -179,6 +179,7 @@ DEFAULT_MAX_LOW_CONFIDENCE_PROBES = 4
 DEFAULT_SELF_EDIT_MODE = False
 REFLECTION_ERROR_THRESHOLD = 2
 MAX_VALIDATION_RETRIES_PER_STEP = 2
+MAX_NO_TOOL_RECOVERY_PROMPTS = 3
 DEPENDENCY_SETUP_REPEAT_THRESHOLD = 2
 HOTFIX_TRANSFER_TASK_IDS: frozenset[str] = frozenset(
     {
@@ -3730,6 +3731,9 @@ def _run_cli_agent_impl(
         "steps": 0,
         "tool_actions": 0,
         "tool_errors": 0,
+        "no_tool_call_steps": 0,
+        "no_tool_call_steps_by_backend": {},
+        "no_tool_recovery_prompts": 0,
         "tool_validation_errors": 0,
         "tool_validation_retry_attempts": 0,
         "tool_validation_retry_capped_events": 0,
@@ -3954,6 +3958,7 @@ def _run_cli_agent_impl(
     contract_retry_validator_query_ids: list[str] = []
     contract_retry_post_validation_pending = False
     contract_retry_repair_observed = False
+    no_tool_recovery_prompts_used = 0
     dependency_setup_retries: Counter[str] = Counter()
     dependency_setup_reflections: set[str] = set()
     hard_failure_count = 0
@@ -4402,6 +4407,20 @@ def _run_cli_agent_impl(
                 prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
             )
         metrics["usage"].append(usage)
+        # Keep compact per-turn response-shape diagnostics when transports
+        # provide them (for example OpenAI Agents SDK output item summaries).
+        if isinstance(usage, dict):
+            response_diag: dict[str, Any] = {}
+            for key in (
+                "output_item_count",
+                "output_item_type_counts",
+                "function_call_count",
+                "text_block_count",
+            ):
+                if key in usage:
+                    response_diag[key] = usage.get(key)
+            if response_diag:
+                metrics["last_model_response_diag"] = response_diag
         messages.append({"role": "assistant", "content": assistant_blocks})
         tool_results: list[dict[str, Any]] = []
         retry_same_step = False
@@ -4806,12 +4825,61 @@ def _run_cli_agent_impl(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
+            metrics["no_tool_call_steps"] = int(metrics.get("no_tool_call_steps", 0) or 0) + 1
+            no_tool_by_backend = dict(metrics.get("no_tool_call_steps_by_backend", {}) or {})
+            backend_key = str(llm_backend or "unknown").strip() or "unknown"
+            no_tool_by_backend[backend_key] = int(no_tool_by_backend.get(backend_key, 0) or 0) + 1
+            metrics["no_tool_call_steps_by_backend"] = no_tool_by_backend
+            # Emit deterministic event so failed runs expose "text-only stop"
+            # without requiring prompt/trace reconstruction.
+            write_event(
+                paths.events_path,
+                {
+                    "step": step,
+                    "tool": "model_no_tool_call",
+                    "tool_input": {
+                        "backend": backend_key,
+                        "response_diag": (
+                            dict(metrics.get("last_model_response_diag", {}) or {})
+                            if isinstance(metrics.get("last_model_response_diag"), dict)
+                            else {}
+                        ),
+                    },
+                    "ok": False,
+                    "error": "no_tool_call",
+                    "output": "",
+                },
+            )
             if contract_retry_post_validation_pending:
                 _run_contract_postretry_validator(
                     current_step=step,
                     trigger="no_tool_call",
                 )
             if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
+                continue
+            if step < max_steps and no_tool_recovery_prompts_used < MAX_NO_TOOL_RECOVERY_PROMPTS:
+                # Deterministic recovery path for text-only/empty model turns.
+                # This is domain-agnostic: require exactly one executable tool
+                # call so the loop can continue collecting real feedback.
+                no_tool_recovery_prompts_used += 1
+                metrics["no_tool_recovery_prompts"] = int(metrics.get("no_tool_recovery_prompts", 0) or 0) + 1
+                recovery_text = (
+                    "No tool call was emitted. Do not stop. "
+                    f"Call exactly one tool now (`{executor_tool_name}` or a required helper tool) "
+                    "and continue execution."
+                )
+                messages.append({"role": "user", "content": [{"type": "text", "text": recovery_text}]})
+                if verbose:
+                    print(
+                        (
+                            f"[step {step:03d}] no tool call; forcing recovery prompt "
+                            f"{no_tool_recovery_prompts_used}/{MAX_NO_TOOL_RECOVERY_PROMPTS}."
+                        ),
+                        flush=True,
+                    )
+                step += 1
+                validation_retries_this_step = 0
+                validation_retry_capped_this_step = False
                 continue
             if verbose:
                 print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
