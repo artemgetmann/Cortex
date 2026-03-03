@@ -516,6 +516,19 @@ def _output_item_diagnostics(output_items: list[Any]) -> dict[str, Any]:
     }
 
 
+def _assistant_blocks_have_tool_use(assistant_blocks: list[dict[str, Any]]) -> bool:
+    """
+    Return True when normalized assistant blocks include at least one tool call.
+
+    We keep this explicit so reasoning-only detection can stay content-shape only
+    and never inspect/record hidden reasoning text.
+    """
+    return any(
+        isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+        for block in assistant_blocks
+    )
+
+
 def _extract_delta_messages_for_continuation(
     *,
     messages: list[dict[str, Any]],
@@ -748,15 +761,13 @@ def create_executor_response_via_openai_agents_sdk(
     }
     assistant_blocks, callback_bridge_used, output_item_count = _blocks_from_turn_result(turn_result)
 
+    initial_output_diag = _output_item_diagnostics(output_items)
     no_tool_candidate = (
         bool(execution_context)
         and bool(turn_result.tools_present)
-        and int(_output_item_diagnostics(output_items).get("function_call_count", 0) or 0) == 0
+        and int(initial_output_diag.get("function_call_count", 0) or 0) == 0
         and int(len(turn_result.callback_invocations)) == 0
-        and not any(
-            isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
-            for block in assistant_blocks
-        )
+        and not _assistant_blocks_have_tool_use(assistant_blocks)
     )
     local_retry_enabled = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "1")).strip().lower() not in {
         "0",
@@ -784,10 +795,7 @@ def create_executor_response_via_openai_agents_sdk(
                 execution_context=execution_context,
             )
             retry_blocks, retry_bridge_used, retry_output_count = _blocks_from_turn_result(retry_result)
-            retry_has_tool = any(
-                isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
-                for block in retry_blocks
-            )
+            retry_has_tool = _assistant_blocks_have_tool_use(retry_blocks)
             if retry_has_tool:
                 turn_result = retry_result
                 output_items = list(turn_result.output_items)
@@ -810,7 +818,15 @@ def create_executor_response_via_openai_agents_sdk(
         response_id=turn_result.response_id,
         request_id=turn_result.request_id,
     )
-    usage_payload.update(_output_item_diagnostics(output_items))
+    effective_output_diag = _output_item_diagnostics(output_items)
+    effective_reasoning_only_turn = (
+        bool(execution_context)
+        and bool(turn_result.tools_present)
+        and int(effective_output_diag.get("function_call_count", 0) or 0) == 0
+        and int(len(turn_result.callback_invocations)) == 0
+        and (not _assistant_blocks_have_tool_use(assistant_blocks))
+    )
+    usage_payload.update(effective_output_diag)
     usage_payload.update(
         {
             "continuity_mode": turn_result.continuity_mode,
@@ -851,11 +867,20 @@ def create_executor_response_via_openai_agents_sdk(
                 if no_tool_candidate
                 else ""
             ),
+            "sdk_no_tool_reason_effective": (
+                "reasoning_only_no_callbacks"
+                if effective_reasoning_only_turn
+                else ""
+            ),
             "sdk_local_no_tool_retry_attempted": bool(local_retry_attempted),
             "sdk_local_no_tool_retry_succeeded": bool(local_retry_succeeded),
             "sdk_local_no_tool_retry_error": str(local_retry_error or ""),
             "sdk_local_no_tool_retry_forced_full_history": bool(local_retry_forced_full_history),
             "sdk_output_item_count_effective": int(output_item_count),
+            # Canonical SDK diagnostics consumed by runtime event/metrics logic.
+            "reasoning_only_turn": bool(effective_reasoning_only_turn),
+            "retry_attempted": bool(local_retry_attempted),
+            "retry_succeeded": bool(local_retry_succeeded),
         }
     )
     if execution_state is not None:

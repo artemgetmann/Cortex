@@ -322,8 +322,17 @@ def _run_cli_agent_impl_extracted(
         "no_tool_call_steps": 0,
         "no_tool_call_steps_by_backend": {},
         "no_tool_recovery_prompts": 0,
+        "no_tool_same_failure_streak": 0,
+        "no_tool_same_failure_streak_max": 0,
+        "no_tool_last_failure_signature": "",
         "sdk_no_tool_continuity_resets": 0,
         "sdk_no_tool_continuity_reset_steps": [],
+        "sdk_reasoning_only_turns": 0,
+        "sdk_reasoning_only_output_tokens": 0,
+        "sdk_no_tool_retry_attempted": 0,
+        "sdk_no_tool_retry_succeeded": 0,
+        "sdk_no_tool_same_failure_streak": 0,
+        "sdk_no_tool_same_failure_streak_max": 0,
         "tool_validation_errors": 0,
         "tool_validation_retry_attempts": 0,
         "tool_validation_retry_capped_events": 0,
@@ -973,14 +982,20 @@ def _run_cli_agent_impl_extracted(
         if isinstance(usage, dict):
             response_diag: dict[str, Any] = {}
             for key in (
+                "output_tokens",
                 "output_item_count",
                 "output_item_type_counts",
                 "function_call_count",
                 "text_block_count",
+                "reasoning_only_turn",
+                "retry_attempted",
+                "retry_succeeded",
                 "continuity_mode",
                 "sdk_tool_choice_effective",
                 "sdk_callback_invocation_count",
                 "sdk_callback_bridge_used",
+                "sdk_no_tool_reason",
+                "sdk_no_tool_reason_effective",
                 "sdk_local_no_tool_retry_attempted",
                 "sdk_local_no_tool_retry_succeeded",
                 "sdk_local_no_tool_retry_error",
@@ -990,6 +1005,34 @@ def _run_cli_agent_impl_extracted(
                     response_diag[key] = usage.get(key)
             if response_diag:
                 metrics["last_model_response_diag"] = response_diag
+                if llm_backend == "openai_agents_sdk":
+                    output_tokens = int(response_diag.get("output_tokens", 0) or 0)
+                    reasoning_only_turn = bool(response_diag.get("reasoning_only_turn", False))
+                    retry_attempted = bool(
+                        response_diag.get(
+                            "retry_attempted",
+                            response_diag.get("sdk_local_no_tool_retry_attempted", False),
+                        )
+                    )
+                    retry_succeeded = bool(
+                        response_diag.get(
+                            "retry_succeeded",
+                            response_diag.get("sdk_local_no_tool_retry_succeeded", False),
+                        )
+                    )
+                    if reasoning_only_turn:
+                        metrics["sdk_reasoning_only_turns"] = int(metrics.get("sdk_reasoning_only_turns", 0) or 0) + 1
+                        metrics["sdk_reasoning_only_output_tokens"] = int(
+                            metrics.get("sdk_reasoning_only_output_tokens", 0) or 0
+                        ) + output_tokens
+                    if retry_attempted:
+                        metrics["sdk_no_tool_retry_attempted"] = int(
+                            metrics.get("sdk_no_tool_retry_attempted", 0) or 0
+                        ) + 1
+                    if retry_succeeded:
+                        metrics["sdk_no_tool_retry_succeeded"] = int(
+                            metrics.get("sdk_no_tool_retry_succeeded", 0) or 0
+                        ) + 1
         messages.append({"role": "assistant", "content": assistant_blocks})
         tool_results: list[dict[str, Any]] = []
         retry_same_step = False
