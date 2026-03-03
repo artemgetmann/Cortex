@@ -79,6 +79,11 @@ from tracks.cli_sqlite.learning_cli import (
     store_lessons,
 )
 from tracks.cli_sqlite.memory_cli import ensure_session, read_events, write_event, write_metrics
+from tracks.cli_sqlite.no_tool_call_policy import (
+    build_no_tool_recovery_prompt,
+    record_no_tool_call_event,
+    should_inject_no_tool_recovery_prompt,
+)
 from tracks.cli_sqlite.openai_transport import (
     OpenAICompatClient as _OpenAICompatClient,
 )
@@ -4532,30 +4537,16 @@ def _run_cli_agent_impl(
             tool_results.append(_tool_result_block(tool_use_id, result))
 
         if not tool_results:
-            metrics["no_tool_call_steps"] = int(metrics.get("no_tool_call_steps", 0) or 0) + 1
-            no_tool_by_backend = dict(metrics.get("no_tool_call_steps_by_backend", {}) or {})
-            backend_key = str(llm_backend or "unknown").strip() or "unknown"
-            no_tool_by_backend[backend_key] = int(no_tool_by_backend.get(backend_key, 0) or 0) + 1
-            metrics["no_tool_call_steps_by_backend"] = no_tool_by_backend
-            # Emit deterministic event so failed runs expose "text-only stop"
-            # without requiring prompt/trace reconstruction.
+            # Centralized no-tool accounting keeps backend behavior stable and
+            # unit-testable when transport logic changes (OpenAI vs SDK).
             write_event(
                 paths.events_path,
-                {
-                    "step": step,
-                    "tool": "model_no_tool_call",
-                    "tool_input": {
-                        "backend": backend_key,
-                        "response_diag": (
-                            dict(metrics.get("last_model_response_diag", {}) or {})
-                            if isinstance(metrics.get("last_model_response_diag"), dict)
-                            else {}
-                        ),
-                    },
-                    "ok": False,
-                    "error": "no_tool_call",
-                    "output": "",
-                },
+                record_no_tool_call_event(
+                    metrics=metrics,
+                    llm_backend=llm_backend,
+                    last_model_response_diag=metrics.get("last_model_response_diag"),
+                    step=step,
+                ),
             )
             if contract_retry_post_validation_pending:
                 _run_contract_postretry_validator(
@@ -4564,17 +4555,18 @@ def _run_cli_agent_impl(
                 )
             if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
                 continue
-            if step < max_steps and no_tool_recovery_prompts_used < MAX_NO_TOOL_RECOVERY_PROMPTS:
+            if should_inject_no_tool_recovery_prompt(
+                step=step,
+                max_steps=max_steps,
+                used_prompts=no_tool_recovery_prompts_used,
+                max_prompts=MAX_NO_TOOL_RECOVERY_PROMPTS,
+            ):
                 # Deterministic recovery path for text-only/empty model turns.
                 # This is domain-agnostic: require exactly one executable tool
                 # call so the loop can continue collecting real feedback.
                 no_tool_recovery_prompts_used += 1
                 metrics["no_tool_recovery_prompts"] = int(metrics.get("no_tool_recovery_prompts", 0) or 0) + 1
-                recovery_text = (
-                    "No tool call was emitted. Do not stop. "
-                    f"Call exactly one tool now (`{executor_tool_name}` or a required helper tool) "
-                    "and continue execution."
-                )
+                recovery_text = build_no_tool_recovery_prompt(executor_tool_name=executor_tool_name)
                 messages.append({"role": "user", "content": [{"type": "text", "text": recovery_text}]})
                 if verbose:
                     print(

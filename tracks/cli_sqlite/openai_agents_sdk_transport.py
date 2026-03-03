@@ -64,6 +64,9 @@ class _RunnerTurnResult:
     callback_invocations: list[dict[str, Any]]
     continuation_input_items: list[dict[str, Any]]
     source_message_count: int
+    tools_present: bool
+    tool_choice_requested: str
+    tool_choice_effective: str
 
 
 def _load_openai_agents_sdk() -> tuple[Any, Any, Any, Any, Any, Any, Any]:
@@ -408,6 +411,58 @@ def _response_output_items_to_assistant_blocks(
     return assistant_blocks
 
 
+def _callback_invocations_to_assistant_blocks(
+    *,
+    callback_invocations: list[dict[str, Any]],
+    allowed_tool_names: set[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Bridge SDK callback traces into Anthropic-style tool_use blocks.
+
+    Why this exists:
+    - Some SDK turns can invoke tool callbacks while raw output items are
+      reasoning-only (no function_call item exposed in the final payload).
+    - The Cortex runtime expects explicit tool_use blocks. Without this bridge,
+      those turns look like text-only stalls.
+    """
+    bridged_blocks: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    seen_call_ids: set[str] = set()
+    for idx, row in enumerate(callback_invocations):
+        if not isinstance(row, dict):
+            continue
+        tool_name = str(row.get("tool_name", "")).strip()
+        if not tool_name or tool_name not in allowed_tool_names:
+            continue
+        parsed_input = row.get("parsed_input")
+        parse_warning = str(row.get("parse_warning", "")).strip()
+        if not isinstance(parsed_input, dict):
+            parsed_input, parse_warning_retry = _decode_tool_arguments(
+                row.get("raw_arguments", "{}"),
+                tool_name=tool_name,
+            )
+            if parse_warning_retry:
+                parse_warning = parse_warning_retry
+        if parse_warning:
+            warnings.append(parse_warning)
+        if not isinstance(parsed_input, dict):
+            # Keep going so one malformed callback does not hide valid ones.
+            continue
+        call_id = str(row.get("tool_call_id", "")).strip() or f"toolu_openai_sdk_cb_{uuid.uuid4().hex[:12]}_{idx}"
+        if call_id in seen_call_ids:
+            continue
+        seen_call_ids.add(call_id)
+        bridged_blocks.append(
+            {
+                "type": "tool_use",
+                "id": call_id,
+                "name": tool_name,
+                "input": parsed_input,
+            }
+        )
+    return bridged_blocks, warnings
+
+
 def _coerce_usage_payload(*, usage: Any, model: str, response_id: str, request_id: str) -> dict[str, Any]:
     return {
         "backend": "openai_agents_sdk",
@@ -546,12 +601,14 @@ def _run_runner_turn_via_openai_agents_sdk(
         )
         tools_present = bool(sdk_tools)
         tool_choice_policy = _tool_choice_policy(execution_context=execution_context)
+        tool_choice_effective = "none"
         model_settings_kwargs: dict[str, Any] = {
             "max_tokens": max(0, int(max_tokens)),
             "parallel_tool_calls": False,
         }
         if tools_present and tool_choice_policy in {"auto", "required"}:
             model_settings_kwargs["tool_choice"] = tool_choice_policy
+            tool_choice_effective = tool_choice_policy
         if temperature is not None and _should_send_temperature(model=model):
             model_settings_kwargs["temperature"] = float(temperature)
         try:
@@ -559,6 +616,8 @@ def _run_runner_turn_via_openai_agents_sdk(
         except TypeError:
             # Backward-compatible fallback for SDK versions without `tool_choice`.
             model_settings_kwargs.pop("tool_choice", None)
+            if tools_present and tool_choice_policy in {"auto", "required"}:
+                tool_choice_effective = "unsupported_by_sdk"
             model_settings = model_settings_cls(**model_settings_kwargs)
 
         system_instructions = _extract_system_prompt_text(system_prompt)
@@ -583,9 +642,9 @@ def _run_runner_turn_via_openai_agents_sdk(
             max_turns=1,
             run_config=run_config,
             previous_response_id=previous_response_id,
-        )
+        ), tools_present, tool_choice_policy, tool_choice_effective
 
-    run_result = _run_async(_do_call())
+    run_result, tools_present, tool_choice_requested, tool_choice_effective = _run_async(_do_call())
     raw_responses = list(getattr(run_result, "raw_responses", []) or [])
     if not raw_responses:
         raise RuntimeError("OpenAI Agents SDK runner returned no raw responses.")
@@ -618,6 +677,9 @@ def _run_runner_turn_via_openai_agents_sdk(
         callback_invocations=_clone_input_items(callback_invocations),
         continuation_input_items=to_input_items,
         source_message_count=source_message_count,
+        tools_present=bool(tools_present),
+        tool_choice_requested=str(tool_choice_requested or ""),
+        tool_choice_effective=str(tool_choice_effective or ""),
     )
 
 
@@ -653,6 +715,21 @@ def create_executor_response_via_openai_agents_sdk(
         output_items=output_items,
         allowed_tool_names=allowed_tool_names,
     )
+    has_tool_use = any(
+        isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+        for block in assistant_blocks
+    )
+    callback_bridge_used = False
+    if not has_tool_use and turn_result.callback_invocations:
+        bridged_blocks, bridge_warnings = _callback_invocations_to_assistant_blocks(
+            callback_invocations=turn_result.callback_invocations,
+            allowed_tool_names=allowed_tool_names,
+        )
+        if bridge_warnings:
+            assistant_blocks.insert(0, {"type": "text", "text": "\n".join(bridge_warnings)})
+        if bridged_blocks:
+            callback_bridge_used = True
+            assistant_blocks.extend(bridged_blocks)
 
     if execution_state is not None:
         execution_state.turns = int(execution_state.turns) + 1
@@ -681,6 +758,17 @@ def create_executor_response_via_openai_agents_sdk(
                     if isinstance(row, dict)
                 }
                 - {""}
+            ),
+            "sdk_tools_present": bool(turn_result.tools_present),
+            "sdk_tool_choice_requested": str(turn_result.tool_choice_requested or ""),
+            "sdk_tool_choice_effective": str(turn_result.tool_choice_effective or ""),
+            "sdk_callback_bridge_used": bool(callback_bridge_used),
+            "sdk_callback_bridge_tool_count": int(
+                sum(
+                    1
+                    for block in assistant_blocks
+                    if isinstance(block, dict) and str(block.get("type", "")).strip().lower() == "tool_use"
+                )
             ),
         }
     )

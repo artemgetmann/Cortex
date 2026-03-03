@@ -47,6 +47,9 @@ def test_executor_transport_parses_text_and_function_calls(monkeypatch) -> None:
             callback_invocations=[{"tool_name": "run_bash", "tool_call_id": "call_1"}],
             continuation_input_items=[{"role": "user", "content": [{"type": "input_text", "text": "cont"}]}],
             source_message_count=3,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
         )
 
     monkeypatch.setattr(
@@ -77,6 +80,9 @@ def test_executor_transport_parses_text_and_function_calls(monkeypatch) -> None:
     assert usage["continuity_mode"] == "delta_since_previous_response"
     assert usage["previous_response_id_sent"] == "resp_prev"
     assert usage["sdk_callback_invocation_count"] == 1
+    assert usage["sdk_tool_choice_requested"] == "required"
+    assert usage["sdk_tool_choice_effective"] == "required"
+    assert usage["sdk_callback_bridge_used"] is False
     assert usage["sdk_state_turns"] == 2
     assert usage["previous_response_id_next"] == "resp_sdk_2"
 
@@ -106,6 +112,9 @@ def test_executor_transport_emits_parse_warning_on_bad_arguments(monkeypatch) ->
             callback_invocations=[],
             continuation_input_items=[],
             source_message_count=0,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
         )
 
     monkeypatch.setattr(
@@ -126,6 +135,60 @@ def test_executor_transport_emits_parse_warning_on_bad_arguments(monkeypatch) ->
     assert blocks[0]["type"] == "text"
     assert "openai_agents_sdk_tool_parse_error" in blocks[0]["text"]
     assert usage["backend"] == "openai_agents_sdk"
+
+
+def test_executor_transport_bridges_callback_only_turn_into_tool_use(monkeypatch) -> None:
+    def _fake_runner_turn(**_: Any) -> openai_agents_sdk_transport._RunnerTurnResult:
+        return openai_agents_sdk_transport._RunnerTurnResult(
+            output_items=[
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                }
+            ],
+            usage=_FakeUsage(),
+            response_id="resp_sdk_bridge",
+            request_id="req_sdk_bridge",
+            previous_response_id_sent="",
+            continuity_mode="full_history",
+            input_item_count=1,
+            full_input_item_count=1,
+            callback_invocations=[
+                {
+                    "tool_name": "run_bash",
+                    "tool_call_id": "call_bridge_1",
+                    "raw_arguments": "{\"command\": \"echo bridged\"}",
+                    "parsed_input": {"command": "echo bridged"},
+                }
+            ],
+            continuation_input_items=[],
+            source_message_count=1,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
+        )
+
+    monkeypatch.setattr(
+        openai_agents_sdk_transport,
+        "_run_runner_turn_via_openai_agents_sdk",
+        _fake_runner_turn,
+    )
+
+    blocks, usage = openai_agents_sdk_transport.create_executor_response_via_openai_agents_sdk(
+        api_key="test",
+        model="gpt-5-nano",
+        system_prompt="system",
+        tools=[{"name": "run_bash", "description": "run bash", "input_schema": {"type": "object"}}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "do it"}]}],
+    )
+
+    assert any(block["type"] == "tool_use" for block in blocks)
+    tool_use = next(block for block in blocks if block["type"] == "tool_use")
+    assert tool_use["name"] == "run_bash"
+    assert tool_use["id"] == "call_bridge_1"
+    assert tool_use["input"]["command"] == "echo bridged"
+    assert usage["sdk_callback_bridge_used"] is True
+    assert usage["sdk_callback_bridge_tool_count"] >= 1
 
 
 def test_build_agents_function_tools_captures_deferred_callback_output() -> None:
