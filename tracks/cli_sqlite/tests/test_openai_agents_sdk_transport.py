@@ -347,6 +347,55 @@ def test_executor_transport_sets_reasoning_only_diag_when_no_tool_and_retry_disa
     assert usage["sdk_no_tool_reason_effective"] == "reasoning_only_no_callbacks"
 
 
+def test_executor_transport_resets_continuity_on_reasoning_only_no_tool(monkeypatch) -> None:
+    monkeypatch.setenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "0")
+    state = openai_agents_sdk_transport.OpenAIAgentsSDKExecutionState(
+        previous_response_id="resp_prev_chain",
+        last_source_message_count=1,
+        continuation_input_items=[{"role": "user", "content": [{"type": "input_text", "text": "carry"}]}],
+        turns=1,
+    )
+
+    def _fake_runner_turn(**_: Any) -> openai_agents_sdk_transport._RunnerTurnResult:
+        return openai_agents_sdk_transport._RunnerTurnResult(
+            output_items=[{"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}]}],
+            usage=_FakeUsage(),
+            response_id="resp_sdk_reasoning_no_tool",
+            request_id="req_sdk_reasoning_no_tool",
+            previous_response_id_sent="resp_prev_chain",
+            continuity_mode="delta_since_previous_response",
+            input_item_count=1,
+            full_input_item_count=2,
+            callback_invocations=[],
+            continuation_input_items=[{"role": "assistant", "content": [{"type": "output_text", "text": "x"}]}],
+            source_message_count=2,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
+        )
+
+    monkeypatch.setattr(
+        openai_agents_sdk_transport,
+        "_run_runner_turn_via_openai_agents_sdk",
+        _fake_runner_turn,
+    )
+
+    blocks, usage = openai_agents_sdk_transport.create_executor_response_via_openai_agents_sdk(
+        api_key="test",
+        model="gpt-5-nano",
+        system_prompt="system",
+        tools=[{"name": "run_bash", "description": "run bash", "input_schema": {"type": "object"}}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "do it"}]}],
+        execution_state=state,
+    )
+
+    assert blocks == []
+    assert usage["sdk_no_tool_reason_effective"] == "reasoning_only_no_callbacks"
+    assert usage["sdk_continuity_reset_due_effective_no_tool"] is True
+    assert state.previous_response_id is None
+    assert state.continuation_input_items == []
+
+
 def test_executor_transport_resets_continuity_on_unusable_function_call(monkeypatch) -> None:
     monkeypatch.setenv("CORTEX_OPENAI_AGENTS_SDK_LOCAL_NO_TOOL_RETRY", "0")
     state = openai_agents_sdk_transport.OpenAIAgentsSDKExecutionState(
@@ -473,6 +522,58 @@ def test_executor_transport_sets_retry_flags_when_local_retry_recovers_tool_call
     assert usage["reasoning_only_turn"] is False
     assert usage["retry_attempted"] is True
     assert usage["retry_succeeded"] is True
+
+
+def test_executor_transport_bridge_warns_and_skips_callback_without_call_id(monkeypatch) -> None:
+    def _fake_runner_turn(**_: Any) -> openai_agents_sdk_transport._RunnerTurnResult:
+        return openai_agents_sdk_transport._RunnerTurnResult(
+            output_items=[
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                }
+            ],
+            usage=_FakeUsage(),
+            response_id="resp_sdk_bridge_missing_call_id",
+            request_id="req_sdk_bridge_missing_call_id",
+            previous_response_id_sent="",
+            continuity_mode="full_history",
+            input_item_count=1,
+            full_input_item_count=1,
+            callback_invocations=[
+                {
+                    "tool_name": "run_bash",
+                    "raw_arguments": "{\"command\": \"echo bridged\"}",
+                    "parsed_input": {"command": "echo bridged"},
+                }
+            ],
+            continuation_input_items=[],
+            source_message_count=1,
+            tools_present=True,
+            tool_choice_requested="required",
+            tool_choice_effective="required",
+        )
+
+    monkeypatch.setattr(
+        openai_agents_sdk_transport,
+        "_run_runner_turn_via_openai_agents_sdk",
+        _fake_runner_turn,
+    )
+
+    blocks, _ = openai_agents_sdk_transport.create_executor_response_via_openai_agents_sdk(
+        api_key="test",
+        model="gpt-5-nano",
+        system_prompt="system",
+        tools=[{"name": "run_bash", "description": "run bash", "input_schema": {"type": "object"}}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "do it"}]}],
+    )
+
+    assert not any(block["type"] == "tool_use" for block in blocks)
+    assert any(
+        block["type"] == "text"
+        and "openai_agents_sdk_callback_missing_call_id:run_bash:0" in block["text"]
+        for block in blocks
+    )
 
 
 def test_compat_messages_api_returns_text_block(monkeypatch) -> None:

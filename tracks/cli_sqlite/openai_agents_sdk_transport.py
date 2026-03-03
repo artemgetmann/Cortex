@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -468,7 +467,12 @@ def _callback_invocations_to_assistant_blocks(
         if not isinstance(parsed_input, dict):
             # Keep going so one malformed callback does not hide valid ones.
             continue
-        call_id = str(row.get("tool_call_id", "")).strip() or f"toolu_openai_sdk_cb_{uuid.uuid4().hex[:12]}_{idx}"
+        # Do not fabricate callback call-ids. Runtime continuity relies on
+        # stable tool_call_id linkage; synthetic IDs can poison the chain.
+        call_id = str(row.get("tool_call_id", "")).strip()
+        if not call_id:
+            warnings.append(f"openai_agents_sdk_callback_missing_call_id:{tool_name}:{idx}")
+            continue
         if call_id in seen_call_ids:
             continue
         seen_call_ids.add(call_id)
@@ -830,6 +834,11 @@ def create_executor_response_via_openai_agents_sdk(
         and int(effective_output_diag.get("function_call_count", 0) or 0) > 0
         and (not effective_has_tool_use)
     )
+    continuity_reset_due_effective_no_tool = (
+        bool(execution_context)
+        and bool(turn_result.tools_present)
+        and (not effective_has_tool_use)
+    )
 
     if execution_state is not None:
         execution_state.turns = int(execution_state.turns) + 1
@@ -841,7 +850,7 @@ def create_executor_response_via_openai_agents_sdk(
         #
         # Resetting continuation state here forces a fresh full-history turn,
         # avoiding a broken response-chain carry-over.
-        if continuity_reset_due_unconsumed_function_call:
+        if continuity_reset_due_effective_no_tool:
             execution_state.continuation_input_items = []
             execution_state.previous_response_id = None
         else:
@@ -925,6 +934,9 @@ def create_executor_response_via_openai_agents_sdk(
             "sdk_output_item_count_effective": int(output_item_count),
             "sdk_continuity_reset_due_unconsumed_function_call": bool(
                 continuity_reset_due_unconsumed_function_call
+            ),
+            "sdk_continuity_reset_due_effective_no_tool": bool(
+                continuity_reset_due_effective_no_tool
             ),
             # Canonical SDK diagnostics consumed by runtime event/metrics logic.
             "reasoning_only_turn": bool(effective_reasoning_only_turn),

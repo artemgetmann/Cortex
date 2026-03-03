@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from tracks.cli_sqlite import agent_cli as _agent_cli
+from tracks.cli_sqlite.agent_runtime_contract_gap import (
+    ContractGapRetryState,
+    maybe_inject_contract_gap_retry,
+    run_contract_postretry_validator,
+)
 
 _RUNTIME_LOOP_IMPL_LOCAL_SYMBOLS = {
     "_agent_cli",
@@ -550,13 +555,7 @@ def _run_cli_agent_impl_extracted(
     reflection_pending: str | None = None
     reflection_threshold_triggered = False
     reflection_fingerprints: set[str] = set()
-    contract_gap_retries_used = 0
-    contract_gap_prestop_artifacts: list[str] = []
-    latest_unresolved_gaps: list[dict[str, Any]] = []
-    contract_retry_validator_sql = ""
-    contract_retry_validator_query_ids: list[str] = []
-    contract_retry_post_validation_pending = False
-    contract_retry_repair_observed = False
+    contract_gap_state = ContractGapRetryState()
     no_tool_recovery_prompts_used = 0
     dependency_setup_retries: Counter[str] = Counter()
     dependency_setup_reflections: set[str] = set()
@@ -582,358 +581,63 @@ def _run_cli_agent_impl_extracted(
     judge_input_bundle: dict[str, Any] | None = None
     judge_payload_bundle: dict[str, Any] | None = None
 
+    # Contract-gap retry logic was extracted into a dedicated module to keep
+    # this runtime loop focused on orchestration.
     def _maybe_inject_contract_gap_retry(*, current_step: int, trigger: str) -> bool:
-        nonlocal contract_gap_retries_used, latest_unresolved_gaps
-        nonlocal contract_retry_validator_sql, contract_retry_validator_query_ids
-        nonlocal contract_retry_post_validation_pending, contract_retry_repair_observed
-        if (
-            not has_contract
-            or not bool(contract_gap_retry)
-            or contract_gap_retries_used >= int(contract_gap_retry_steps)
-        ):
-            return False
-
-        # Evaluate unresolved contract gaps from actual run artifacts and use
-        # the deterministic result to drive one targeted retry prompt.
-        prestop_events = _canonicalize_hotfix_transfer_eval_events(
-            events=read_events(paths.events_path),
-            workspace=workspace,
+        return maybe_inject_contract_gap_retry(
+            state=contract_gap_state,
+            current_step=current_step,
+            trigger=trigger,
+            has_contract=has_contract,
+            contract_gap_retry=bool(contract_gap_retry),
+            contract_gap_retry_steps=int(contract_gap_retry_steps),
+            contract_gap_deterministic_recipes=bool(contract_gap_deterministic_recipes),
+            task_text=task_text,
             task_id=task_id,
-        )
-        prestop_eval = evaluate_cli_session(
-            task=task_text,
-            task_id=task_id,
-            events=prestop_events,
-            db_path=workspace.work_dir / "task.db",
-            tasks_root=TASKS_ROOT,
-        ).to_dict()
-        unresolved_gaps = unresolved_contract_gaps(prestop_eval)
-        validator_evidence: list[str] = []
-
-        closure_check = _run_shell_hotfix_transfer_closure_check(
-            workspace=workspace,
-            task_id=task_id,
-        )
-        if bool(closure_check.get("applicable", False)):
-            metrics["contract_closure_checks"] = int(metrics.get("contract_closure_checks", 0) or 0) + 1
-            closure_missing = closure_check.get("missing_gaps", [])
-            if isinstance(closure_missing, list) and closure_missing:
-                metrics["contract_closure_check_failures"] = (
-                    int(metrics.get("contract_closure_check_failures", 0) or 0) + 1
-                )
-                existing_signatures = {
-                    str(row.get("gap_signature", "")).strip()
-                    for row in unresolved_gaps
-                    if isinstance(row, dict)
-                }
-                for row in closure_missing:
-                    if not isinstance(row, dict):
-                        continue
-                    signature = str(row.get("gap_signature", "")).strip()
-                    if signature and signature not in existing_signatures:
-                        unresolved_gaps.append(row)
-                        existing_signatures.add(signature)
-            last_missing = [
-                str(row.get("detail", "")).strip()
-                for row in (closure_missing if isinstance(closure_missing, list) else [])
-                if isinstance(row, dict) and str(row.get("detail", "")).strip()
-            ]
-            metrics["contract_closure_check_last_missing"] = last_missing
-            metrics["contract_closure_check_last_status"] = (
-                "pass" if bool(closure_check.get("passed", False)) else "fail"
-            )
-            evidence_rows = closure_check.get("evidence", [])
-            if isinstance(evidence_rows, list):
-                validator_evidence.extend(
-                    [str(row).strip() for row in evidence_rows if str(row).strip()]
-                )
-            write_event(
-                paths.events_path,
-                {
-                    "step": current_step,
-                    "tool": "contract_closure_check",
-                    "tool_input": {
-                        "task_id": task_id,
-                        "attempt": contract_gap_retries_used + 1,
-                    },
-                    "ok": bool(closure_check.get("passed", False)),
-                    "error": None if bool(closure_check.get("passed", False)) else "closure_gaps_detected",
-                    "output": json.dumps(closure_check, ensure_ascii=True),
-                },
-            )
-
-        latest_unresolved_gaps = unresolved_gaps
-        # Prioritize query-mismatch gaps before pattern-only gaps so retry
-        # prompts and deterministic recipes focus on state-correction first.
-        gap_priority = {
-            "required_query_mismatch": 0,
-            "missing_required_pattern": 1,
-            "too_many_errors": 2,
-            "matched_forbidden_pattern": 3,
-        }
-        unresolved_gaps = sorted(
-            unresolved_gaps,
-            key=lambda row: (
-                int(gap_priority.get(str(row.get("reason_code", "")).strip(), 9)),
-                str(row.get("gap_type", "")).strip(),
-                str(row.get("detail", "")).strip(),
-            ),
-        )
-        latest_unresolved_gaps = unresolved_gaps
-        metrics["contract_gap_unresolved_count_prestop"] = int(len(unresolved_gaps))
-        prestop_artifact_path = paths.session_dir / f"contract_gap_prestop_attempt_{contract_gap_retries_used + 1}.json"
-        prestop_artifact_path.write_text(
-            json.dumps(
-                {
-                    "step": current_step,
-                    "attempt": contract_gap_retries_used + 1,
-                    "trigger": trigger,
-                    "eval_result": prestop_eval,
-                    "closure_check": closure_check,
-                    "unresolved_gaps": unresolved_gaps,
-                },
-                ensure_ascii=True,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        contract_gap_prestop_artifacts.append(str(prestop_artifact_path))
-        if not unresolved_gaps:
-            return False
-
-        metrics["contract_gap_retry_attempts"] = int(metrics.get("contract_gap_retry_attempts", 0) or 0) + 1
-        metrics["contract_gap_retry_triggered"] = int(metrics.get("contract_gap_retry_triggered", 0) or 0) + 1
-        contract_gap_retries_used += 1
-        gap_query = " | ".join(
-            f"{row.get('reason_code', '')}:{row.get('gap_type', '')}:{row.get('detail', '')}"
-            for row in unresolved_gaps[:4]
-        )
-        gap_tags = [
-            str(row.get("reason_code", "")).strip()
-            for row in unresolved_gaps
-            if str(row.get("reason_code", "")).strip()
-        ] + [
-            str(row.get("gap_type", "")).strip()
-            for row in unresolved_gaps
-            if str(row.get("gap_type", "")).strip()
-        ]
-        # Deterministic sqlite validator run (machine-executed) before retry.
-        # This provides concrete state evidence to the agent, not just prose.
-        contract_retry_validator_sql = ""
-        contract_retry_validator_query_ids = []
-        contract_retry_post_validation_pending = False
-        contract_retry_repair_observed = False
-        if domain == "sqlite":
-            required_queries = prestop_eval.get("evidence", {}).get("required_queries", [])
-            if isinstance(required_queries, list):
-                mismatched_queries = [
-                    row for row in required_queries
-                    if isinstance(row, dict) and not bool(row.get("matched", False))
-                ]
-                query_sqls = [
-                    str(row.get("sql", "")).strip()
-                    for row in mismatched_queries
-                    if str(row.get("sql", "")).strip()
-                ]
-                query_ids = [
-                    str(row.get("id", "")).strip()
-                    for row in mismatched_queries
-                    if str(row.get("id", "")).strip()
-                ]
-                if query_sqls:
-                    validator_sql = ";\n".join(query_sqls)
-                    if not validator_sql.endswith(";"):
-                        validator_sql += ";"
-                    contract_retry_validator_sql = validator_sql
-                    contract_retry_validator_query_ids = list(query_ids)
-                    contract_retry_post_validation_pending = True
-                    validator_result = adapter.execute(
-                        adapter.executor_tool_name,
-                        {"sql": validator_sql},
-                        workspace,
-                    )
-                    metrics["contract_validator_runs"] = int(metrics.get("contract_validator_runs", 0) or 0) + 1
-                    metrics["contract_validator_query_ids"] = query_ids
-                    metrics["contract_validator_last_status"] = "ok" if not validator_result.is_error() else "error"
-                    write_event(
-                        paths.events_path,
-                        {
-                            "step": current_step,
-                            "tool": "contract_validator",
-                            "tool_input": {"query_ids": query_ids, "sql": validator_sql},
-                            "ok": not validator_result.is_error(),
-                            "error": validator_result.error,
-                            "output": validator_result.output,
-                        },
-                    )
-                    if validator_result.output:
-                        validator_evidence.append(_clip_text(str(validator_result.output), max_chars=900))
-                    if validator_result.error:
-                        validator_evidence.append(f"validator_error={_clip_text(str(validator_result.error), max_chars=400)}")
-
-        gap_cap = _adaptive_gap_lesson_cap(unresolved_gaps=unresolved_gaps, min_cap=1, max_cap=3)
-        gap_matches, _ = retrieve_on_error(
-            path=LESSONS_V2_PATH,
-            error_text=gap_query,
-            fingerprint="",
             domain=domain,
-            task_id=task_id,
-            query_tags=gap_tags,
-            max_results=8,
-            include_domainless=False,
-            enable_transfer=enable_transfer_retrieval,
-            transfer_policy=transfer_retrieval_policy,
-            transfer_max_results=transfer_retrieval_max_results,
-            transfer_score_weight=transfer_retrieval_score_weight,
-            unresolved_gaps=unresolved_gaps,
-            candidate_policy=runtime_candidate_policy_effective,
-            strict_gap_signature_match=bool(structured_lessons_required),
-            enforce_executable_schema=bool(structured_lessons_required),
-            rejection_counters=metrics["v2_schema_rejection_counts"],
+            benchmark_placebo=bool(benchmark_placebo),
+            structured_lessons_required=bool(structured_lessons_required),
+            enable_transfer_retrieval=enable_transfer_retrieval,
+            transfer_retrieval_policy=transfer_retrieval_policy,
+            transfer_retrieval_max_results=transfer_retrieval_max_results,
+            transfer_retrieval_score_weight=transfer_retrieval_score_weight,
+            runtime_candidate_policy_effective=runtime_candidate_policy_effective,
+            lessons_v2_path=LESSONS_V2_PATH,
+            tasks_root=TASKS_ROOT,
+            adapter=adapter,
+            workspace=workspace,
+            paths=paths,
+            metrics=metrics,
+            messages=messages,
+            lesson_activation_records=lesson_activation_records,
+            on_lifecycle_event=on_lifecycle_event,
+            verbose=verbose,
+            canonicalize_hotfix_transfer_eval_events_fn=_canonicalize_hotfix_transfer_eval_events,
+            read_events_fn=read_events,
+            evaluate_cli_session_fn=evaluate_cli_session,
+            unresolved_contract_gaps_fn=unresolved_contract_gaps,
+            run_shell_hotfix_transfer_closure_check_fn=_run_shell_hotfix_transfer_closure_check,
+            write_event_fn=write_event,
+            clip_text_fn=lambda text: _clip_text(text, max_chars=900),
+            adaptive_gap_lesson_cap_fn=_adaptive_gap_lesson_cap,
+            retrieve_on_error_fn=retrieve_on_error,
+            select_gap_targeted_matches_fn=_select_gap_targeted_matches,
+            placebo_hint_for_lesson_fn=_placebo_hint_for_lesson,
+            deterministic_gap_fix_recipes_fn=_deterministic_gap_fix_recipes,
+            format_contract_gap_retry_prompt_fn=_format_contract_gap_retry_prompt,
         )
-        gap_matches = _select_gap_targeted_matches(
-            matches=gap_matches,
-            unresolved_gaps=unresolved_gaps,
-            max_lessons=gap_cap,
-            min_score=0.30,
-        )
-        metrics["contract_gap_adaptive_lesson_cap"] = int(gap_cap)
-        metrics["contract_gap_lessons_selected"] = int(len(gap_matches))
-        gap_hints: list[str] = []
-        for match in gap_matches:
-            lesson = getattr(match, "lesson", None)
-            if lesson is None:
-                continue
-            lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
-            hint_text = (
-                _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
-                if benchmark_placebo
-                else str(getattr(lesson, "rule_text", "")).strip()
-            )
-            if hint_text:
-                gap_hints.append(hint_text)
-        deterministic_gap_hints = (
-            _deterministic_gap_fix_recipes(
-                adapter=adapter,
-                domain=domain,
-                task_id=task_id,
-                unresolved_gaps=unresolved_gaps,
-                max_items=3,
-            )
-            if bool(contract_gap_deterministic_recipes)
-            else []
-        )
-        metrics["contract_gap_deterministic_hint_count"] = len(deterministic_gap_hints)
-        if gap_matches:
-            gap_lanes: dict[str, str] = {}
-            for match in gap_matches:
-                lesson_id = str(getattr(match.lesson, "lesson_id", "")).strip()
-                if not lesson_id:
-                    continue
-                lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
-                gap_lanes[lesson_id] = lane
-                if lane == "transfer":
-                    metrics["v2_transfer_lane_activations"] += 1
-            # Record contract-gap retrieval activations so mechanism metrics
-            # reflect both on-error injection and deterministic retry guidance.
-            gap_fingerprint = "contract_gap:" + "|".join(
-                str(row.get("gap_signature", "")).strip()
-                for row in unresolved_gaps[:3]
-                if str(row.get("gap_signature", "")).strip()
-            )
-            lesson_activation_records.append(
-                {
-                    "step": current_step,
-                    "fingerprint": gap_fingerprint,
-                    "trigger": "contract_gap_retry",
-                    "lesson_ids": list(gap_lanes.keys()),
-                    "lesson_lanes": gap_lanes,
-                    "placebo_applied": bool(benchmark_placebo),
-                }
-            )
-            metrics["lesson_activations"] += len(gap_lanes)
-            metrics["v2_lesson_activations"] += len(gap_lanes)
-            if benchmark_placebo:
-                metrics["v2_lesson_activations_placebo"] += len(gap_lanes)
-            else:
-                metrics["v2_lesson_activations_effective"] += len(gap_lanes)
-        retry_prompt = _format_contract_gap_retry_prompt(
-            unresolved_gaps=unresolved_gaps,
-            deterministic_recipes=deterministic_gap_hints,
-            injected_hints=gap_hints,
-            validator_evidence=validator_evidence,
-        )
-        messages.append({"role": "user", "content": [{"type": "text", "text": retry_prompt}]})
-        write_event(
-            paths.events_path,
-            {
-                "step": current_step,
-                "tool": "contract_gap_retry",
-                "tool_input": {
-                    "attempt": contract_gap_retries_used,
-                    "trigger": trigger,
-                    "unresolved_gaps": unresolved_gaps,
-                },
-                "ok": True,
-                "error": None,
-                "output": "retry_prompt_injected",
-            },
-        )
-        if on_lifecycle_event is not None:
-            try:
-                on_lifecycle_event(
-                    "contract_gap_retry",
-                    {
-                        "step": current_step,
-                        "trigger": trigger,
-                    },
-                )
-            except Exception:
-                pass
-        if verbose:
-            print(
-                (
-                    f"[step {current_step:03d}] contract gaps detected ({len(unresolved_gaps)}), "
-                    f"trigger={trigger}; injecting one retry."
-                ),
-                flush=True,
-            )
-        return True
 
     def _run_contract_postretry_validator(*, current_step: int, trigger: str) -> None:
-        nonlocal contract_retry_post_validation_pending
-        if not contract_retry_post_validation_pending:
-            return
-        validator_sql = str(contract_retry_validator_sql or "").strip()
-        if not validator_sql:
-            contract_retry_post_validation_pending = False
-            return
-        validator_result = adapter.execute(
-            adapter.executor_tool_name,
-            {"sql": validator_sql},
-            workspace,
+        run_contract_postretry_validator(
+            state=contract_gap_state,
+            current_step=current_step,
+            trigger=trigger,
+            adapter=adapter,
+            workspace=workspace,
+            paths=paths,
+            metrics=metrics,
+            write_event_fn=write_event,
         )
-        metrics["contract_validator_postretry_runs"] = int(metrics.get("contract_validator_postretry_runs", 0) or 0) + 1
-        metrics["contract_validator_postretry_last_status"] = "ok" if not validator_result.is_error() else "error"
-        metrics["contract_validator_postretry_last_trigger"] = str(trigger)
-        metrics["contract_retry_repair_observed"] = bool(contract_retry_repair_observed)
-        write_event(
-            paths.events_path,
-            {
-                "step": current_step,
-                "tool": "contract_validator_postretry",
-                "tool_input": {
-                    "query_ids": list(contract_retry_validator_query_ids),
-                    "sql": validator_sql,
-                    "trigger": trigger,
-                    "repair_observed": bool(contract_retry_repair_observed),
-                },
-                "ok": not validator_result.is_error(),
-                "error": validator_result.error,
-                "output": validator_result.output,
-            },
-        )
-        contract_retry_post_validation_pending = False
 
     step = 1
     validation_retries_this_step = 0
@@ -1135,8 +839,8 @@ def _run_cli_agent_impl_extracted(
                     result = adapter.execute(canonical_name, tool_input, workspace)
                     if not result.is_error():
                         result = ToolResult(output=_clip_text(result.output or "(ok)"))
-                    if contract_retry_post_validation_pending:
-                        contract_retry_repair_observed = True
+                    if contract_gap_state.contract_retry_post_validation_pending:
+                        contract_gap_state.contract_retry_repair_observed = True
                         repair_steps = list(metrics.get("contract_retry_repair_steps", []) or [])
                         repair_steps.append(int(step))
                         metrics["contract_retry_repair_steps"] = sorted(set(repair_steps))
@@ -1280,7 +984,7 @@ def _run_cli_agent_impl_extracted(
 
                 v2_hints: list[str] = []
                 on_error_cap = _adaptive_gap_lesson_cap(
-                    unresolved_gaps=latest_unresolved_gaps,
+                    unresolved_gaps=contract_gap_state.latest_unresolved_gaps,
                     min_cap=1,
                     max_cap=3,
                 )
@@ -1297,7 +1001,7 @@ def _run_cli_agent_impl_extracted(
                     transfer_policy=transfer_retrieval_policy,
                     transfer_max_results=transfer_retrieval_max_results,
                     transfer_score_weight=transfer_retrieval_score_weight,
-                    unresolved_gaps=latest_unresolved_gaps,
+                    unresolved_gaps=contract_gap_state.latest_unresolved_gaps,
                     candidate_policy=runtime_candidate_policy_effective,
                     strict_gap_signature_match=bool(structured_lessons_required),
                     enforce_executable_schema=bool(structured_lessons_required),
@@ -1305,7 +1009,7 @@ def _run_cli_agent_impl_extracted(
                 )
                 v2_matches = _select_gap_targeted_matches(
                     matches=v2_matches,
-                    unresolved_gaps=latest_unresolved_gaps,
+                    unresolved_gaps=contract_gap_state.latest_unresolved_gaps,
                     max_lessons=on_error_cap,
                     min_score=0.25,
                 )
@@ -1448,17 +1152,10 @@ def _run_cli_agent_impl_extracted(
                     step=step,
                 ),
             )
-            if contract_retry_post_validation_pending:
-                _run_contract_postretry_validator(
-                    current_step=step,
-                    trigger="no_tool_call",
-                )
-            if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
-                continue
             if llm_backend == "openai_agents_sdk" and sdk_execution_state is not None:
-                # SDK runner continuity can get stuck in repeated delta-mode
-                # reasoning turns after a no-tool response. Reset continuity
-                # cursor so the next step uses a fresh full-history turn.
+                # Reset continuity before any early-continue branch.
+                # Without this ordering, the contract-gap retry branch can skip
+                # the reset and leave the SDK stuck in delta-mode no-tool loops.
                 sdk_execution_state.previous_response_id = None
                 sdk_execution_state.last_source_message_count = 0
                 sdk_execution_state.continuation_input_items = []
@@ -1466,6 +1163,13 @@ def _run_cli_agent_impl_extracted(
                 reset_steps = list(metrics.get("sdk_no_tool_continuity_reset_steps", []) or [])
                 reset_steps.append(int(step))
                 metrics["sdk_no_tool_continuity_reset_steps"] = reset_steps
+            if contract_gap_state.contract_retry_post_validation_pending:
+                _run_contract_postretry_validator(
+                    current_step=step,
+                    trigger="no_tool_call",
+                )
+            if _maybe_inject_contract_gap_retry(current_step=step, trigger="no_tool_call"):
+                continue
             if should_inject_no_tool_recovery_prompt(
                 step=step,
                 max_steps=max_steps,
@@ -1506,7 +1210,7 @@ def _run_cli_agent_impl_extracted(
                 )
             continue
         if step >= max_steps:
-            if contract_retry_post_validation_pending:
+            if contract_gap_state.contract_retry_post_validation_pending:
                 _run_contract_postretry_validator(
                     current_step=step,
                     trigger="step_cap",
@@ -1521,7 +1225,7 @@ def _run_cli_agent_impl_extracted(
         validation_retries_this_step = 0
         validation_retry_capped_this_step = False
 
-    if contract_retry_post_validation_pending:
+    if contract_gap_state.contract_retry_post_validation_pending:
         _run_contract_postretry_validator(
             current_step=int(metrics.get("steps", step) or step),
             trigger="loop_exit",
@@ -1597,16 +1301,16 @@ def _run_cli_agent_impl_extracted(
     metrics["deterministic_probe_reasons"] = list(probe_result.reasons)
     metrics["deterministic_probe_evidence"] = dict(probe_result.evidence)
     final_unresolved_gaps = unresolved_contract_gaps(eval_result) if has_contract else []
-    latest_unresolved_gaps = final_unresolved_gaps
+    contract_gap_state.latest_unresolved_gaps = final_unresolved_gaps
     metrics["contract_gap_unresolved_count_final"] = int(len(final_unresolved_gaps))
-    if contract_gap_prestop_artifacts:
-        metrics["contract_gap_prestop_artifacts"] = list(contract_gap_prestop_artifacts)
-    if has_contract and bool(contract_gap_retry) and contract_gap_retries_used > 0:
+    if contract_gap_state.contract_gap_prestop_artifacts:
+        metrics["contract_gap_prestop_artifacts"] = list(contract_gap_state.contract_gap_prestop_artifacts)
+    if has_contract and bool(contract_gap_retry) and contract_gap_state.contract_gap_retries_used > 0:
         postretry_artifact_path = paths.session_dir / "contract_gap_postretry.json"
         postretry_artifact_path.write_text(
             json.dumps(
                 {
-                    "retry_attempts_used": contract_gap_retries_used,
+                    "retry_attempts_used": contract_gap_state.contract_gap_retries_used,
                     "eval_result": eval_result,
                     "unresolved_gaps": final_unresolved_gaps,
                 },
