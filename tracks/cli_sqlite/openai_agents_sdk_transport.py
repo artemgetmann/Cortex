@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from claude_print_runtime import clip_text, extract_first_json_object
@@ -12,6 +12,21 @@ from tracks.cli_sqlite.openai_transport import (
     _extract_system_prompt_text,
     anthropic_messages_to_openai_responses_input,
 )
+
+
+@dataclass
+class OpenAIAgentsSDKExecutionState:
+    """
+    Mutable per-run state for SDK runner continuity.
+
+    The CLI loop is still the source of truth for tool execution/memory writes.
+    We only keep the minimum state needed to continue runner turns efficiently.
+    """
+
+    previous_response_id: str | None = None
+    last_source_message_count: int = 0
+    continuation_input_items: list[dict[str, Any]] = field(default_factory=list)
+    turns: int = 0
 
 
 @dataclass(frozen=True)
@@ -36,14 +51,29 @@ class _OpenAIAgentsSDKCompatResponse:
     usage: _OpenAIAgentsSDKUsageWrapper
 
 
-def _load_openai_agents_sdk() -> tuple[Any, Any, Any, Any, Any]:
+@dataclass(frozen=True)
+class _RunnerTurnResult:
+    output_items: list[Any]
+    usage: Any
+    response_id: str
+    request_id: str
+    previous_response_id_sent: str
+    continuity_mode: str
+    input_item_count: int
+    full_input_item_count: int
+    callback_invocations: list[dict[str, Any]]
+    continuation_input_items: list[dict[str, Any]]
+    source_message_count: int
+
+
+def _load_openai_agents_sdk() -> tuple[Any, Any, Any, Any, Any, Any, Any]:
     """
     Lazy-load SDK modules so default OpenAI/Anthropic paths do not require
     extra dependencies.
     """
     try:
+        from agents import Agent, RunConfig, Runner
         from agents.model_settings import ModelSettings
-        from agents.models.interface import ModelTracing
         from agents.models.openai_responses import OpenAIResponsesModel
         from agents.tool import FunctionTool
         from openai import AsyncOpenAI
@@ -52,7 +82,7 @@ def _load_openai_agents_sdk() -> tuple[Any, Any, Any, Any, Any]:
             "OpenAI Agents SDK backend requires optional deps. "
             "Install with: pip install openai-agents openai"
         ) from exc
-    return OpenAIResponsesModel, ModelSettings, ModelTracing, FunctionTool, AsyncOpenAI
+    return Runner, Agent, RunConfig, OpenAIResponsesModel, ModelSettings, FunctionTool, AsyncOpenAI
 
 
 def _openai_base_url() -> str:
@@ -82,31 +112,24 @@ def _should_send_temperature(*, model: str) -> bool:
     return False
 
 
-def _tool_choice_policy() -> str:
+def _tool_choice_policy(*, execution_context: bool) -> str:
     """
     Runtime policy for SDK tool selection.
 
-    Why this exists:
-    - Some SDK/model combinations tend to return plain text and stop early.
-    - We want a deterministic way to bias execution toward tool calls during
-      benchmark/task runs without changing core loop semantics.
+    Safety policy:
+    - Execution context may enforce tools for deterministic benchmark behavior.
+    - Non-execution/chat context defaults to auto.
     """
-    raw = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_TOOL_CHOICE", "required")).strip().lower()
+    default_policy = "required" if execution_context else "auto"
+    raw = str(os.getenv("CORTEX_OPENAI_AGENTS_SDK_TOOL_CHOICE", default_policy)).strip().lower()
     if raw in {"none", "off"}:
         return "none"
     if raw in {"auto", "required"}:
         return raw
-    return "required"
+    return default_policy
 
 
 def _tool_call_enforcement_prefix() -> str:
-    """
-    Prefix injected into SDK system instructions when tools are present.
-
-    First principles:
-    - If the model emits no function call, Cortex cannot execute and learn.
-    - This deterministic instruction is a guardrail, not task-specific logic.
-    """
     return (
         "TOOL EXECUTION POLICY: When function tools are available, you must call a tool. "
         "Do not stop with text-only output until at least one function call is emitted in this turn."
@@ -132,21 +155,145 @@ def _run_async(coro: Any) -> Any:
             loop.close()
 
 
+def _decode_tool_arguments(raw_arguments: Any, *, tool_name: str) -> tuple[dict[str, Any] | None, str | None]:
+    if isinstance(raw_arguments, dict):
+        return raw_arguments, None
+    raw_text = str(raw_arguments or "").strip() or "{}"
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        try:
+            parsed = extract_first_json_object(raw_text)
+        except Exception:
+            clipped = clip_text(raw_text, max_chars=500)
+            return None, (
+                f"[openai_agents_sdk_tool_parse_error] function_call '{tool_name}' "
+                f"arguments were not valid JSON and were skipped: {clipped}"
+            )
+    if not isinstance(parsed, dict):
+        return None, (
+            f"[openai_agents_sdk_tool_parse_error] function_call '{tool_name}' "
+            "arguments decoded to non-object and were skipped."
+        )
+    return parsed, None
+
+
+def _json_roundtrip(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=True))
+    except Exception:
+        return value
+
+
+def _clone_input_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cloned: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        copied = _json_roundtrip(item)
+        if isinstance(copied, dict):
+            cloned.append(copied)
+    return cloned
+
+
+def _tool_result_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return str(content or "").strip()
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = str(part.get("type", "")).strip().lower()
+        if part_type == "text":
+            text = str(part.get("text", "")).strip()
+            if text:
+                parts.append(text)
+        elif part_type == "image":
+            parts.append("[image omitted]")
+    return "\n".join(parts).strip()
+
+
+def _anthropic_messages_to_runner_input_items(
+    *,
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Convert Anthropic-style messages into runner input items with structured
+    function_call_output items for tool results.
+    """
+    input_items: list[dict[str, Any]] = []
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "")).strip().lower()
+        content = message.get("content", [])
+        if not isinstance(content, list):
+            content = [{"type": "text", "text": str(content or "")}]
+
+        text_parts: list[str] = []
+
+        def _flush_text_parts() -> None:
+            merged = "\n".join(part for part in text_parts if part).strip()
+            text_parts.clear()
+            if not merged:
+                return
+            input_items.append(
+                {
+                    "role": "user" if role not in {"assistant", "system"} else role,
+                    "content": [{"type": "input_text", "text": merged}],
+                }
+            )
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type", "")).strip().lower()
+            if block_type == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    text_parts.append(text)
+                continue
+            if not (role == "user" and block_type == "tool_result"):
+                continue
+            _flush_text_parts()
+            tool_use_id = str(block.get("tool_use_id", "")).strip()
+            if not tool_use_id:
+                continue
+            tool_text = _tool_result_content_to_text(block.get("content"))
+            if bool(block.get("is_error", False)):
+                tool_text = f"[tool_error] {tool_text}".strip()
+            if not tool_text:
+                tool_text = "(empty tool result)"
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_use_id,
+                    "output": tool_text,
+                }
+            )
+
+        _flush_text_parts()
+
+    return input_items
+
+
 def _build_agents_function_tools(
     *,
     tools: list[dict[str, Any]],
     function_tool_cls: Any,
+    callback_invocations: list[dict[str, Any]],
 ) -> list[Any]:
     """
     Build SDK FunctionTool entries from Anthropic-style tool specs.
 
-    Tool execution stays in the existing Cortex loop; SDK tool callbacks are
-    placeholders and should never execute in this transport mode.
+    Callback behavior:
+    - Capture tool-call metadata from Runner output.
+    - Return a deterministic deferred payload so the existing Cortex loop can
+      execute tools and keep memory/metrics semantics unchanged.
     """
-
-    async def _noop_on_invoke(_: Any, __: str) -> str:
-        return "Tool execution is managed by Cortex runtime loop."
-
     mapped: list[Any] = []
     for tool in tools:
         if not isinstance(tool, dict):
@@ -154,12 +301,36 @@ def _build_agents_function_tools(
         name = str(tool.get("name", "")).strip()
         if not name:
             continue
+
+        async def _on_invoke_tool(tool_context: Any, raw_arguments: str, *, tool_name: str = name) -> str:
+            parsed_input, parse_warning = _decode_tool_arguments(raw_arguments, tool_name=tool_name)
+            callback_entry: dict[str, Any] = {
+                "tool_name": tool_name,
+                "tool_call_id": str(getattr(tool_context, "tool_call_id", "")).strip(),
+                "raw_arguments": str(raw_arguments or ""),
+                "parsed_input": parsed_input,
+            }
+            if parse_warning:
+                callback_entry["parse_warning"] = parse_warning
+            callback_invocations.append(callback_entry)
+
+            payload: dict[str, Any] = {
+                "status": "deferred_to_cortex_runtime",
+                "tool_name": tool_name,
+                "tool_call_id": callback_entry["tool_call_id"],
+            }
+            if parsed_input is not None:
+                payload["input"] = parsed_input
+            if parse_warning:
+                payload["parse_warning"] = parse_warning
+            return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+
         mapped.append(
             function_tool_cls(
                 name=name,
                 description=str(tool.get("description", "")).strip(),
                 params_json_schema=tool.get("input_schema", {}),
-                on_invoke_tool=_noop_on_invoke,
+                on_invoke_tool=_on_invoke_tool,
                 strict_json_schema=True,
             )
         )
@@ -192,28 +363,6 @@ def _response_output_items_to_assistant_blocks(
     assistant_blocks: list[dict[str, Any]] = []
     text_parts: list[str] = []
 
-    def _decode_tool_arguments(raw_arguments: Any, *, tool_name: str) -> tuple[dict[str, Any] | None, str | None]:
-        if isinstance(raw_arguments, dict):
-            return raw_arguments, None
-        raw_text = str(raw_arguments or "").strip() or "{}"
-        try:
-            parsed = json.loads(raw_text)
-        except json.JSONDecodeError:
-            try:
-                parsed = extract_first_json_object(raw_text)
-            except Exception:
-                clipped = clip_text(raw_text, max_chars=500)
-                return None, (
-                    f"[openai_agents_sdk_tool_parse_error] function_call '{tool_name}' "
-                    f"arguments were not valid JSON and were skipped: {clipped}"
-                )
-        if not isinstance(parsed, dict):
-            return None, (
-                f"[openai_agents_sdk_tool_parse_error] function_call '{tool_name}' "
-                "arguments decoded to non-object and were skipped."
-            )
-        return parsed, None
-
     for idx, item in enumerate(output_items):
         payload = _item_to_dict(item)
         item_type = str(payload.get("type", "")).strip().lower()
@@ -241,7 +390,9 @@ def _response_output_items_to_assistant_blocks(
         if not tool_name:
             raise RuntimeError(f"OpenAI Agents SDK function_call at index {idx} missing name.")
         if tool_name not in allowed_tool_names:
-            raise RuntimeError(f"OpenAI Agents SDK requested unknown tool '{tool_name}'. Allowed: {sorted(allowed_tool_names)}")
+            raise RuntimeError(
+                f"OpenAI Agents SDK requested unknown tool '{tool_name}'. Allowed: {sorted(allowed_tool_names)}"
+            )
         tool_input, parse_warning = _decode_tool_arguments(payload.get("arguments", "{}"), tool_name=tool_name)
         if parse_warning:
             text_parts.append(parse_warning)
@@ -301,7 +452,58 @@ def _output_item_diagnostics(output_items: list[Any]) -> dict[str, Any]:
     }
 
 
-def _fetch_model_response_via_openai_agents_sdk(
+def _extract_delta_messages_for_continuation(
+    *,
+    messages: list[dict[str, Any]],
+    execution_state: OpenAIAgentsSDKExecutionState,
+) -> list[dict[str, Any]]:
+    if execution_state.last_source_message_count < 0:
+        execution_state.last_source_message_count = 0
+    if execution_state.last_source_message_count > len(messages):
+        execution_state.last_source_message_count = 0
+        execution_state.previous_response_id = None
+        execution_state.continuation_input_items = []
+        return list(messages)
+
+    delta_messages = list(messages[execution_state.last_source_message_count :])
+    while delta_messages:
+        head = delta_messages[0]
+        if not isinstance(head, dict):
+            break
+        if str(head.get("role", "")).strip().lower() != "assistant":
+            break
+        delta_messages.pop(0)
+    return delta_messages
+
+
+def _select_runner_input(
+    *,
+    messages: list[dict[str, Any]],
+    execution_state: OpenAIAgentsSDKExecutionState | None,
+) -> tuple[list[dict[str, Any]], str | None, str, int]:
+    full_input_items = anthropic_messages_to_openai_responses_input(messages=messages)
+    if execution_state is None or execution_state.turns <= 0:
+        return full_input_items, None, "full_history", len(full_input_items)
+
+    delta_messages = _extract_delta_messages_for_continuation(messages=messages, execution_state=execution_state)
+    delta_items = _anthropic_messages_to_runner_input_items(messages=delta_messages)
+
+    if execution_state.previous_response_id and delta_items:
+        return (
+            delta_items,
+            execution_state.previous_response_id,
+            "delta_since_previous_response",
+            len(full_input_items),
+        )
+
+    if execution_state.continuation_input_items and delta_items:
+        merged = [*execution_state.continuation_input_items, *delta_items]
+        return merged, None, "to_input_list_continuation", len(full_input_items)
+
+    return full_input_items, None, "full_history_fallback", len(full_input_items)
+
+
+def _run_runner_turn_via_openai_agents_sdk(
     *,
     api_key: str,
     model: str,
@@ -310,20 +512,25 @@ def _fetch_model_response_via_openai_agents_sdk(
     tools: list[dict[str, Any]],
     max_tokens: int,
     temperature: float | None,
-) -> Any:
-    """
-    One model turn through OpenAI Agents SDK Responses model.
-
-    We intentionally call the model layer (not full Runner) so Cortex retains
-    control over tool execution, retries, and memory instrumentation.
-    """
+    execution_state: OpenAIAgentsSDKExecutionState | None,
+    execution_context: bool,
+) -> _RunnerTurnResult:
     (
+        runner_cls,
+        agent_cls,
+        run_config_cls,
         openai_responses_model_cls,
         model_settings_cls,
-        model_tracing_cls,
         function_tool_cls,
         async_openai_cls,
     ) = _load_openai_agents_sdk()
+
+    callback_invocations: list[dict[str, Any]] = []
+    source_message_count = len(messages)
+    input_items, previous_response_id, continuity_mode, full_input_count = _select_runner_input(
+        messages=messages,
+        execution_state=execution_state,
+    )
 
     async def _do_call() -> Any:
         client = async_openai_cls(
@@ -332,14 +539,17 @@ def _fetch_model_response_via_openai_agents_sdk(
             timeout=_openai_timeout_seconds(),
         )
         model_obj = openai_responses_model_cls(model=model, openai_client=client)
-        sdk_tools = _build_agents_function_tools(tools=tools, function_tool_cls=function_tool_cls)
+        sdk_tools = _build_agents_function_tools(
+            tools=tools,
+            function_tool_cls=function_tool_cls,
+            callback_invocations=callback_invocations,
+        )
         tools_present = bool(sdk_tools)
-        tool_choice_policy = _tool_choice_policy()
+        tool_choice_policy = _tool_choice_policy(execution_context=execution_context)
         model_settings_kwargs: dict[str, Any] = {
             "max_tokens": max(0, int(max_tokens)),
             "parallel_tool_calls": False,
         }
-        # Keep this best-effort because SDK versions differ in supported fields.
         if tools_present and tool_choice_policy in {"auto", "required"}:
             model_settings_kwargs["tool_choice"] = tool_choice_policy
         if temperature is not None and _should_send_temperature(model=model):
@@ -350,24 +560,65 @@ def _fetch_model_response_via_openai_agents_sdk(
             # Backward-compatible fallback for SDK versions without `tool_choice`.
             model_settings_kwargs.pop("tool_choice", None)
             model_settings = model_settings_cls(**model_settings_kwargs)
-        input_items = anthropic_messages_to_openai_responses_input(messages=messages)
+
         system_instructions = _extract_system_prompt_text(system_prompt)
-        if tools_present and tool_choice_policy == "required":
+        if tools_present and execution_context and tool_choice_policy == "required":
             system_instructions = f"{_tool_call_enforcement_prefix()}\n\n{system_instructions}".strip()
-        return await model_obj.get_response(
-            system_instructions=system_instructions,
-            input=input_items,
-            model_settings=model_settings,
+
+        agent = agent_cls(
+            name="cortex_executor",
+            instructions=system_instructions,
+            model=model_obj,
             tools=sdk_tools,
-            output_schema=None,
-            handoffs=[],
-            tracing=model_tracing_cls.DISABLED,
-            previous_response_id=None,
-            conversation_id=None,
-            prompt=None,
+            model_settings=model_settings,
+            tool_use_behavior="stop_on_first_tool",
+        )
+        run_config = run_config_cls(
+            tracing_disabled=True,
+            model_settings=model_settings,
+        )
+        return await runner_cls.run(
+            agent,
+            input=input_items,
+            max_turns=1,
+            run_config=run_config,
+            previous_response_id=previous_response_id,
         )
 
-    return _run_async(_do_call())
+    run_result = _run_async(_do_call())
+    raw_responses = list(getattr(run_result, "raw_responses", []) or [])
+    if not raw_responses:
+        raise RuntimeError("OpenAI Agents SDK runner returned no raw responses.")
+    model_response = raw_responses[-1]
+    output_items = list(getattr(model_response, "output", []) or [])
+    response_id = str(getattr(model_response, "response_id", "")).strip()
+    request_id = str(getattr(model_response, "request_id", "")).strip()
+
+    to_input_items: list[dict[str, Any]] = []
+    to_input_list_fn = getattr(run_result, "to_input_list", None)
+    if callable(to_input_list_fn):
+        try:
+            raw_items = to_input_list_fn()
+            if isinstance(raw_items, list):
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        to_input_items.append(_json_roundtrip(item))
+        except Exception:
+            to_input_items = []
+
+    return _RunnerTurnResult(
+        output_items=output_items,
+        usage=getattr(model_response, "usage", None),
+        response_id=response_id,
+        request_id=request_id,
+        previous_response_id_sent=str(previous_response_id or ""),
+        continuity_mode=continuity_mode,
+        input_item_count=len(input_items),
+        full_input_item_count=full_input_count,
+        callback_invocations=_clone_input_items(callback_invocations),
+        continuation_input_items=to_input_items,
+        source_message_count=source_message_count,
+    )
 
 
 def create_executor_response_via_openai_agents_sdk(
@@ -378,8 +629,10 @@ def create_executor_response_via_openai_agents_sdk(
     tools: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     temperature: float | None = None,
+    execution_state: OpenAIAgentsSDKExecutionState | None = None,
+    execution_context: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    model_response = _fetch_model_response_via_openai_agents_sdk(
+    turn_result = _run_runner_turn_via_openai_agents_sdk(
         api_key=api_key,
         model=model,
         system_prompt=system_prompt,
@@ -387,8 +640,10 @@ def create_executor_response_via_openai_agents_sdk(
         tools=tools,
         max_tokens=1800,
         temperature=temperature,
+        execution_state=execution_state,
+        execution_context=execution_context,
     )
-    output_items = list(getattr(model_response, "output", []) or [])
+    output_items = list(turn_result.output_items)
     allowed_tool_names = {
         str(tool.get("name", "")).strip()
         for tool in tools
@@ -398,13 +653,41 @@ def create_executor_response_via_openai_agents_sdk(
         output_items=output_items,
         allowed_tool_names=allowed_tool_names,
     )
+
+    if execution_state is not None:
+        execution_state.turns = int(execution_state.turns) + 1
+        execution_state.last_source_message_count = int(turn_result.source_message_count)
+        execution_state.continuation_input_items = _clone_input_items(turn_result.continuation_input_items)
+        execution_state.previous_response_id = turn_result.response_id or None
+
     usage_payload = _coerce_usage_payload(
-        usage=getattr(model_response, "usage", None),
+        usage=turn_result.usage,
         model=model,
-        response_id=str(getattr(model_response, "response_id", "")).strip(),
-        request_id=str(getattr(model_response, "request_id", "")).strip(),
+        response_id=turn_result.response_id,
+        request_id=turn_result.request_id,
     )
     usage_payload.update(_output_item_diagnostics(output_items))
+    usage_payload.update(
+        {
+            "continuity_mode": turn_result.continuity_mode,
+            "previous_response_id_sent": turn_result.previous_response_id_sent,
+            "sdk_input_item_count": int(turn_result.input_item_count),
+            "sdk_full_history_item_count": int(turn_result.full_input_item_count),
+            "sdk_callback_invocation_count": len(turn_result.callback_invocations),
+            "sdk_callback_tool_names": sorted(
+                {
+                    str(row.get("tool_name", "")).strip()
+                    for row in turn_result.callback_invocations
+                    if isinstance(row, dict)
+                }
+                - {""}
+            ),
+        }
+    )
+    if execution_state is not None:
+        usage_payload["previous_response_id_next"] = str(execution_state.previous_response_id or "")
+        usage_payload["sdk_state_turns"] = int(execution_state.turns)
+        usage_payload["sdk_state_message_cursor"] = int(execution_state.last_source_message_count)
     return assistant_blocks, usage_payload
 
 
@@ -436,6 +719,8 @@ class OpenAIAgentsSDKCompatMessagesAPI:
             tools=[],
             messages=messages or [],
             temperature=temperature,
+            execution_state=None,
+            execution_context=False,
         )
         # Judge/lesson calls are text-only; preserve text while ignoring
         # accidental tool blocks if they ever appear.

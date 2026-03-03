@@ -91,6 +91,7 @@ from tracks.cli_sqlite.openai_transport import (
 )
 from tracks.cli_sqlite.openai_agents_sdk_transport import (
     OpenAIAgentsSDKCompatClient as _OpenAIAgentsSDKCompatClient,
+    OpenAIAgentsSDKExecutionState as _OpenAIAgentsSDKExecutionState,
     create_executor_response_via_openai_agents_sdk as _create_executor_response_via_openai_agents_sdk,
 )
 from tracks.cli_sqlite.prompt_builder import (
@@ -4339,6 +4340,7 @@ def _run_cli_agent_impl(
     step = 1
     validation_retries_this_step = 0
     validation_retry_capped_this_step = False
+    sdk_execution_state = _OpenAIAgentsSDKExecutionState() if llm_backend == "openai_agents_sdk" else None
     while step <= max_steps:
         metrics["steps"] = step
         if on_lifecycle_event is not None:
@@ -4397,6 +4399,8 @@ def _run_cli_agent_impl(
                 tools=tools,
                 messages=messages,
                 temperature=runtime_temperature,
+                execution_state=sdk_execution_state,
+                execution_context=True,
             )
         else:
             assistant_blocks, usage = _create_executor_response_via_claude_print(
