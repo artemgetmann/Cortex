@@ -896,6 +896,50 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertIn(promoted.lesson_id, ids)
             self.assertNotIn(candidate.lesson_id, ids)
 
+    def test_candidate_policy_anchored_allows_structured_same_task_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            structured_candidate = _record(
+                session_id=1985,
+                rule_text=(
+                    "WHEN gap_signature=missing_required_event_pattern|required_event_pattern|"
+                    "(?is)git\\\\s+am\\\\s+\\\\.\\\\./hotfix_gamma.patch: "
+                    'run_bash(command="git -C target_repo am ../hotfix_gamma.patch") '
+                    "EXPECT: missing_required_event_pattern|required_event_pattern|"
+                    "(?is)git\\\\s+am\\\\s+\\\\.\\\\./hotfix_gamma.patch"
+                ),
+                status="candidate",
+                fingerprints=("fp_unrelated",),
+                tags=("uncategorized",),
+                reliability=0.6,
+                domain="shell",
+                task_id="shell_git_transfer_hotfix_hard",
+                reason_code="missing_required_event_pattern",
+                gap_type="required_event_pattern",
+                gap_signature=(
+                    "missing_required_event_pattern|required_event_pattern|"
+                    "(?is)git\\\\s+am\\\\s+\\\\.\\\\./hotfix_gamma.patch"
+                ),
+                action_template='run_bash(command="git -C target_repo am ../hotfix_gamma.patch")',
+                expected_evidence=(
+                    "missing_required_event_pattern|required_event_pattern|"
+                    "(?is)git\\\\s+am\\\\s+\\\\.\\\\./hotfix_gamma.patch"
+                ),
+            )
+            upsert_lesson_records(path, [structured_candidate])
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="generic error with little lexical overlap",
+                fingerprint="fp_other",
+                domain="shell",
+                task_id="shell_git_transfer_hotfix_hard",
+                query_tags=("other_tag",),
+                max_results=2,
+                candidate_policy=CANDIDATE_POLICY_ANCHORED,
+            )
+            ids = [match.lesson.lesson_id for match in matches]
+            self.assertIn(structured_candidate.lesson_id, ids)
+
 
 class PromotionV2Tests(unittest.TestCase):
     def test_compute_utility_weights(self) -> None:

@@ -341,6 +341,8 @@ def _candidate_allowed(
     lesson: LessonRecord,
     score: RetrievalScore,
     candidate_policy: str,
+    query_domain: str = "",
+    query_task_id: str = "",
     min_score: float = DEFAULT_CANDIDATE_MIN_SCORE,
 ) -> bool:
     status = str(getattr(lesson, "status", "")).strip().lower()
@@ -350,6 +352,29 @@ def _candidate_allowed(
         return True
     if candidate_policy == CANDIDATE_POLICY_PROMOTED_ONLY:
         return False
+    # Same-task candidate fallback:
+    # - When the run re-attempts the exact same task/domain, allow candidate
+    #   lessons with a small score floor even if lexical/tag anchors are weak.
+    # - This keeps early-run lessons usable before they accumulate reliability.
+    normalized_task = str(query_task_id).strip()
+    normalized_domain = str(query_domain).strip().lower()
+    lesson_task = str(getattr(lesson, "task_id", "")).strip()
+    lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
+    same_task = bool(normalized_task and lesson_task == normalized_task)
+    same_domain = bool(normalized_domain and lesson_domain == normalized_domain)
+    has_structured_binding = bool(
+        str(getattr(lesson, "gap_signature", "")).strip()
+        or (
+            str(getattr(lesson, "reason_code", "")).strip()
+            and str(getattr(lesson, "gap_type", "")).strip()
+        )
+    )
+    has_executable_shape = bool(
+        str(getattr(lesson, "action_template", "")).strip()
+        and str(getattr(lesson, "expected_evidence", "")).strip()
+    )
+    if same_task and (not normalized_domain or same_domain) and has_structured_binding and has_executable_shape:
+        return float(score.score) >= 0.05
     # Anchored mode keeps candidates available while suppressing low-signal
     # generic advice that can derail execution.
     if float(score.score) < float(min_score):
@@ -716,6 +741,8 @@ def _rank_lessons(
             lesson=lesson,
             score=score,
             candidate_policy=normalized_candidate_policy,
+            query_domain=query_domain,
+            query_task_id=query_task_id,
         ):
             continue
         ranked.append(RetrievalMatch(lesson=lesson, score=score, lane=lane))

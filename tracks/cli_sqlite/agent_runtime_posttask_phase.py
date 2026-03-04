@@ -188,6 +188,14 @@ def run_posttask_phase(
             for row in structured_gap_rows
             if str(row.get("gap_signature", "")).strip()
         }
+        structured_reason_gap_pairs = {
+            (
+                str(row.get("reason_code", "")).strip(),
+                str(row.get("gap_type", "")).strip(),
+            )
+            for row in structured_gap_rows
+            if str(row.get("reason_code", "")).strip() and str(row.get("gap_type", "")).strip()
+        }
         allowed_action_tools = deps["_allowed_action_tools_for_adapter"](adapter=adapter, opaque_tools=opaque_tools)
         fallback_rules: list[str] = []
         source_lesson_rows: list[dict[str, Any]] = []
@@ -202,12 +210,28 @@ def run_posttask_phase(
             )
             for idx, recipe in enumerate(deterministic_rules):
                 gap_row = structured_gap_rows[min(idx, len(structured_gap_rows) - 1)]
+                reason_code = str(gap_row.get("reason_code", "")).strip()
+                gap_type = str(gap_row.get("gap_type", "")).strip()
+                gap_signature = str(gap_row.get("gap_signature", "")).strip()
+                action_template = deps["_extract_action_template_from_legacy_lesson"](
+                    lesson_text=recipe,
+                    executor_tool_name=str(adapter.executor_tool_name),
+                )
+                # In strict mode deterministic fallbacks must still be executable.
+                # If we cannot extract a real tool call, skip this row instead of
+                # generating a lesson that retrieval will reject later.
+                if structured_lessons_required and not action_template:
+                    continue
+                expected_evidence = gap_signature or f"{reason_code}|{gap_type}"
                 source_lesson_rows.append(
                     {
                         "lesson_text": recipe,
                         "gap_row": gap_row,
-                        "action_template": "",
-                        "expected_evidence": "",
+                        "reason_code": reason_code,
+                        "gap_type": gap_type,
+                        "gap_signature": gap_signature,
+                        "action_template": action_template,
+                        "expected_evidence": expected_evidence,
                         "source_kind": "deterministic",
                     }
                 )
@@ -249,6 +273,9 @@ def run_posttask_phase(
                     {
                         "lesson_text": lesson_text,
                         "gap_row": gap_row,
+                        "reason_code": str(structured_payload.get("reason_code", "")).strip(),
+                        "gap_type": str(structured_payload.get("gap_type", "")).strip(),
+                        "gap_signature": trigger_signature,
                         "action_template": action_template,
                         "expected_evidence": expected_evidence,
                         "source_kind": "model_structured",
@@ -261,6 +288,9 @@ def run_posttask_phase(
                 {
                     "lesson_text": text,
                     "gap_row": gap_row,
+                    "reason_code": str(gap_row.get("reason_code", "")).strip(),
+                    "gap_type": str(gap_row.get("gap_type", "")).strip(),
+                    "gap_signature": str(gap_row.get("gap_signature", "")).strip(),
                     "action_template": "",
                     "expected_evidence": "",
                     "source_kind": "model_legacy",
@@ -307,6 +337,9 @@ def run_posttask_phase(
                             f"{payload['action_template']} EXPECT: {payload['expected_evidence']}."
                         ),
                         "gap_row": gap_row,
+                        "reason_code": str(payload.get("reason_code", "")).strip(),
+                        "gap_type": str(payload.get("gap_type", "")).strip(),
+                        "gap_signature": str(payload.get("trigger_gap_signature", "")).strip(),
                         "action_template": str(payload["action_template"]).strip(),
                         "expected_evidence": str(payload["expected_evidence"]).strip(),
                         "source_kind": "legacy_backfill",
@@ -325,13 +358,39 @@ def run_posttask_phase(
             if normalized_text in seen_lesson_texts:
                 continue
             seen_lesson_texts.add(normalized_text)
-            reason_code = str(gap_row.get("reason_code", "")).strip()
-            gap_type = str(gap_row.get("gap_type", "")).strip()
-            gap_signature = str(gap_row.get("gap_signature", "")).strip()
-            if structured_lessons_required and (not reason_code or not gap_type):
-                reason_code = str(metrics.get("eval_reasons", ["unknown_reason"])[0] if metrics.get("eval_reasons") else "unknown_reason")
-                gap_type = "eval_reason"
-                gap_signature = f"{reason_code}|eval_reason|{task_id}"
+            reason_code = str(source_row.get("reason_code", "")).strip() or str(gap_row.get("reason_code", "")).strip()
+            gap_type = str(source_row.get("gap_type", "")).strip() or str(gap_row.get("gap_type", "")).strip()
+            gap_signature = str(source_row.get("gap_signature", "")).strip() or str(gap_row.get("gap_signature", "")).strip()
+
+            # Keep structured lessons bound to real unresolved gaps only.
+            # This prevents generic "eval_reason" signatures from entering memory,
+            # which otherwise creates silent retrieval misses later.
+            if structured_lessons_required and gap_signature and "|" in gap_signature:
+                parts = gap_signature.split("|", 2)
+                if len(parts) >= 2:
+                    reason_code = reason_code or parts[0].strip()
+                    gap_type = gap_type or parts[1].strip()
+            if structured_lessons_required:
+                signature_bound = bool(gap_signature and gap_signature in structured_gap_by_signature)
+                reason_gap_bound = bool(reason_code and gap_type and (reason_code, gap_type) in structured_reason_gap_pairs)
+                if not signature_bound and reason_gap_bound:
+                    # Canonicalize to a stable signature in the current unresolved set.
+                    for row in structured_gap_rows:
+                        if (
+                            str(row.get("reason_code", "")).strip() == reason_code
+                            and str(row.get("gap_type", "")).strip() == gap_type
+                        ):
+                            canonical_signature = str(row.get("gap_signature", "")).strip()
+                            if canonical_signature:
+                                gap_signature = canonical_signature
+                                break
+                signature_bound = bool(gap_signature and gap_signature in structured_gap_by_signature)
+                reason_gap_bound = bool(reason_code and gap_type and (reason_code, gap_type) in structured_reason_gap_pairs)
+                if not signature_bound and not reason_gap_bound:
+                    metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
+                        metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
+                    ) + 1
+                    continue
             tags = deps["extract_tags"](error=lesson_text)
             v2_candidates.append(
                 deps["lesson_record_cls"].from_candidate(

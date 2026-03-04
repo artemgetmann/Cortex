@@ -16,6 +16,8 @@ def _match(
     reason_code: str = "",
     gap_type: str = "",
     gap_signature: str = "",
+    action_template: str = "",
+    expected_evidence: str = "",
 ):
     lesson = SimpleNamespace(
         lesson_id=lesson_id,
@@ -24,6 +26,8 @@ def _match(
         reason_code=reason_code,
         gap_type=gap_type,
         gap_signature=gap_signature,
+        action_template=action_template,
+        expected_evidence=expected_evidence,
     )
     retrieval_score = SimpleNamespace(
         score=score,
@@ -110,3 +114,28 @@ def test_dynamic_fallback_excludes_structured_gap_lessons() -> None:
         min_score=0.55,
     )
     assert [m.lesson.lesson_id for m in selected] == ["lsn_unstructured"]
+
+
+def test_non_dynamic_task_allows_structured_executable_same_task_fallback() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_structured_exec",
+            task_id="shell_git_transfer_hotfix_hard",
+            domain="shell",
+            score=0.12,
+            text_similarity=0.01,
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+            action_template='run_bash(command="git -C target_repo am ../hotfix_gamma.patch")',
+            expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        )
+    ]
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="shell_git_transfer_hotfix_hard",
+        domain="shell",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_structured_exec"]

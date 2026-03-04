@@ -59,4 +59,34 @@ def test_validate_structured_model_lesson_accepts_bound_gap_and_action() -> None
     assert ok is True
     assert reason == ""
     assert payload["reason_code"] == "missing_required_file"
+    assert payload["trigger_gap_signature"] == "missing_required_file|required_file|target_repo/transfer_summary.txt"
 
+
+def test_validate_structured_model_lesson_canonicalizes_partial_trigger_via_reason_gap_binding() -> None:
+    lesson = SimpleNamespace(
+        trigger_gap_signature="(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        reason_code="missing_required_event_pattern",
+        gap_type="required_event_pattern",
+        action_template='run_bash(command="git -C target_repo am ../hotfix_gamma.patch")',
+        expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+    )
+    unresolved = [
+        {
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "detail": "(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        }
+    ]
+    ok, reason, payload = _validate_structured_model_lesson(
+        lesson=lesson,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools={"run_bash"},
+    )
+    assert ok is True
+    assert reason == ""
+    assert payload["reason_code"] == "missing_required_event_pattern"
+    assert payload["gap_type"] == "required_event_pattern"
+    assert payload["trigger_gap_signature"] == (
+        "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch"
+    )

@@ -167,6 +167,12 @@ def _select_high_signal_prerun_matches(
             or str(getattr(lesson_obj, "gap_signature", "")).strip()
         )
 
+    def _has_executable_shape(lesson_obj: Any) -> bool:
+        return bool(
+            str(getattr(lesson_obj, "action_template", "")).strip()
+            and str(getattr(lesson_obj, "expected_evidence", "")).strip()
+        )
+
     def _fallback_semantic_anchor(score_obj: Any) -> bool:
         # Keep fallback deterministic and conservative. We only consider
         # lessons that have at least minimal lexical/semantic overlap.
@@ -219,10 +225,43 @@ def _select_high_signal_prerun_matches(
         if len(selected) >= limit:
             break
 
+    if selected:
+        return selected
+
+    # Pass 3: exact task-id fallback for structured executable lessons.
+    # Why this exists:
+    # - strict thresholding can starve same-task memory on hard tasks
+    # - structured lessons are already validated and safer than free-form text
+    # - this applies to any task id, not only dynamic chat ids
+    same_task_min_score = 0.05
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        score = getattr(match, "score", None)
+        if lesson is None or score is None:
+            continue
+        lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+        if not lesson_id or lesson_id in seen_ids:
+            continue
+        if str(getattr(lesson, "task_id", "")).strip() != task_id:
+            continue
+        lesson_domain = str(getattr(lesson, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != normalized_domain:
+            continue
+        if not _has_structured_gap_fields(lesson):
+            continue
+        if not _has_executable_shape(lesson):
+            continue
+        if float(getattr(score, "score", 0.0) or 0.0) < same_task_min_score:
+            continue
+        selected.append(match)
+        seen_ids.add(lesson_id)
+        if len(selected) >= limit:
+            break
+
     if selected or not _is_dynamic_task(task_id):
         return selected
 
-    # Pass 3 (dynamic-task fallback): exact task-id matches with low scores.
+    # Pass 4 (dynamic-task fallback): exact task-id matches with low scores.
     # Why this exists:
     # - dynamic tasks start without stable trigger fingerprints/tags
     # - strict threshold filtering can drop all lessons even after repeated
@@ -259,7 +298,7 @@ def _select_high_signal_prerun_matches(
     if selected:
         return selected
 
-    # Pass 4 (dynamic semantic backfill): same-domain/domainless legacy lessons.
+    # Pass 5 (dynamic semantic backfill): same-domain/domainless legacy lessons.
     for match in matches:
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
@@ -388,4 +427,3 @@ def _select_gap_targeted_matches(
         return []
     # No explicit unresolved gap context available: fallback to top-ranked rows.
     return list(matches[:cap])
-

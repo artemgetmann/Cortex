@@ -174,9 +174,15 @@ def _validate_structured_model_lesson(
     if not expected_evidence:
         return False, "missing_expected_evidence", {}
 
-    resolved_reason = str(reason_code or matched_row.get("reason_code", "")).strip()
-    resolved_gap_type = str(gap_type or matched_row.get("gap_type", "")).strip()
-    resolved_signature = str(trigger_gap_signature or matched_row.get("gap_signature", "")).strip()
+    # Canonicalize to the contract row that actually matched.
+    #
+    # Why this matters:
+    # - Models often output a partial trigger (for example only the detail regex).
+    # - If we store the partial trigger as-is, strict retrieval cannot bind it later.
+    # - Using the matched unresolved row's canonical triplet keeps write/read symmetric.
+    resolved_reason = str(matched_row.get("reason_code", "") or reason_code).strip()
+    resolved_gap_type = str(matched_row.get("gap_type", "") or gap_type).strip()
+    resolved_signature = str(matched_row.get("gap_signature", "") or trigger_gap_signature).strip()
     if not (resolved_reason and resolved_gap_type and resolved_signature):
         return False, "missing_structured_gap_fields", {}
     if not _expected_evidence_is_anchored(
@@ -245,4 +251,3 @@ def _extract_action_template_from_legacy_lesson(
         return f'run_sqlite(sql="{escaped_sql}")'
 
     return ""
-
