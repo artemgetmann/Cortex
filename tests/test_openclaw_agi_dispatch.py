@@ -146,6 +146,37 @@ def test_dispatch_plain_natural_task_routes_to_dynamic_run_plan() -> None:
     assert payload["plan"]["domain"] == "sqlite"
 
 
+def test_dispatch_plain_hotfix_intent_routes_to_canonical_hard_task() -> None:
+    payload = _run_dispatch(
+        text=(
+            "Create and verify a git hotfix workflow: generate hotfix.txt and "
+            "transfer_summary.txt, apply hotfix patch cleanly, and prove final repo status is clean."
+        )
+    )
+    assert payload["mode"] == "run"
+    assert payload["plan"]["reason"] == "auto_task_intent"
+    assert payload["plan"]["adaptive_retry"] is True
+    assert payload["plan"]["attempts"] == 5
+    assert payload["plan"]["domain"] == "shell"
+    assert payload["plan"]["task_id"] == "shell_git_transfer_hotfix_hard"
+    # Canonical task routing should use task.md contract, not dynamic text.
+    assert payload["plan"]["task_text"] is None
+
+
+def test_dispatch_learnrun_hotfix_intent_routes_to_canonical_hard_task() -> None:
+    payload = _run_dispatch(
+        text=(
+            "/learnrun Create and verify a git hotfix workflow: generate hotfix.txt and "
+            "transfer_summary.txt, apply hotfix patch cleanly, and prove final repo status is clean."
+        )
+    )
+    assert payload["mode"] == "run"
+    assert payload["plan"]["adaptive_retry"] is True
+    assert payload["plan"]["task_id"] == "shell_git_transfer_hotfix_hard"
+    assert payload["plan"]["domain"] == "shell"
+    assert payload["plan"]["task_text"] is None
+
+
 def test_dispatch_plain_non_task_text_stays_chat_mode() -> None:
     payload = _run_dispatch(text="hey what is up")
     assert payload["mode"] == "chat"

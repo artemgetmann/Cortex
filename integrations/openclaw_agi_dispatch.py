@@ -72,6 +72,11 @@ KNOWN_TASK_DOMAIN: dict[str, str] = {
     "artic_followup_fetch": "artic",
 }
 
+SHELL_HOTFIX_TASK_IDS = {
+    "shell_git_transfer_hotfix",
+    "shell_git_transfer_hotfix_hard",
+}
+
 RUN_PREFIXES = ("/run", "run ")
 LEARNRUN_PREFIXES = ("/learnrun", "learnrun ")
 STATUS_PREFIXES = ("/learn-status", "/learnstatus", "/learn_status", "/run-status", "/status", "learn status")
@@ -343,6 +348,36 @@ def _infer_domain(task_text: str, fallback: str = "shell") -> str:
     return fallback
 
 
+def _is_shell_hotfix_intent(task_text: str) -> bool:
+    """
+    Detect natural-language hotfix transfer intents that should map to a
+    canonical shell benchmark task instead of creating a dynamic task id.
+    """
+    lowered = str(task_text or "").lower()
+    if not lowered.strip():
+        return False
+    has_git_or_hotfix = ("git" in lowered) or ("hotfix" in lowered)
+    has_patch = "patch" in lowered
+    has_transfer_signal = (
+        ("transfer_summary" in lowered)
+        or ("transfer summary" in lowered)
+        or ("repo status is clean" in lowered)
+        or ("status is clean" in lowered)
+        or ("apply patch cleanly" in lowered)
+    )
+    return bool(has_git_or_hotfix and has_patch and has_transfer_signal)
+
+
+def _canonical_task_from_natural_text(task_text: str) -> tuple[str, str] | None:
+    """
+    Return a canonical (task_id, domain) pair for supported natural-language
+    intents. Returning None keeps task handling fully dynamic.
+    """
+    if _is_shell_hotfix_intent(task_text):
+        return ("shell_git_transfer_hotfix_hard", "shell")
+    return None
+
+
 def _known_task_ids() -> set[str]:
     rows: set[str] = set(KNOWN_TASK_DOMAIN.keys())
     if not TASKS_ROOT.exists():
@@ -541,9 +576,19 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
             free_text = explicit_task_text or cleaned_tail
             if not free_text:
                 free_text = "Run a meaningful CLI task and provide verification evidence."
-            domain = controls.get("domain", "").strip() or _infer_domain(free_text, fallback=default_domain)
-            task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
-            task_text = free_text
+            canonical = _canonical_task_from_natural_text(free_text)
+            if canonical is not None:
+                # Known high-value intent: route to canonical benchmark task so
+                # deterministic contracts/validators are active.
+                task_id, canonical_domain = canonical
+                domain = controls.get("domain", "").strip() or canonical_domain
+                task_text = None
+            else:
+                domain = controls.get("domain", "").strip() or _infer_domain(
+                    free_text, fallback=default_domain
+                )
+                task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
+                task_text = free_text
 
     # Adaptive retry should be enabled for natural-language task intent and
     # explicit learnrun mode. Plain /run stays single-attempt by default unless
@@ -712,6 +757,28 @@ def _run_task_once(
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         except Exception:
             metrics = {}
+
+    # Tighten pass semantics for hotfix transfer tasks.
+    # These tasks are part of learning proof slices, so we require strict
+    # completion evidence before considering the attempt successful.
+    if plan.task_id in SHELL_HOTFIX_TASK_IDS and isinstance(metrics, dict):
+        strict_reasons: list[str] = []
+        eval_score = _coerce_float(metrics.get("eval_score"), default=0.0)
+        unresolved_count = _coerce_int(metrics.get("contract_gap_unresolved_count_final"))
+        probe_passed = metrics.get("deterministic_probe_passed")
+        if eval_score < 1.0:
+            strict_reasons.append("eval_score_below_1.0")
+        if isinstance(unresolved_count, int) and unresolved_count > 0:
+            strict_reasons.append("contract_gap_unresolved")
+        # When deterministic probe info exists, require it to pass for strict
+        # completion. This keeps the gate objective without depending on LLM
+        # judge phrasing.
+        if isinstance(probe_passed, bool) and not probe_passed:
+            strict_reasons.append("deterministic_probe_failed")
+        if strict_reasons:
+            metrics["eval_passed"] = False
+            metrics["strict_hotfix_gate_applied"] = True
+            metrics["strict_hotfix_gate_reasons"] = strict_reasons
 
     ok = proc.returncode == 0
     run_row = run_service.get_run(run_id)
