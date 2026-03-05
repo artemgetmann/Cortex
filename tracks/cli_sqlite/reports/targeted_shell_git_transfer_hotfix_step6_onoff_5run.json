@@ -1,0 +1,126 @@
+{
+  "task_id": "shell_git_transfer_hotfix",
+  "domain": "shell",
+  "config": {
+    "sessions_per_arm": 5,
+    "max_steps": 6,
+    "on_start_session": 190500,
+    "off_start_session": 190600,
+    "sessions_root": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions"
+  },
+  "on": {
+    "arm": "ON",
+    "sessions": [
+      190500,
+      190501,
+      190502,
+      190503,
+      190504
+    ],
+    "pass_rate": 1.0,
+    "last5_pass_rate": 1.0,
+    "median_steps_to_success": 4,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 190500,
+        "pass": true,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190501,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190502,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190503,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190504,
+        "pass": true,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      }
+    ]
+  },
+  "off": {
+    "arm": "OFF",
+    "sessions": [
+      190600,
+      190601,
+      190602,
+      190603,
+      190604
+    ],
+    "pass_rate": 1.0,
+    "last5_pass_rate": 1.0,
+    "median_steps_to_success": 4,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 190600,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190601,
+        "pass": true,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190602,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190603,
+        "pass": true,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 190604,
+        "pass": true,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0
+      }
+    ]
+  },
+  "delta_on_minus_off_pass_rate_pp": 0.0
+}

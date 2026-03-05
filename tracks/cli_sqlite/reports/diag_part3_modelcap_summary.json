@@ -1,0 +1,50 @@
+[
+  {
+    "session": 4301,
+    "model": "gpt-5-nano",
+    "pass": false,
+    "score": 0.222,
+    "steps": 6,
+    "v2_activations": 0
+  },
+  {
+    "session": 4302,
+    "model": "gpt-5-nano",
+    "pass": true,
+    "score": 1.0,
+    "steps": 6,
+    "v2_activations": 2
+  },
+  {
+    "session": 4303,
+    "model": "gpt-5-nano",
+    "pass": false,
+    "score": 0.556,
+    "steps": 6,
+    "v2_activations": 3
+  },
+  {
+    "session": 4311,
+    "model": "gpt-5-mini",
+    "pass": true,
+    "score": 1.0,
+    "steps": 5,
+    "v2_activations": 0
+  },
+  {
+    "session": 4312,
+    "model": "gpt-5-mini",
+    "pass": true,
+    "score": 1.0,
+    "steps": 4,
+    "v2_activations": 0
+  },
+  {
+    "session": 4313,
+    "model": "gpt-5-mini",
+    "pass": true,
+    "score": 1.0,
+    "steps": 5,
+    "v2_activations": 0
+  }
+]

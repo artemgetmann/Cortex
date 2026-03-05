@@ -1,0 +1,119 @@
+{
+  "task_id": "incremental_reconcile",
+  "max_steps": 6,
+  "posttask_learn": false,
+  "rows": [
+    {
+      "backend": "openai",
+      "session": 6301,
+      "passed": false,
+      "score": 0.917,
+      "steps": 6,
+      "elapsed_s": 73.925,
+      "error_count": 6,
+      "lesson_activations": 6,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 15766,
+      "output_tokens": 7724,
+      "total_tokens": 23490
+    },
+    {
+      "backend": "openai",
+      "session": 6302,
+      "passed": false,
+      "score": 0.75,
+      "steps": 6,
+      "elapsed_s": 65.518,
+      "error_count": 15,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 12720,
+      "output_tokens": 6575,
+      "total_tokens": 19295
+    },
+    {
+      "backend": "openai",
+      "session": 6303,
+      "passed": false,
+      "score": 0.917,
+      "steps": 6,
+      "elapsed_s": 73.403,
+      "error_count": 7,
+      "lesson_activations": 6,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 16495,
+      "output_tokens": 8001,
+      "total_tokens": 24496
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "session": 6401,
+      "passed": false,
+      "score": 0.25,
+      "steps": 3,
+      "elapsed_s": 58.567,
+      "error_count": 0,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 5350,
+      "output_tokens": 6520,
+      "total_tokens": 11870
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "session": 6402,
+      "passed": false,
+      "score": 0.25,
+      "steps": 2,
+      "elapsed_s": 44.355,
+      "error_count": 0,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 4044,
+      "output_tokens": 4239,
+      "total_tokens": 8283
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "session": 6403,
+      "passed": false,
+      "score": 0.25,
+      "steps": 2,
+      "elapsed_s": 42.397,
+      "error_count": 0,
+      "lesson_activations": 2,
+      "retrieval_help_ratio": 0.0,
+      "input_tokens": 4032,
+      "output_tokens": 4388,
+      "total_tokens": 8420
+    }
+  ],
+  "summary": {
+    "openai": {
+      "runs": 3,
+      "pass_rate": 0.0,
+      "mean_score": 0.8613333333333334,
+      "mean_steps": 6.0,
+      "mean_elapsed_s": 70.94866666666667,
+      "mean_error_count": 9.333333333333334,
+      "mean_lesson_activations": 4.666666666666667,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_input_tokens": 14993.666666666666,
+      "mean_output_tokens": 7433.333333333333,
+      "mean_total_tokens": 22427.0
+    },
+    "openai_agents_sdk": {
+      "runs": 3,
+      "pass_rate": 0.0,
+      "mean_score": 0.25,
+      "mean_steps": 2.3333333333333335,
+      "mean_elapsed_s": 48.43966666666666,
+      "mean_error_count": 0.0,
+      "mean_lesson_activations": 2.0,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_input_tokens": 4475.333333333333,
+      "mean_output_tokens": 5049.0,
+      "mean_total_tokens": 9524.333333333334
+    }
+  }
+}

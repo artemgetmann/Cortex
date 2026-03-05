@@ -1,0 +1,253 @@
+{
+  "task": "shell_git_transfer_hotfix_hard",
+  "domain": "shell",
+  "sessions_per_arm": 10,
+  "max_steps": 3,
+  "on": {
+    "pass_rate": 0.9,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 3,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 192000,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192000/contract_gap_postretry.json"
+      },
+      {
+        "session": 192001,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192002,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192003,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192004,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192004/contract_gap_postretry.json"
+      },
+      {
+        "session": 192005,
+        "pass": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192005/contract_gap_postretry.json"
+      },
+      {
+        "session": 192006,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192007,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192008,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192009,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192009/contract_gap_postretry.json"
+      }
+    ],
+    "failure_taxonomy": {
+      "reason_code_counts": {
+        "matched_forbidden_event_pattern": 1
+      },
+      "gap_type_counts": {
+        "forbidden_event_pattern": 1
+      },
+      "top_gap_signatures": [
+        {
+          "gap_signature": "matched_forbidden_event_pattern|forbidden_event_pattern|(?is)\\b/tmp\\b",
+          "count": 1
+        }
+      ]
+    }
+  },
+  "off": {
+    "pass_rate": 0.9,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 3,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 192200,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192201,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192201/contract_gap_postretry.json"
+      },
+      {
+        "session": 192202,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192203,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192204,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192205,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192206,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192207,
+        "pass": false,
+        "score": 0.944,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": "/Users/user/Programming_Projects/Cortex/tracks/cli_sqlite/sessions/session-192207/contract_gap_postretry.json"
+      },
+      {
+        "session": 192208,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      },
+      {
+        "session": 192209,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "contract_gap_postretry_artifact": null
+      }
+    ],
+    "failure_taxonomy": {
+      "reason_code_counts": {
+        "matched_forbidden_event_pattern": 1
+      },
+      "gap_type_counts": {
+        "forbidden_event_pattern": 1
+      },
+      "top_gap_signatures": [
+        {
+          "gap_signature": "matched_forbidden_event_pattern|forbidden_event_pattern|(?is)\\b/tmp\\b",
+          "count": 1
+        }
+      ]
+    }
+  },
+  "delta_on_minus_off_pass_rate_pp": 0.0
+}

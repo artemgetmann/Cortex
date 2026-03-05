@@ -1,0 +1,308 @@
+{
+  "task_id": "incremental_reconcile",
+  "domain": "sqlite",
+  "protocol": {
+    "sessions_per_arm": 10,
+    "max_steps": 4,
+    "llm_backend": "openai",
+    "model_executor": "gpt-5-nano",
+    "model_judge": "gpt-5-nano",
+    "doc_mode": "lossy",
+    "doc_retrieval": "auto",
+    "documentation": "tracks/cli_sqlite/domains/docs/sqlite-reference.md",
+    "judge_docs": "on",
+    "executor_docs": "on",
+    "posttask_mode": "candidate",
+    "judge_diagnostic": "on",
+    "contract_gap_retry": "on",
+    "contract_gap_deterministic_recipes": "on",
+    "structured_lessons_required": "on",
+    "benchmark_deterministic": "on",
+    "benchmark_promoted_only": "on"
+  },
+  "on": {
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.6,
+    "median_steps_to_success": 4.0,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 195000,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195001,
+        "pass": false,
+        "score": 0.92,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195002,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195003,
+        "pass": false,
+        "score": 0.83,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195004,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195005,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195006,
+        "pass": false,
+        "score": 0.83,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195007,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195008,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195009,
+        "pass": false,
+        "score": 0.92,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      }
+    ],
+    "failure_taxonomy": {
+      "breakdown": [
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "count": 4
+        },
+        {
+          "reason_code": "matched_forbidden_pattern",
+          "gap_type": "forbidden_sql_pattern",
+          "count": 1
+        },
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "count": 1
+        }
+      ],
+      "top_signatures": [
+        {
+          "signature": "error_count=2 max_error_count=1",
+          "count": 3
+        },
+        {
+          "signature": "(?is)delete\\s+from\\s+ledger",
+          "count": 1
+        },
+        {
+          "signature": "error_count=3 max_error_count=1",
+          "count": 1
+        },
+        {
+          "signature": "reject_count",
+          "count": 1
+        }
+      ]
+    }
+  },
+  "off": {
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.4,
+    "median_steps_to_success": 4.0,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "runs": [
+      {
+        "session": 195200,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195201,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195202,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195203,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195204,
+        "pass": false,
+        "score": 0.58,
+        "steps": 4,
+        "tool_errors": 4,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195205,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195206,
+        "pass": false,
+        "score": 0.92,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195207,
+        "pass": true,
+        "score": 1.0,
+        "steps": 3,
+        "tool_errors": 0,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195208,
+        "pass": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      },
+      {
+        "session": 195209,
+        "pass": false,
+        "score": 0.92,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0,
+        "retrieval_help_ratio": 0.0
+      }
+    ],
+    "failure_taxonomy": {
+      "breakdown": [
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "count": 4
+        },
+        {
+          "reason_code": "missing_required_pattern",
+          "gap_type": "required_sql_pattern",
+          "count": 3
+        },
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "count": 3
+        }
+      ],
+      "top_signatures": [
+        {
+          "signature": "(?is)insert\\s+into\\s+ledger",
+          "count": 3
+        },
+        {
+          "signature": "reject_count",
+          "count": 2
+        },
+        {
+          "signature": "checkpoint_row",
+          "count": 1
+        },
+        {
+          "signature": "error_count=2 max_error_count=1",
+          "count": 1
+        },
+        {
+          "signature": "error_count=3 max_error_count=1",
+          "count": 1
+        },
+        {
+          "signature": "error_count=4 max_error_count=1",
+          "count": 1
+        },
+        {
+          "signature": "ledger_aggregate",
+          "count": 1
+        }
+      ]
+    }
+  },
+  "on_minus_off_pass_delta_pp": 0.0
+}

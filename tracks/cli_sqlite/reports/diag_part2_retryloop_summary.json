@@ -1,0 +1,30 @@
+[
+  {
+    "session": 4201,
+    "pass": false,
+    "score": 0.556,
+    "steps": 17,
+    "v2_activations": 0
+  },
+  {
+    "session": 4202,
+    "pass": false,
+    "score": 0.833,
+    "steps": 6,
+    "v2_activations": 0
+  },
+  {
+    "session": 4203,
+    "pass": false,
+    "score": 0.333,
+    "steps": 4,
+    "v2_activations": 0
+  },
+  {
+    "session": 4204,
+    "pass": false,
+    "score": 0.833,
+    "steps": 5,
+    "v2_activations": 0
+  }
+]

@@ -1,0 +1,83 @@
+{
+  "lane": "sdk_toolreq_smoke_20260303_023100",
+  "rows": [
+    {
+      "session": 8301,
+      "eval_passed": false,
+      "eval_score": 0.222,
+      "steps": 5,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "no_tool_call_steps": 5,
+      "no_tool_recovery_prompts": 3,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 3,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    },
+    {
+      "session": 8302,
+      "eval_passed": false,
+      "eval_score": 0.222,
+      "steps": 5,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "no_tool_call_steps": 5,
+      "no_tool_recovery_prompts": 3,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 1,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    },
+    {
+      "session": 8303,
+      "eval_passed": false,
+      "eval_score": 0.389,
+      "steps": 6,
+      "tool_actions": 2,
+      "tool_errors": 0,
+      "no_tool_call_steps": 5,
+      "no_tool_recovery_prompts": 3,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 2,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    }
+  ]
+}

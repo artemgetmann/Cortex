@@ -1,0 +1,122 @@
+{
+  "task_id": "shell_git_transfer_hotfix_hard",
+  "backend": "openai_agents_sdk",
+  "max_steps": 20,
+  "lessons_enabled": true,
+  "lane": "ab_hotfixhard_sdk_steps20_learn_on_20260302_233505",
+  "rows": [
+    {
+      "session": 7501,
+      "passed": false,
+      "score": 0.222,
+      "steps": 1,
+      "elapsed_s": 77.171,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "lessons_generated": 3,
+      "contract_gap_retry_triggered": 1,
+      "tool_actions": 0,
+      "tool_errors": 0,
+      "total_tokens": 5442
+    },
+    {
+      "session": 7502,
+      "passed": false,
+      "score": 0.222,
+      "steps": 2,
+      "elapsed_s": 75.244,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "lessons_generated": 1,
+      "contract_gap_retry_triggered": 1,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "total_tokens": 8413
+    },
+    {
+      "session": 7503,
+      "passed": false,
+      "score": 0.222,
+      "steps": 1,
+      "elapsed_s": 56.411,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "lessons_generated": 1,
+      "contract_gap_retry_triggered": 1,
+      "tool_actions": 0,
+      "tool_errors": 0,
+      "total_tokens": 5442
+    },
+    {
+      "session": 7504,
+      "passed": false,
+      "score": 0.222,
+      "steps": 2,
+      "elapsed_s": 61.713,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "lessons_generated": 0,
+      "contract_gap_retry_triggered": 1,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "total_tokens": 7925
+    },
+    {
+      "session": 7505,
+      "passed": false,
+      "score": 0.222,
+      "steps": 1,
+      "elapsed_s": 41.789,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "lessons_generated": 0,
+      "contract_gap_retry_triggered": 1,
+      "tool_actions": 0,
+      "tool_errors": 0,
+      "total_tokens": 5442
+    }
+  ],
+  "summary": {
+    "runs": 5,
+    "pass_rate": 0.0,
+    "last3_pass_rate": 0.0,
+    "mean_score": 0.22200000000000003,
+    "mean_steps": 1.4,
+    "mean_elapsed_s": 62.46560000000001,
+    "mean_error_count": 0.0,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "mean_lessons_generated": 1.0,
+    "mean_total_tokens": 6532.8
+  }
+}

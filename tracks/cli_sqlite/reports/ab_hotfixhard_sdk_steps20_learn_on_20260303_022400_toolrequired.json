@@ -1,0 +1,80 @@
+{
+  "lane": "sdk_toolreq_smoke_20260303_022400",
+  "rows": [
+    {
+      "session": 8201,
+      "eval_passed": false,
+      "eval_score": 0.222,
+      "steps": 2,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "no_tool_call_steps": 2,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 3,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    },
+    {
+      "session": 8202,
+      "eval_passed": false,
+      "eval_score": 0.222,
+      "steps": 2,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "no_tool_call_steps": 2,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 1,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    },
+    {
+      "session": 8203,
+      "eval_passed": false,
+      "eval_score": 0.222,
+      "steps": 2,
+      "tool_actions": 1,
+      "tool_errors": 0,
+      "no_tool_call_steps": 2,
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "last_model_response_diag": {
+        "function_call_count": 0,
+        "output_item_count": 1,
+        "output_item_type_counts": {
+          "reasoning": 1
+        },
+        "text_block_count": 0
+      },
+      "v2_lessons_generated": 1,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+From bda7ec049d0f9c9ca098a8d1da6e1cb7ca28f195 Mon Sep 17 00:00:00 2001
+From: Test User <test@example.com>
+Date: Sun, 1 Mar 2026 23:11:27 +0400
+Subject: [PATCH] hotfix: add retry backoff note
+
+---
+ hotfix.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+ create mode 100644 hotfix.txt
+
+diff --git a/hotfix.txt b/hotfix.txt
+new file mode 100644
+index 0000000..c36159d
+--- /dev/null
++++ b/hotfix.txt
+@@ -0,0 +1,2 @@
++Retry backoff tune:
++Increase initial delay to 250ms.
+-- 
+2.50.1 (Apple Git-155)
+

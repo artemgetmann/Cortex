@@ -1,0 +1,180 @@
+{
+  "on": {
+    "n": 10,
+    "passes": 1,
+    "pass_rate": 0.1,
+    "last5_pass_rate": 0.2,
+    "median_steps_success": 3,
+    "rows": [
+      {
+        "run": 1,
+        "session": 166500,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 2,
+        "session": 166501,
+        "score": 0.82,
+        "pass": false,
+        "steps": 3,
+        "errs": 0
+      },
+      {
+        "run": 3,
+        "session": 166502,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 4,
+        "session": 166503,
+        "score": 0.65,
+        "pass": false,
+        "steps": 6,
+        "errs": 1
+      },
+      {
+        "run": 5,
+        "session": 166504,
+        "score": 0.29,
+        "pass": false,
+        "steps": 6,
+        "errs": 5
+      },
+      {
+        "run": 6,
+        "session": 166505,
+        "score": 0.65,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 7,
+        "session": 166506,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 8,
+        "session": 166507,
+        "score": 0.77,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 9,
+        "session": 166508,
+        "score": 1.0,
+        "pass": true,
+        "steps": 3,
+        "errs": 0
+      },
+      {
+        "run": 10,
+        "session": 166509,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 1
+      }
+    ]
+  },
+  "off": {
+    "n": 10,
+    "passes": 0,
+    "pass_rate": 0.0,
+    "last5_pass_rate": 0.0,
+    "median_steps_success": null,
+    "rows": [
+      {
+        "run": 1,
+        "session": 166600,
+        "score": 0.88,
+        "pass": false,
+        "steps": 6,
+        "errs": 2
+      },
+      {
+        "run": 2,
+        "session": 166601,
+        "score": 0.82,
+        "pass": false,
+        "steps": 5,
+        "errs": 3
+      },
+      {
+        "run": 3,
+        "session": 166602,
+        "score": 0.82,
+        "pass": false,
+        "steps": 3,
+        "errs": 0
+      },
+      {
+        "run": 4,
+        "session": 166603,
+        "score": 0.88,
+        "pass": false,
+        "steps": 4,
+        "errs": 0
+      },
+      {
+        "run": 5,
+        "session": 166604,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 4
+      },
+      {
+        "run": 6,
+        "session": 166605,
+        "score": 0.65,
+        "pass": false,
+        "steps": 5,
+        "errs": 3
+      },
+      {
+        "run": 7,
+        "session": 166606,
+        "score": 0.82,
+        "pass": false,
+        "steps": 5,
+        "errs": 3
+      },
+      {
+        "run": 8,
+        "session": 166607,
+        "score": 0.82,
+        "pass": false,
+        "steps": 4,
+        "errs": 2
+      },
+      {
+        "run": 9,
+        "session": 166608,
+        "score": 0.71,
+        "pass": false,
+        "steps": 4,
+        "errs": 1
+      },
+      {
+        "run": 10,
+        "session": 166609,
+        "score": 0.82,
+        "pass": false,
+        "steps": 6,
+        "errs": 5
+      }
+    ]
+  }
+}

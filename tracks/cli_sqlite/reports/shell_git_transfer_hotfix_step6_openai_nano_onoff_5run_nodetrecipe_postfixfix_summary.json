@@ -1,0 +1,160 @@
+{
+  "on": {
+    "n": 5,
+    "passes": 1,
+    "pass_rate": 0.2,
+    "last3_pass_rate": 0.3333333333333333,
+    "mean_v2_generated": 0.0,
+    "mean_v2_promoted": 0.0,
+    "mean_v2_acts": 0.0,
+    "mean_v2_help": 0.0,
+    "mean_fallback": 0.0,
+    "mean_det_hint_count": 0.0,
+    "rows": [
+      {
+        "run": 1,
+        "session": 177400,
+        "pass": false,
+        "score": 0.824,
+        "steps": 4,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 2,
+        "session": 177401,
+        "pass": false,
+        "score": 0.941,
+        "steps": 4,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 3,
+        "session": 177402,
+        "pass": true,
+        "score": 1.0,
+        "steps": 6,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 4,
+        "session": 177403,
+        "pass": false,
+        "score": 0.412,
+        "steps": 6,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 5,
+        "session": 177404,
+        "pass": false,
+        "score": 0.824,
+        "steps": 5,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      }
+    ]
+  },
+  "off": {
+    "n": 5,
+    "passes": 0,
+    "pass_rate": 0.0,
+    "last3_pass_rate": 0.0,
+    "mean_v2_generated": 0.0,
+    "mean_v2_promoted": 0.0,
+    "mean_v2_acts": 0.0,
+    "mean_v2_help": 0.0,
+    "mean_fallback": 0.0,
+    "mean_det_hint_count": 0.0,
+    "rows": [
+      {
+        "run": 1,
+        "session": 177500,
+        "pass": false,
+        "score": 0.941,
+        "steps": 6,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 2,
+        "session": 177501,
+        "pass": false,
+        "score": 0.824,
+        "steps": 5,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 3,
+        "session": 177502,
+        "pass": false,
+        "score": 0.824,
+        "steps": 6,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 4,
+        "session": 177503,
+        "pass": false,
+        "score": 0.824,
+        "steps": 5,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      },
+      {
+        "run": 5,
+        "session": 177504,
+        "pass": false,
+        "score": 0.706,
+        "steps": 6,
+        "v2_generated": 0,
+        "v2_promoted": 0,
+        "v2_acts": 0,
+        "v2_help": 0.0,
+        "fallback": 0,
+        "det_hint_count": 0
+      }
+    ]
+  }
+}

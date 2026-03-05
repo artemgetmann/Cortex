@@ -1,0 +1,589 @@
+{
+  "meta": {
+    "task": "incremental_reconcile",
+    "domain": "sqlite",
+    "sessions_per_arm": 10,
+    "max_steps": 4,
+    "llm_backend": "openai",
+    "model_executor": "gpt-5-nano",
+    "model_judge": "gpt-5-nano",
+    "learning_mode": "strict",
+    "posttask_mode": "candidate",
+    "benchmark_promoted_only": false,
+    "on_start_session": 196000,
+    "off_start_session": 196200
+  },
+  "summary": {
+    "on": {
+      "pass_rate": 0.3,
+      "last5_pass_rate": 0.0,
+      "median_steps_to_success": 4,
+      "mean_lesson_activations": 2.3,
+      "mean_retrieval_help_ratio": 0.7
+    },
+    "off": {
+      "pass_rate": 0.5,
+      "last5_pass_rate": 0.2,
+      "median_steps_to_success": 4,
+      "mean_lesson_activations": 0.0,
+      "mean_retrieval_help_ratio": 0.0
+    },
+    "on_minus_off_pass_delta_pp": -20.0
+  },
+  "per_run": {
+    "on": [
+      {
+        "session": 196000,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196001,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session": 196002,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196003,
+        "pass": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"2\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "2"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session": 196004,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 1.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196005,
+        "pass": false,
+        "score": 0.667,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "ledger_aggregate: expected=[[\"bass\", \"4\"], [\"drums\", \"13\"], [\"lead\", \"3\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|ledger_aggregate",
+            "query_id": "ledger_aggregate",
+            "query_sql": "SELECT category, SUM(amount) AS total FROM ledger GROUP BY category ORDER BY category;",
+            "expected_rows": [
+              [
+                "bass",
+                "4"
+              ],
+              [
+                "drums",
+                "13"
+              ],
+              [
+                "lead",
+                "3"
+              ]
+            ],
+            "actual_rows": []
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "checkpoint_row: expected=[[\"CKP-APR-01\", \"4\"]] actual=[]",
+            "gap_signature": "required_query_mismatch|required_query|checkpoint_row",
+            "query_id": "checkpoint_row",
+            "query_sql": "SELECT checkpoint_tag, row_count FROM checkpoint_log ORDER BY checkpoint_tag;",
+            "expected_rows": [
+              [
+                "CKP-APR-01",
+                "4"
+              ]
+            ],
+            "actual_rows": []
+          }
+        ]
+      },
+      {
+        "session": 196006,
+        "pass": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          },
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+rejects",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+rejects"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"2\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "2"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "session": 196007,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 6.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session": 196008,
+        "pass": false,
+        "score": 0.75,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 2.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          },
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+rejects",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+rejects"
+          },
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"2\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "2"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "session": 196009,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 4.0,
+        "retrieval_help_ratio": 1.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"5\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "5"
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "off": [
+      {
+        "session": 196200,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196201,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196202,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196203,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196204,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 1,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"2\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "2"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "session": 196205,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 2,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=2 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session": 196206,
+        "pass": false,
+        "score": 0.917,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "detail": "(?is)insert\\s+into\\s+ledger",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger"
+          }
+        ]
+      },
+      {
+        "session": 196207,
+        "pass": true,
+        "score": 1.0,
+        "steps": 4,
+        "tool_errors": 0,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": []
+      },
+      {
+        "session": 196208,
+        "pass": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      },
+      {
+        "session": 196209,
+        "pass": false,
+        "score": 0.833,
+        "steps": 4,
+        "tool_errors": 3,
+        "lesson_activations": 0.0,
+        "retrieval_help_ratio": 0.0,
+        "unresolved_gaps": [
+          {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "detail": "reject_count: expected=[[\"1\"]] actual=[[\"0\"]]",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+            "query_id": "reject_count",
+            "query_sql": "SELECT COUNT(*) FROM rejects WHERE reason = 'duplicate_event';",
+            "expected_rows": [
+              [
+                "1"
+              ]
+            ],
+            "actual_rows": [
+              [
+                "0"
+              ]
+            ]
+          },
+          {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "detail": "error_count=3 max_error_count=1",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1"
+          }
+        ]
+      }
+    ]
+  },
+  "failure_taxonomy": {
+    "on": {
+      "reason_code_gap_type": [
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "count": 7
+        },
+        {
+          "reason_code": "missing_required_pattern",
+          "gap_type": "required_sql_pattern",
+          "count": 5
+        },
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "count": 3
+        }
+      ],
+      "top_signatures": [
+        {
+          "signature": "required_query_mismatch|required_query|reject_count",
+          "count": 5
+        },
+        {
+          "signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+          "count": 3
+        },
+        {
+          "signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 3
+        },
+        {
+          "signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+rejects",
+          "count": 2
+        },
+        {
+          "signature": "required_query_mismatch|required_query|checkpoint_row",
+          "count": 1
+        },
+        {
+          "signature": "required_query_mismatch|required_query|ledger_aggregate",
+          "count": 1
+        }
+      ]
+    },
+    "off": {
+      "reason_code_gap_type": [
+        {
+          "reason_code": "required_query_mismatch",
+          "gap_type": "required_query",
+          "count": 3
+        },
+        {
+          "reason_code": "too_many_errors",
+          "gap_type": "error_budget",
+          "count": 3
+        },
+        {
+          "reason_code": "missing_required_pattern",
+          "gap_type": "required_sql_pattern",
+          "count": 1
+        }
+      ],
+      "top_signatures": [
+        {
+          "signature": "required_query_mismatch|required_query|reject_count",
+          "count": 3
+        },
+        {
+          "signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+          "count": 2
+        },
+        {
+          "signature": "missing_required_pattern|required_sql_pattern|(?is)insert\\s+into\\s+ledger",
+          "count": 1
+        },
+        {
+          "signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+          "count": 1
+        }
+      ]
+    }
+  }
+}

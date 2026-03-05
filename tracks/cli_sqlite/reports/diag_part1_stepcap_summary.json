@@ -1,0 +1,50 @@
+[
+  {
+    "session": 4101,
+    "max_steps": 4,
+    "pass": false,
+    "score": 0.722,
+    "tool_errors": 1,
+    "lesson_activations": 0
+  },
+  {
+    "session": 4102,
+    "max_steps": 6,
+    "pass": false,
+    "score": 0.889,
+    "tool_errors": 3,
+    "lesson_activations": 0
+  },
+  {
+    "session": 4111,
+    "max_steps": 7,
+    "pass": false,
+    "score": 0.889,
+    "tool_errors": 2,
+    "lesson_activations": 0
+  },
+  {
+    "session": 4112,
+    "max_steps": 7,
+    "pass": false,
+    "score": 0.833,
+    "tool_errors": 2,
+    "lesson_activations": 0
+  },
+  {
+    "session": 4121,
+    "max_steps": 4,
+    "pass": true,
+    "score": 1.0,
+    "tool_errors": 0,
+    "lesson_activations": 0
+  },
+  {
+    "session": 4122,
+    "max_steps": 9,
+    "pass": true,
+    "score": 1.0,
+    "tool_errors": 2,
+    "lesson_activations": 0
+  }
+]

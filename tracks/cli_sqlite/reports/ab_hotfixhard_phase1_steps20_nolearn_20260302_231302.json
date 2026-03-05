@@ -1,0 +1,138 @@
+{
+  "phase": "phase1_steps20_nolearn",
+  "task_id": "shell_git_transfer_hotfix_hard",
+  "max_steps": 20,
+  "lessons_enabled": false,
+  "arms": {
+    "openai_lane": "ab_hotfixhard_p1_openai_20260302_231302",
+    "sdk_lane": "ab_hotfixhard_p1_sdk_20260302_231302"
+  },
+  "rows": [
+    {
+      "backend": "openai",
+      "lane": "ab_hotfixhard_p1_openai_20260302_231302",
+      "session": 7101,
+      "passed": false,
+      "score": 0.889,
+      "steps": 6,
+      "elapsed_s": 48.116,
+      "error_count": 6,
+      "eval_reasons": [
+        "missing_required_event_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 19597
+    },
+    {
+      "backend": "openai",
+      "lane": "ab_hotfixhard_p1_openai_20260302_231302",
+      "session": 7102,
+      "passed": false,
+      "score": 0.889,
+      "steps": 5,
+      "elapsed_s": 32.498,
+      "error_count": 2,
+      "eval_reasons": [
+        "missing_required_event_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 12514
+    },
+    {
+      "backend": "openai",
+      "lane": "ab_hotfixhard_p1_openai_20260302_231302",
+      "session": 7103,
+      "passed": false,
+      "score": 0.944,
+      "steps": 12,
+      "elapsed_s": 66.454,
+      "error_count": 21,
+      "eval_reasons": [
+        "missing_required_file"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 46420
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "lane": "ab_hotfixhard_p1_sdk_20260302_231302",
+      "session": 7201,
+      "passed": false,
+      "score": 0.222,
+      "steps": 2,
+      "elapsed_s": 47.935,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 8516
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "lane": "ab_hotfixhard_p1_sdk_20260302_231302",
+      "session": 7202,
+      "passed": false,
+      "score": 0.222,
+      "steps": 1,
+      "elapsed_s": 39.876,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 5442
+    },
+    {
+      "backend": "openai_agents_sdk",
+      "lane": "ab_hotfixhard_p1_sdk_20260302_231302",
+      "session": 7203,
+      "passed": false,
+      "score": 0.222,
+      "steps": 2,
+      "elapsed_s": 50.713,
+      "error_count": 0,
+      "eval_reasons": [
+        "missing_required_event_pattern",
+        "missing_required_file",
+        "missing_required_file_content_pattern"
+      ],
+      "lesson_activations": 0,
+      "retrieval_help_ratio": 0.0,
+      "total_tokens": 8275
+    }
+  ],
+  "summary": {
+    "openai": {
+      "runs": 3,
+      "pass_rate": 0.0,
+      "mean_score": 0.9073333333333333,
+      "mean_steps": 7.666666666666667,
+      "mean_elapsed_s": 49.02266666666666,
+      "mean_error_count": 9.666666666666666,
+      "mean_lesson_activations": 0.0,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_total_tokens": 26177.0
+    },
+    "openai_agents_sdk": {
+      "runs": 3,
+      "pass_rate": 0.0,
+      "mean_score": 0.222,
+      "mean_steps": 1.6666666666666667,
+      "mean_elapsed_s": 46.17466666666667,
+      "mean_error_count": 0.0,
+      "mean_lesson_activations": 0.0,
+      "mean_retrieval_help_ratio": 0.0,
+      "mean_total_tokens": 7411.0
+    }
+  }
+}

@@ -1,0 +1,24 @@
+From 9a9864cf1787937669b6d4a1a733f534aa2ead01 Mon Sep 17 00:00:00 2001
+From: Cortex Bot <cortex@example.com>
+Date: Wed, 4 Mar 2026 16:52:12 +0400
+Subject: [PATCH] hotfix: apply gamma retry profile
+
+---
+ hotfix_gamma.txt | 4 ++++
+ 1 file changed, 4 insertions(+)
+ create mode 100644 hotfix_gamma.txt
+
+diff --git a/hotfix_gamma.txt b/hotfix_gamma.txt
+new file mode 100644
+index 0000000..ed67a20
+--- /dev/null
++++ b/hotfix_gamma.txt
+@@ -0,0 +1,4 @@
++Retry backoff tune:
++Prefer deterministic values in runtime variants.
++Retry profile gamma
++Set initial delay to 325ms
+\ No newline at end of file
+-- 
+2.50.1 (Apple Git-155)
+
