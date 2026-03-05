@@ -45,6 +45,12 @@ RUNNER_V15 = ROOT_DIR / "tracks" / "cli_sqlite_v15" / "run_cli_agent_v15.py"
 RUNNER = RUNNER_V15 if USE_V15_PROFILE else RUNNER_LEGACY
 DEFAULT_EXECUTOR_MODEL = "gpt-5-nano" if USE_V15_PROFILE else "claude-haiku-4-5"
 DEFAULT_LLM_BACKEND = "openai" if USE_V15_PROFILE else "anthropic"
+# Adaptive retry defaults for live Telegram runs.
+# These are safety caps, not fixed execution counts.
+DEFAULT_ADAPTIVE_ATTEMPTS_CAP = 5
+DEFAULT_ADAPTIVE_TOTAL_STEPS_CAP = 30
+DEFAULT_ADAPTIVE_WALL_TIME_CAP_S = 600
+DEFAULT_ADAPTIVE_PLATEAU_STREAK_CAP = 2
 
 KNOWN_TASK_DOMAIN: dict[str, str] = {
     "aggregate_report": "gridtool",
@@ -85,9 +91,12 @@ class DispatchPlan:
     run_id: str | None = None
     attempts: int = 1
     max_steps: int = 6
+    max_total_steps: int = DEFAULT_ADAPTIVE_TOTAL_STEPS_CAP
+    max_wall_time_s: int = DEFAULT_ADAPTIVE_WALL_TIME_CAP_S
     model_executor: str = DEFAULT_EXECUTOR_MODEL
     llm_backend: str = DEFAULT_LLM_BACKEND
     posttask_learn: bool = True
+    adaptive_retry: bool = False
     progress: bool = False
     progress_limit: int = 8
     reason: str = ""
@@ -166,6 +175,17 @@ def _parse_attempts(value: str, *, default: int) -> int:
         return max(1, min(10, int(raw)))
     except ValueError:
         return max(1, default)
+
+
+def _parse_int_cap(value: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = str(value or "").strip()
+    if not raw:
+        return max(minimum, min(maximum, int(default)))
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return max(minimum, min(maximum, int(default)))
+    return max(minimum, min(maximum, parsed))
 
 
 def _extract_natural_step_budget(text: str) -> int | None:
@@ -525,10 +545,19 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
             task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
             task_text = free_text
 
-    # Plain natural-language auto-routed tasks should run the learning loop,
-    # not single-attempt chat semantics.
-    default_attempts = 3 if (is_learnrun or auto_task_intent) else 1
+    # Adaptive retry should be enabled for natural-language task intent and
+    # explicit learnrun mode. Plain /run stays single-attempt by default unless
+    # caller opts into attempts>1.
+    default_attempts = (
+        DEFAULT_ADAPTIVE_ATTEMPTS_CAP if (is_learnrun or auto_task_intent) else 1
+    )
     attempts = _parse_attempts(controls.get("attempts", ""), default=default_attempts)
+    retry_control = controls.get("retry", "").strip().lower()
+    adaptive_retry = is_learnrun or auto_task_intent
+    if retry_control in {"off", "false", "0", "no"}:
+        adaptive_retry = False
+    elif retry_control in {"on", "true", "1", "yes", "adaptive"}:
+        adaptive_retry = True
 
     max_steps_raw = controls.get("steps", "").strip()
     natural_steps = _extract_natural_step_budget(payload_tail or task_text or "")
@@ -541,6 +570,18 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
             max_steps = 6
     except ValueError:
         max_steps = 6
+    max_total_steps = _parse_int_cap(
+        controls.get("max_total_steps", controls.get("total_steps", "")),
+        default=DEFAULT_ADAPTIVE_TOTAL_STEPS_CAP,
+        minimum=max_steps,
+        maximum=200,
+    )
+    max_wall_time_s = _parse_int_cap(
+        controls.get("max_wall_time_s", controls.get("max_time_s", "")),
+        default=DEFAULT_ADAPTIVE_WALL_TIME_CAP_S,
+        minimum=10,
+        maximum=3600,
+    )
 
     # v1.5 profile is intentionally locked to a single model/backend so
     # real-world Telegram data stays consistent with benchmark policy.
@@ -565,9 +606,12 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         run_id=run_id,
         attempts=attempts,
         max_steps=max_steps,
+        max_total_steps=max_total_steps,
+        max_wall_time_s=max_wall_time_s,
         model_executor=model_executor,
         llm_backend=llm_backend,
         posttask_learn=posttask_learn,
+        adaptive_retry=adaptive_retry,
         reason=(
             "auto_task_intent"
             if auto_task_intent
@@ -691,23 +735,268 @@ def _run_task_once(
     }
 
 
+def _coerce_float(value: Any, *, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _failure_signature(attempt: dict[str, Any]) -> str:
+    """
+    Build a deterministic, task-agnostic failure signature for plateau checks.
+    We avoid domain-specific logic here so the retry controller remains generic.
+    """
+    metrics = attempt.get("metrics") if isinstance(attempt.get("metrics"), dict) else {}
+    payload = {
+        "task_id": attempt.get("task_id"),
+        "domain": attempt.get("domain"),
+        "eval_passed": bool(metrics.get("eval_passed") is True),
+        "eval_score": round(_coerce_float(metrics.get("eval_score")), 4),
+        "error_count": _coerce_int(metrics.get("error_count")),
+        "unresolved_final": _coerce_int(metrics.get("contract_gap_unresolved_count_final")),
+        "closure_missing": metrics.get("contract_closure_check_last_missing"),
+    }
+    return json.dumps(payload, sort_keys=True, ensure_ascii=True)
+
+
+def _extract_progress_snapshot(attempt: dict[str, Any], *, default_steps: int) -> dict[str, Any]:
+    metrics = attempt.get("metrics") if isinstance(attempt.get("metrics"), dict) else {}
+    return {
+        "eval_passed": bool(metrics.get("eval_passed") is True),
+        "eval_score": _coerce_float(metrics.get("eval_score")),
+        "error_count": _coerce_int(metrics.get("error_count")),
+        "steps_used": max(1, _coerce_int(metrics.get("step_count")) or int(default_steps)),
+        "signature": _failure_signature(attempt),
+    }
+
+
+def _progress_reason(prev: dict[str, Any], curr: dict[str, Any]) -> tuple[bool, str]:
+    if curr["eval_passed"] and not prev["eval_passed"]:
+        return True, "eval_passed_now_true"
+    if curr["eval_score"] > prev["eval_score"] + 1e-9:
+        return True, "eval_score_improved"
+    prev_err = prev.get("error_count")
+    curr_err = curr.get("error_count")
+    if isinstance(prev_err, int) and isinstance(curr_err, int) and curr_err < prev_err:
+        return True, "error_count_decreased"
+    return False, "no_progress"
+
+
 def _run_task(plan: DispatchPlan, *, dry_run: bool = False) -> dict[str, Any]:
     attempts_requested = max(1, int(plan.attempts))
     if attempts_requested == 1:
         return _run_task_once(plan, dry_run=dry_run, preferred_run_id=plan.run_id)
 
     attempt_results: list[dict[str, Any]] = []
+    decision_trace: list[dict[str, Any]] = []
     last_result: dict[str, Any] = {}
+    started_at = time.time()
+    total_steps_used = 0
+    no_progress_streak = 0
+    repeated_signature_streak = 0
+    prev_snapshot: dict[str, Any] | None = None
+    stop_reason = "attempt_cap_reached"
+
     for attempt_index in range(attempts_requested):
         # Multi-attempt runs must isolate state by allocating fresh run/session
         # identifiers each time, even if a caller provided run_id.
         attempt = _run_task_once(plan, dry_run=dry_run, preferred_run_id=None)
-        attempt["attempt_index"] = attempt_index + 1
+        attempt_number = attempt_index + 1
+        attempt["attempt_index"] = attempt_number
         attempt_results.append(attempt)
         last_result = attempt
 
+        snapshot = _extract_progress_snapshot(attempt, default_steps=plan.max_steps)
+        total_steps_used += int(snapshot["steps_used"])
+        elapsed_s = time.time() - started_at
+
+        if snapshot["eval_passed"]:
+            stop_reason = "success"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+
+        if not plan.adaptive_retry:
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "retry" if attempt_number < attempts_requested else "stop",
+                    "reason": "fixed_attempt_schedule",
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            if attempt_number >= attempts_requested:
+                stop_reason = "attempt_cap_reached"
+                break
+            prev_snapshot = snapshot
+            continue
+
+        # Dry-runs should keep deterministic count behavior for tests and
+        # preview UX, while still exposing adaptive metadata shape.
+        if dry_run:
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "retry" if attempt_number < attempts_requested else "stop",
+                    "reason": "dry_run_simulation",
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            if attempt_number >= attempts_requested:
+                stop_reason = "attempt_cap_reached"
+                break
+            prev_snapshot = snapshot
+            continue
+
+        # Hard caps always win.
+        if total_steps_used >= int(plan.max_total_steps):
+            stop_reason = "max_total_steps_cap"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+        if elapsed_s >= float(plan.max_wall_time_s):
+            stop_reason = "max_wall_time_cap"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+
+        if attempt_number >= attempts_requested:
+            stop_reason = "attempt_cap_reached"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+
+        # Always allow one retry after initial failure so the loop can exploit
+        # freshly written lessons on the next pass.
+        if prev_snapshot is None:
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "retry",
+                    "reason": "initial_failure_retry",
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            prev_snapshot = snapshot
+            continue
+
+        progressed, progress_reason = _progress_reason(prev_snapshot, snapshot)
+        if progressed:
+            no_progress_streak = 0
+        else:
+            no_progress_streak += 1
+
+        if snapshot["signature"] == prev_snapshot["signature"]:
+            repeated_signature_streak += 1
+        else:
+            repeated_signature_streak = 0
+
+        if repeated_signature_streak >= DEFAULT_ADAPTIVE_PLATEAU_STREAK_CAP:
+            stop_reason = "repeated_failure_signature"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+        if no_progress_streak >= DEFAULT_ADAPTIVE_PLATEAU_STREAK_CAP:
+            stop_reason = "plateau_no_progress"
+            decision_trace.append(
+                {
+                    "attempt": attempt_number,
+                    "decision": "stop",
+                    "reason": stop_reason,
+                    "eval_score": snapshot["eval_score"],
+                    "error_count": snapshot["error_count"],
+                    "elapsed_s": round(elapsed_s, 3),
+                    "total_steps_used": total_steps_used,
+                }
+            )
+            break
+
+        decision_trace.append(
+            {
+                "attempt": attempt_number,
+                "decision": "retry",
+                "reason": progress_reason if progressed else "explore_next_attempt",
+                "eval_score": snapshot["eval_score"],
+                "error_count": snapshot["error_count"],
+                "elapsed_s": round(elapsed_s, 3),
+                "total_steps_used": total_steps_used,
+            }
+        )
+        prev_snapshot = snapshot
+
     merged = dict(last_result)
     merged["attempts_requested"] = attempts_requested
+    merged["attempts_run"] = len(attempt_results)
+    merged["adaptive_retry"] = bool(plan.adaptive_retry)
+    merged["adaptive_stop_reason"] = stop_reason
+    merged["adaptive_decisions"] = decision_trace
+    merged["adaptive_caps"] = {
+        "attempts": attempts_requested,
+        "max_total_steps": int(plan.max_total_steps),
+        "max_wall_time_s": int(plan.max_wall_time_s),
+    }
     merged["attempt_results"] = attempt_results
     return merged
 

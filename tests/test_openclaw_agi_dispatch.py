@@ -31,6 +31,7 @@ def test_dispatch_known_task_from_run_command() -> None:
     result = payload["result"]
     assert payload["mode"] == "run"
     assert plan["attempts"] == 1
+    assert plan["adaptive_retry"] is False
     assert plan["task_id"] == "shell_git_transfer_hotfix"
     assert plan["domain"] == "shell"
     assert result["dry_run"] is True
@@ -105,16 +106,22 @@ def test_dispatch_learnrun_attempts_three_emits_attempt_results() -> None:
     result = payload["result"]
     assert payload["mode"] == "run"
     assert payload["plan"]["attempts"] == 3
+    assert payload["plan"]["adaptive_retry"] is True
     assert result["attempts_requested"] == 3
+    assert result["attempts_run"] == 3
     assert len(result["attempt_results"]) == 3
     assert len({item["run_id"] for item in result["attempt_results"]}) == 3
     assert len({item["session_id"] for item in result["attempt_results"]}) == 3
     assert result["run_id"] == result["attempt_results"][-1]["run_id"]
+    assert result["adaptive_retry"] is True
+    assert result["adaptive_stop_reason"] == "attempt_cap_reached"
+    assert len(result["adaptive_decisions"]) == 3
 
 
 def test_dispatch_run_prefix_defaults_to_single_attempt() -> None:
     payload = _run_dispatch(text="/run domain=shell shell_git_transfer_hotfix")
     assert payload["plan"]["attempts"] == 1
+    assert payload["plan"]["adaptive_retry"] is False
     assert "attempts_requested" not in payload["result"]
     assert "attempt_results" not in payload["result"]
 
@@ -133,7 +140,8 @@ def test_dispatch_plain_natural_task_routes_to_dynamic_run_plan() -> None:
     )
     assert payload["mode"] == "run"
     assert payload["plan"]["reason"] == "auto_task_intent"
-    assert payload["plan"]["attempts"] == 3
+    assert payload["plan"]["attempts"] == 5
+    assert payload["plan"]["adaptive_retry"] is True
     assert payload["plan"]["task_id"].startswith("openclaw_dynamic_")
     assert payload["plan"]["domain"] == "sqlite"
 

@@ -300,6 +300,9 @@ function summarizeRun(
   const sessionDir = result?.session_dir ?? "?";
   const metrics = (result?.metrics as Record<string, unknown>) || {};
   const runRecord = (result?.run as Record<string, unknown> | undefined) || undefined;
+  const attemptsRun = Number(result?.attempts_run ?? 1);
+  const attemptsRequested = Number(result?.attempts_requested ?? attemptsRun);
+  const adaptiveStopReason = String(result?.adaptive_stop_reason ?? "n/a");
   const followups = Array.isArray(runRecord?.followups)
     ? (runRecord?.followups as Record<string, unknown>[])
     : [];
@@ -316,6 +319,8 @@ function summarizeRun(
     `- eval_score: ${metrics.eval_score ?? "?"}`,
     `- lesson_activations: ${metrics.lesson_activations ?? "?"}`,
     `- retrieval_help_ratio: ${metrics.v2_retrieval_help_ratio ?? "?"}`,
+    `- attempts_run: ${attemptsRun}/${attemptsRequested}`,
+    `- stop_reason: ${adaptiveStopReason}`,
     `- followups_applied: ${followupCount}`,
     `- last_followup: ${lastFollowup?.text ?? "none"}`,
     `- session_dir: ${sessionDir}`,
@@ -793,8 +798,9 @@ export async function maybeHandleCortexRoute(
     if (POSITIVE_CONFIRM.has(lowered)) {
       pendingTasks.delete(scope);
       // Keep natural-language task routing domain-agnostic. The Python
-      // dispatcher infers domain/task when explicit controls are absent.
-      const runText = `/learnrun attempts=3 ${pending.prompt}`;
+      // dispatcher infers domain/task when explicit controls are absent and
+      // now controls adaptive retries itself.
+      const runText = `/learnrun ${pending.prompt}`;
       await runTaskAndReply(ctx, runText, chatId);
       return true;
     }
@@ -813,7 +819,7 @@ export async function maybeHandleCortexRoute(
     // task-mode instead of hijacking it as followup steering.
     if (taskIntent) {
       if (!CORTEX_CONFIRMATION_ENABLED) {
-        const runText = `/learnrun attempts=3 ${normalized}`;
+        const runText = `/learnrun ${normalized}`;
         await runTaskAndReply(ctx, runText, chatId);
         return true;
       }
@@ -833,8 +839,8 @@ export async function maybeHandleCortexRoute(
 
   if (!CORTEX_CONFIRMATION_ENABLED) {
     // Same domain-agnostic routing path as the confirmation flow, but with
-    // learnrun semantics so memory loop can close in one user turn.
-    const runText = `/learnrun attempts=3 ${normalized}`;
+    // learnrun semantics so memory loop can self-tune retries in one turn.
+    const runText = `/learnrun ${normalized}`;
     await runTaskAndReply(ctx, runText, chatId);
     return true;
   }
