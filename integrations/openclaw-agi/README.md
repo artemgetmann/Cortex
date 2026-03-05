@@ -1,5 +1,10 @@
 # OpenClaw AGI Bridge
 
+Deprecated for primary Telegram serving.
+
+Use `integrations/cortex-telegram-agi-bot` for `@cortex_openclaw_agi_bot`.
+This OpenClaw bridge is retained only for legacy/debug scenarios.
+
 This integration runs a second OpenClaw profile for live Telegram testing while keeping Cortex as the single source of truth for learning logic.
 
 Design:

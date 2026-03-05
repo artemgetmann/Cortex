@@ -177,6 +177,8 @@ cp tracks/cli_sqlite/learning/lessons.jsonl tracks/cli_sqlite/learning/lessons.j
 
 ## OpenClaw AGI Bridge (Isolated Runtime)
 
+Status: deprecated path for Telegram serving. Keep only as legacy bridge docs.
+
 The OpenClaw AGI bot must run in an isolated profile so the existing `~/.openclaw` bot is never affected.
 
 Rules:
@@ -212,6 +214,17 @@ Task-mode protocol (for live chat):
 - Anything else => chat mode (no lesson writes).
 
 ## Standalone Telegram AGI Frontend (Preferred for Fast Iteration)
+
+Source of truth for Cortex Telegram bot runtime:
+- Bot code: `integrations/cortex-telegram-agi-bot`
+- LaunchAgent label: `com.cortex-telegram-agi`
+- Startup script: `scripts/cortex_tg_agi_start.sh`
+- Install script: `scripts/cortex_tg_agi_install_launchagent.sh`
+- Bot username target: `@cortex_openclaw_agi_bot`
+
+Safety rule:
+- Do not run `@cortex_openclaw_agi_bot` through OpenClaw gateway profiles.
+- Keep Telegram disabled in legacy AGI OpenClaw profiles unless explicitly doing legacy bridge debugging.
 
 For live testing without touching OpenClaw or the existing `claude-code-telegram-bot` repo, use:
 
