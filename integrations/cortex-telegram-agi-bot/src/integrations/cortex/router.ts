@@ -347,7 +347,16 @@ function summarizePollUpdate(
   lastSeenLifecycleTs: number,
   verbose: boolean
 ): PollUpdate | null {
-  const run = statusPayload.run as Record<string, unknown> | null | undefined;
+  const activeRuns = Array.isArray(statusPayload.active_runs)
+    ? (statusPayload.active_runs as Record<string, unknown>[])
+    : [];
+  // Primary path: exact run id match from status payload.
+  // Fallback path: for multi-attempt learnrun flows the transport run id can
+  // rotate per attempt; use the freshest active run so progress stays visible.
+  const run =
+    (statusPayload.run as Record<string, unknown> | null | undefined) ||
+    activeRuns[0] ||
+    null;
   if (!run) return null;
   const lifecycleEvents = Array.isArray(statusPayload.lifecycle_events)
     ? (statusPayload.lifecycle_events as Record<string, unknown>[])
@@ -367,9 +376,8 @@ function summarizePollUpdate(
     started > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - started)) : null;
   const terminal = status === "completed" || status === "failed" || status === "cancelled";
   const latestEvent = latestLifecycle ? String(latestLifecycle.event ?? "") : "";
-  const signature = `${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
-  const elapsedPart = elapsedSec === null ? "" : `, elapsed=${elapsedSec}s`;
-  const cancelPart = cancelRequested ? ", cancel_requested=true" : "";
+  const resolvedRunId = String(run.run_id ?? runId);
+  const signature = `${resolvedRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
   const hasNewLifecycleEvent = latestLifecycleTs > lastSeenLifecycleTs;
   const followups = Array.isArray(run.followups)
     ? (run.followups as unknown[])
@@ -400,7 +408,7 @@ function summarizePollUpdate(
               ? "Planning"
               : "Running";
   const lines = [
-    `Cortex live run ${runId}`,
+    `Cortex live run ${resolvedRunId}`,
     `- status: ${status}`,
     `- phase: ${phase}`,
     `- step: ${lastStep}`,

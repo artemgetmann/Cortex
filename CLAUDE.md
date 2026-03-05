@@ -183,9 +183,9 @@ The OpenClaw AGI bot must run in an isolated profile so the existing `~/.opencla
 
 Rules:
 - Existing bot profile: `~/.openclaw` (do not modify for AGI bridge work).
-- AGI bot profile (default): `~/.cloudcode-telegrambot-cortex-agi`.
-- AGI config path (default): `~/.cloudcode-telegrambot-cortex-agi/openclaw.json`.
-- Legacy AGI profile `~/.openclaw-agi` is still supported for backward compatibility.
+- Legacy AGI OpenClaw profile backups moved to:
+  `integrations/legacy/openclaw-profiles/` (gitignored, local-only).
+- Do not use legacy OpenClaw AGI profiles for live Telegram serving.
 - AGI workspace (inside Cortex for visibility): `integrations/openclaw-agi/workspace`.
 - Bridge script: `integrations/openclaw-agi/workspace/bin/cortex_cli_bridge.sh`.
 - Dispatcher script (chat/task router): `integrations/openclaw-agi/workspace/bin/cortex_openclaw_dispatch.sh`.
