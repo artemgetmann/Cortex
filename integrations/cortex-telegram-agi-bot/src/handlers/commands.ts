@@ -55,6 +55,7 @@ export async function handleStart(ctx: Context): Promise<void> {
       `/restart - Restart the bot\n` +
       `/run ... - Execute via Cortex learning loop\n` +
       `/learnstatus - Show Cortex learning metrics\n\n` +
+      `/verbose on|off - Toggle detailed Cortex progress output\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt current query\n` +
       `• Use "think" keyword for extended reasoning\n` +

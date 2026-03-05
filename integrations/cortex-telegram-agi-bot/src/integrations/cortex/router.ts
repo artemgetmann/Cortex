@@ -20,10 +20,16 @@ type ActiveRunState = {
   lastProgressSignature: string;
   lastProgressSentAtMs: number;
   lastLifecycleTs: number;
+  // Single progress card message edited in-place to avoid noisy chat spam.
+  progressMessageId?: number;
+  // Per-run snapshot of verbose mode so output format stays stable mid-run.
+  verbose: boolean;
 };
 
 const pendingTasks = new Map<string, PendingTask>();
 const activeRuns = new Map<string, ActiveRunState>();
+// Per-chat verbosity toggle for operators who want deeper internals.
+const verboseModeByScope = new Map<string, boolean>();
 
 // Polling is intentionally lightweight: fixed interval and throttled updates.
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
@@ -50,6 +56,37 @@ type PollUpdate = {
 
 function chatScope(chatId: number): string {
   return `tg-${chatId}`;
+}
+
+function isVerboseEnabled(scope: string): boolean {
+  return verboseModeByScope.get(scope) === true;
+}
+
+function setVerboseMode(scope: string, enabled: boolean): void {
+  verboseModeByScope.set(scope, enabled);
+}
+
+function parseVerboseCommand(
+  text: string
+): { handled: boolean; enabled?: boolean; error?: string } {
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0 || parts[0]?.toLowerCase() !== "/verbose") {
+    return { handled: false };
+  }
+  if (parts.length === 1) {
+    return { handled: true };
+  }
+  const raw = (parts[1] || "").toLowerCase();
+  if (raw === "on" || raw === "true" || raw === "1") {
+    return { handled: true, enabled: true };
+  }
+  if (raw === "off" || raw === "false" || raw === "0") {
+    return { handled: true, enabled: false };
+  }
+  return {
+    handled: true,
+    error: "Use /verbose on or /verbose off.",
+  };
 }
 
 function startsWithAny(text: string, prefixes: string[]): boolean {
@@ -251,7 +288,8 @@ function summarizeRunStatus(payload: Record<string, unknown>): string {
 
 function summarizeRun(
   plan: Record<string, unknown> | undefined,
-  result: Record<string, unknown> | undefined
+  result: Record<string, unknown> | undefined,
+  verbose: boolean
 ): string {
   const taskId = result?.task_id ?? plan?.task_id ?? "?";
   const domain = result?.domain ?? plan?.domain ?? "?";
@@ -267,7 +305,7 @@ function summarizeRun(
     : [];
   const lastFollowup = followups.length > 0 ? followups[followups.length - 1] : undefined;
   const followupCount = Number(result?.run_followup_count ?? followups.length ?? 0);
-  return [
+  const lines = [
     `Cortex run: ${ok ? "ok" : "failed"}`,
     `- run_id: ${runId}`,
     `- run_status: ${runStatus}`,
@@ -281,13 +319,33 @@ function summarizeRun(
     `- followups_applied: ${followupCount}`,
     `- last_followup: ${lastFollowup?.text ?? "none"}`,
     `- session_dir: ${sessionDir}`,
-  ].join("\n");
+  ];
+
+  if (verbose) {
+    const prerunLessonIds = Array.isArray(metrics.prerun_lesson_ids)
+      ? (metrics.prerun_lesson_ids as unknown[])
+      : [];
+    lines.push(`- lessons_loaded_v2: ${metrics.v2_lessons_loaded ?? "?"}`);
+    lines.push(`- lessons_generated: ${metrics.lessons_generated ?? "?"}`);
+    lines.push(`- error_count: ${metrics.error_count ?? "?"}`);
+    lines.push(`- prerun_lesson_ids: ${prerunLessonIds.length}`);
+    if (prerunLessonIds.length > 0) {
+      const preview = prerunLessonIds
+        .slice(0, 4)
+        .map((x) => String(x))
+        .join(", ");
+      lines.push(`- lesson_preview: ${preview}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function summarizePollUpdate(
   statusPayload: Record<string, unknown>,
   runId: string,
-  lastSeenLifecycleTs: number
+  lastSeenLifecycleTs: number,
+  verbose: boolean
 ): PollUpdate | null {
   const run = statusPayload.run as Record<string, unknown> | null | undefined;
   if (!run) return null;
@@ -329,10 +387,46 @@ function summarizePollUpdate(
     }
   }
 
+  const phase =
+    status === "completed"
+      ? "Done"
+      : status === "failed"
+        ? "Failed"
+        : status === "cancelled"
+          ? "Cancelled"
+          : latestEvent === "step"
+            ? "Executing"
+            : latestEvent === "started"
+              ? "Planning"
+              : "Running";
+  const lines = [
+    `Cortex live run ${runId}`,
+    `- status: ${status}`,
+    `- phase: ${phase}`,
+    `- step: ${lastStep}`,
+    `- followups: ${followups.length}`,
+    `- elapsed: ${elapsedSec ?? "?"}s`,
+  ];
+  if (cancelRequested) {
+    lines.push("- cancel_requested: true");
+  }
+  if (hasNewLifecycleEvent && latestLifecycle) {
+    lines.push(`- event: ${String(latestLifecycle.event ?? "event")}`);
+    const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
+    lines.push(`- event_step: ${eventStep}`);
+  }
+  if (verbose) {
+    const runMetrics = (run.metrics as Record<string, unknown> | undefined) || {};
+    lines.push(`- eval_score: ${runMetrics.eval_score ?? "?"}`);
+    lines.push(`- lesson_activations: ${runMetrics.v2_lesson_activations ?? "?"}`);
+    lines.push(`- retrieval_help_ratio: ${runMetrics.v2_retrieval_help_ratio ?? "?"}`);
+    lines.push(`- error_count: ${runMetrics.error_count ?? "?"}`);
+  }
+
   return {
     signature,
     terminal,
-    message: `Cortex run update (${runId}): status=${status}, last_step=${lastStep}, followups=${followups.length}${cancelPart}${elapsedPart}${eventPart}`,
+    message: lines.join("\n"),
   };
 }
 
@@ -353,11 +447,24 @@ async function maybeSendRunProgressUpdate(
     if (!bridge.payload || bridge.payload.mode !== "status") return;
 
     const statusPayload = bridge.payload as Record<string, unknown>;
-    const poll = summarizePollUpdate(statusPayload, runId, state.lastLifecycleTs);
+    const poll = summarizePollUpdate(
+      statusPayload,
+      runId,
+      state.lastLifecycleTs,
+      state.verbose
+    );
     if (!poll) return;
 
-    if (poll.signature === state.lastProgressSignature) return;
     const now = Date.now();
+    // Even when signature is unchanged, refresh periodically so elapsed/phase
+    // stays visibly alive for the user.
+    if (
+      poll.signature === state.lastProgressSignature &&
+      !poll.terminal &&
+      now - state.lastProgressSentAtMs < RUN_STATUS_UPDATE_THROTTLE_MS
+    ) {
+      return;
+    }
     if (
       !poll.terminal &&
       now - state.lastProgressSentAtMs < RUN_STATUS_UPDATE_THROTTLE_MS
@@ -376,7 +483,21 @@ async function maybeSendRunProgressUpdate(
         state.lastLifecycleTs = ts;
       }
     }
-    await ctx.reply(poll.message);
+    if (state.progressMessageId) {
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          state.progressMessageId,
+          poll.message
+        );
+        return;
+      } catch {
+        // If edit fails (deleted/expired), fallback to a fresh message and
+        // keep updating that one next tick.
+      }
+    }
+    const sent = await ctx.reply(poll.message);
+    state.progressMessageId = sent.message_id;
   } catch {
     // Polling is best-effort: failures should not break the foreground run flow.
   } finally {
@@ -401,6 +522,7 @@ async function runTaskAndReply(
 ): Promise<void> {
   const scope = chatScope(chatId);
   const runDispatch = buildRunDispatchText(runText);
+  const verbose = isVerboseEnabled(scope);
   activeRuns.set(scope, {
     runId: runDispatch.runId,
     startedAtMs: Date.now(),
@@ -409,14 +531,20 @@ async function runTaskAndReply(
     lastProgressSignature: "",
     lastProgressSentAtMs: 0,
     lastLifecycleTs: 0,
+    verbose,
   });
 
-  await ctx.reply(
+  const started = await ctx.reply(
     `Running via Cortex learning loop...\n` +
       `- run_id: ${runDispatch.runId}\n` +
+      `- verbose: ${verbose ? "on" : "off"}\n` +
       `- use /run-status for progress\n` +
       `- use /stop to request cancel`
   );
+  const state = activeRuns.get(scope);
+  if (state && state.runId === runDispatch.runId) {
+    state.progressMessageId = started.message_id;
+  }
 
   const pollTimer = startRunStatusPolling(ctx, scope, runDispatch.runId);
   let bridge: Awaited<ReturnType<typeof runCortexDispatch>>;
@@ -452,7 +580,8 @@ async function runTaskAndReply(
     await ctx.reply(
       summarizeRun(
         payload.plan as Record<string, unknown> | undefined,
-        payload.result as Record<string, unknown> | undefined
+        payload.result as Record<string, unknown> | undefined,
+        verbose
       )
     );
     return;
@@ -603,6 +732,24 @@ export async function maybeHandleCortexRoute(
   const normalized = message.trim();
   const lowered = normalized.toLowerCase();
   const scope = chatScope(chatId);
+  const verboseCmd = parseVerboseCommand(normalized);
+  if (verboseCmd.handled) {
+    if (verboseCmd.error) {
+      await ctx.reply(verboseCmd.error);
+      return true;
+    }
+    if (typeof verboseCmd.enabled === "boolean") {
+      setVerboseMode(scope, verboseCmd.enabled);
+      await ctx.reply(
+        `Verbose mode is now ${verboseCmd.enabled ? "on" : "off"} for this chat.`
+      );
+      return true;
+    }
+    await ctx.reply(
+      `Verbose mode is ${isVerboseEnabled(scope) ? "on" : "off"} for this chat.\nUse /verbose on or /verbose off.`
+    );
+    return true;
+  }
   const pending = pendingTasks.get(scope);
   const taskIntent =
     CORTEX_AUTO_TASK_ROUTING &&
