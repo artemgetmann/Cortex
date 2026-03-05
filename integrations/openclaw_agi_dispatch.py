@@ -8,6 +8,8 @@ import os
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,6 +53,14 @@ DEFAULT_ADAPTIVE_ATTEMPTS_CAP = 5
 DEFAULT_ADAPTIVE_TOTAL_STEPS_CAP = 30
 DEFAULT_ADAPTIVE_WALL_TIME_CAP_S = 600
 DEFAULT_ADAPTIVE_PLATEAU_STREAK_CAP = 2
+INTENT_ROUTER_MODE = str(os.environ.get("CORTEX_INTENT_ROUTER", "off")).strip().lower()
+INTENT_ROUTER_MODEL = str(
+    os.environ.get("CORTEX_INTENT_ROUTER_MODEL", DEFAULT_EXECUTOR_MODEL)
+).strip() or DEFAULT_EXECUTOR_MODEL
+INTENT_ROUTER_CONFIDENCE_THRESHOLD = float(
+    os.environ.get("CORTEX_INTENT_ROUTER_CONFIDENCE_THRESHOLD", "0.72")
+)
+INTENT_ROUTER_TOP_K = max(3, min(12, int(os.environ.get("CORTEX_INTENT_ROUTER_TOP_K", "8") or "8")))
 
 KNOWN_TASK_DOMAIN: dict[str, str] = {
     "aggregate_report": "gridtool",
@@ -104,6 +114,7 @@ class DispatchPlan:
     adaptive_retry: bool = False
     progress: bool = False
     progress_limit: int = 8
+    intent_router: dict[str, Any] | None = None
     reason: str = ""
 
 
@@ -348,6 +359,187 @@ def _infer_domain(task_text: str, fallback: str = "shell") -> str:
     return fallback
 
 
+def _tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9_]+", str(text or "").lower()))
+
+
+def _task_preview(task_id: str) -> str:
+    task_md = TASKS_ROOT / task_id / "task.md"
+    if not task_md.exists():
+        return ""
+    try:
+        body = task_md.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    return " ".join(lines[:8])[:500]
+
+
+def _build_capability_candidates(
+    *,
+    task_text: str,
+    known_ids: set[str],
+    default_domain: str,
+) -> list[dict[str, str]]:
+    query_tokens = _tokenize(task_text)
+    candidates: list[tuple[float, dict[str, str]]] = []
+    for task_id in sorted(known_ids):
+        domain = KNOWN_TASK_DOMAIN.get(task_id) or _infer_domain(task_id, fallback=default_domain)
+        preview = _task_preview(task_id)
+        corpus = f"{task_id} {domain} {preview}"
+        corpus_tokens = _tokenize(corpus)
+        overlap = len(query_tokens & corpus_tokens)
+        denom = max(1, len(query_tokens))
+        score = overlap / denom
+        candidates.append(
+            (
+                score,
+                {
+                    "task_id": task_id,
+                    "domain": domain,
+                    "summary": preview or f"{task_id} task in {domain}",
+                },
+            )
+        )
+    ranked = sorted(candidates, key=lambda row: row[0], reverse=True)
+    top_rows = [item for _, item in ranked[:INTENT_ROUTER_TOP_K]]
+    return top_rows
+
+
+def _extract_openai_response_text(payload: dict[str, Any]) -> str:
+    output = payload.get("output")
+    if isinstance(output, list):
+        chunks: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for row in content:
+                if not isinstance(row, dict):
+                    continue
+                text = row.get("text")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text)
+        if chunks:
+            return "\n".join(chunks)
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    return ""
+
+
+def _intent_router_decision(
+    *,
+    task_text: str,
+    known_ids: set[str],
+    default_domain: str,
+) -> dict[str, Any] | None:
+    if INTENT_ROUTER_MODE != "llm":
+        return None
+
+    mock_payload = os.environ.get("CORTEX_INTENT_ROUTER_MOCK_JSON", "").strip()
+    if mock_payload:
+        try:
+            mock_row = json.loads(mock_payload)
+        except Exception:
+            return None
+        if isinstance(mock_row, dict):
+            return mock_row
+        return None
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    candidates = _build_capability_candidates(
+        task_text=task_text,
+        known_ids=known_ids,
+        default_domain=default_domain,
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["chat", "task"]},
+            "domain": {"type": "string"},
+            "task_id": {"type": "string"},
+            "confidence": {"type": "number"},
+            "step_budget": {"type": "integer"},
+            "requires_clarification": {"type": "boolean"},
+            "clarification_question": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": [
+            "mode",
+            "domain",
+            "task_id",
+            "confidence",
+            "step_budget",
+            "requires_clarification",
+            "clarification_question",
+            "reason",
+        ],
+        "additionalProperties": False,
+    }
+    system_text = (
+        "Decide if the user message should be treated as chat or a runnable task.\n"
+        "Return strict JSON only.\n"
+        "- mode=task when user asks for concrete execution outcome.\n"
+        "- Choose task_id only if it clearly matches one capability candidate.\n"
+        "- If unclear, set requires_clarification=true and provide one short question.\n"
+        "- Keep confidence realistic (0.0-1.0).\n"
+    )
+    user_text = (
+        f"USER_MESSAGE:\n{task_text}\n\n"
+        f"CAPABILITY_CANDIDATES:\n{json.dumps(candidates, ensure_ascii=True)}\n\n"
+        "If no candidate fits, set task_id to empty string and choose a likely domain or 'unknown'."
+    )
+    body = {
+        "model": INTENT_ROUTER_MODEL,
+        "input": [
+            {"role": "system", "content": [{"type": "input_text", "text": system_text}]},
+            {"role": "user", "content": [{"type": "input_text", "text": user_text}]},
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "intent_router_decision",
+                "schema": schema,
+                "strict": True,
+            }
+        },
+        "max_output_tokens": 260,
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    text_payload = _extract_openai_response_text(payload)
+    if not text_payload.strip():
+        return None
+    try:
+        row = json.loads(text_payload)
+    except Exception:
+        return None
+    if not isinstance(row, dict):
+        return None
+    row["candidates"] = candidates
+    row["model"] = INTENT_ROUTER_MODEL
+    return row
+
+
 def _is_shell_hotfix_intent(task_text: str) -> bool:
     """
     Detect natural-language hotfix transfer intents that should map to a
@@ -576,19 +768,77 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
             free_text = explicit_task_text or cleaned_tail
             if not free_text:
                 free_text = "Run a meaningful CLI task and provide verification evidence."
-            canonical = _canonical_task_from_natural_text(free_text)
-            if canonical is not None:
-                # Known high-value intent: route to canonical benchmark task so
-                # deterministic contracts/validators are active.
-                task_id, canonical_domain = canonical
-                domain = controls.get("domain", "").strip() or canonical_domain
-                task_text = None
+            intent_decision = _intent_router_decision(
+                task_text=free_text,
+                known_ids=known_ids,
+                default_domain=default_domain,
+            )
+            # LLM intent router has first chance when enabled. This keeps routing
+            # domain/task agnostic without adding a second model service.
+            if isinstance(intent_decision, dict):
+                mode = str(intent_decision.get("mode", "")).strip().lower()
+                confidence = _coerce_float(intent_decision.get("confidence"), default=0.0)
+                task_id_candidate = str(intent_decision.get("task_id", "")).strip()
+                domain_candidate = str(intent_decision.get("domain", "")).strip().lower()
+                clarify = bool(intent_decision.get("requires_clarification"))
+                clarify_q = str(intent_decision.get("clarification_question", "")).strip()
+                if mode == "chat" and clarify and clarify_q:
+                    return DispatchPlan(
+                        mode="chat",
+                        chat_scope=chat_scope,
+                        followup_text=clarify_q,
+                        intent_router=intent_decision,
+                        reason="intent_router_clarification",
+                    )
+                if mode == "chat" and confidence >= INTENT_ROUTER_CONFIDENCE_THRESHOLD:
+                    return DispatchPlan(
+                        mode="chat",
+                        chat_scope=chat_scope,
+                        intent_router=intent_decision,
+                        reason="intent_router_chat",
+                    )
+                if mode == "task" and confidence >= INTENT_ROUTER_CONFIDENCE_THRESHOLD:
+                    chosen_domain = domain_candidate or _infer_domain(free_text, fallback=default_domain)
+                    if task_id_candidate and task_id_candidate in known_ids:
+                        task_id = task_id_candidate
+                        domain = KNOWN_TASK_DOMAIN.get(task_id, chosen_domain)
+                        task_text = None
+                    else:
+                        domain = chosen_domain
+                        task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
+                        task_text = free_text
+                    router_step_budget = _coerce_int(intent_decision.get("step_budget"))
+                    controls.setdefault(
+                        "steps",
+                        str(
+                            max(2, min(20, router_step_budget))
+                            if isinstance(router_step_budget, int)
+                            else ""
+                        ),
+                    )
+                else:
+                    # Low-confidence router decisions fallback to canonical+heuristic
+                    # path below for robustness.
+                    intent_decision = intent_decision
             else:
-                domain = controls.get("domain", "").strip() or _infer_domain(
-                    free_text, fallback=default_domain
-                )
-                task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
-                task_text = free_text
+                intent_decision = None
+
+            if "task_id" in locals() and "domain" in locals() and "task_text" in locals():
+                pass
+            else:
+                canonical = _canonical_task_from_natural_text(free_text)
+                if canonical is not None:
+                    # Known high-value intent: route to canonical benchmark task so
+                    # deterministic contracts/validators are active.
+                    task_id, canonical_domain = canonical
+                    domain = controls.get("domain", "").strip() or canonical_domain
+                    task_text = None
+                else:
+                    domain = controls.get("domain", "").strip() or _infer_domain(
+                        free_text, fallback=default_domain
+                    )
+                    task_id = _dynamic_task_id(domain=domain, chat_scope=chat_scope, task_text=free_text)
+                    task_text = free_text
 
     # Adaptive retry should be enabled for natural-language task intent and
     # explicit learnrun mode. Plain /run stays single-attempt by default unless
@@ -657,6 +907,7 @@ def _build_plan(text: str, *, chat_scope: str, default_domain: str) -> DispatchP
         llm_backend=llm_backend,
         posttask_learn=posttask_learn,
         adaptive_retry=adaptive_retry,
+        intent_router=intent_decision if "intent_decision" in locals() else None,
         reason=(
             "auto_task_intent"
             if auto_task_intent
@@ -799,6 +1050,7 @@ def _run_task_once(
         "run": run_row.to_dict() if run_row else None,
         "run_followup_count": len(run_row.followups or []) if run_row else 0,
         "runtime_lane": DISPATCH_RUNTIME_LANE or "default",
+        "intent_router": plan.intent_router,
     }
 
 
@@ -1141,7 +1393,15 @@ def _status_payload(
     }
 
 
-def _chat_payload() -> dict[str, Any]:
+def _chat_payload(plan: DispatchPlan | None = None) -> dict[str, Any]:
+    if plan is not None and str(plan.followup_text or "").strip():
+        return {
+            "ok": True,
+            "mode": "chat",
+            "reply": str(plan.followup_text).strip(),
+            "intent_router": plan.intent_router,
+            "reason": plan.reason,
+        }
     return {
         "ok": True,
         "mode": "chat",
@@ -1151,6 +1411,8 @@ def _chat_payload() -> dict[str, Any]:
             "Use /learn-status for learning metrics, /run-status run_id=<id> progress=on for progress,\n"
             "and /followup run_id=<id> <text> to append steering."
         ),
+        "intent_router": plan.intent_router if plan is not None else None,
+        "reason": plan.reason if plan is not None else "chat_default",
     }
 
 
@@ -1258,7 +1520,7 @@ def main() -> int:
     plan = _build_plan(str(args.text), chat_scope=chat_scope, default_domain=args.default_domain)
 
     if plan.mode == "chat":
-        _print_json(_chat_payload())
+        _print_json(_chat_payload(plan))
         return 0
     if plan.mode == "status":
         _print_json(

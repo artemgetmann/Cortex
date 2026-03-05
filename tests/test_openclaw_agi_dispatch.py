@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -11,11 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DISPATCHER = ROOT / "integrations" / "openclaw_agi_dispatch.py"
 
 
-def _run_dispatch(*, text: str, chat_id: str = "tg-1", dry_run: bool = True) -> dict:
+def _run_dispatch(*, text: str, chat_id: str = "tg-1", dry_run: bool = True, extra_env: dict[str, str] | None = None) -> dict:
     cmd = ["python3", str(DISPATCHER), "--text", text, "--chat-id", chat_id]
     if dry_run:
         cmd.append("--dry-run")
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=True)
+    env = None
+    if extra_env:
+        env = dict(os.environ)
+        env.update(extra_env)
+    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True, check=True)
     return json.loads(proc.stdout)
 
 
@@ -186,3 +191,52 @@ def test_dispatch_ambiguous_plain_request_still_routes_to_run_mode() -> None:
     payload = _run_dispatch(text="help me clean up my database")
     assert payload["mode"] == "run"
     assert payload["plan"]["reason"] == "auto_task_intent"
+
+
+def test_dispatch_intent_router_mock_routes_to_known_task() -> None:
+    decision = {
+        "mode": "task",
+        "domain": "shell",
+        "task_id": "shell_git_transfer_hotfix_hard",
+        "confidence": 0.91,
+        "step_budget": 6,
+        "requires_clarification": False,
+        "clarification_question": "",
+        "reason": "matched_capability",
+    }
+    env = {
+        "CORTEX_INTENT_ROUTER": "llm",
+        "CORTEX_INTENT_ROUTER_MOCK_JSON": json.dumps(decision),
+    }
+    payload = _run_dispatch(
+        text="Please do the git hotfix transfer task carefully",
+        extra_env=env,
+    )
+    assert payload["mode"] == "run"
+    assert payload["plan"]["task_id"] == "shell_git_transfer_hotfix_hard"
+    assert payload["plan"]["domain"] == "shell"
+    assert payload["plan"]["task_text"] is None
+
+
+def test_dispatch_intent_router_clarification_returns_chat_question() -> None:
+    decision = {
+        "mode": "chat",
+        "domain": "unknown",
+        "task_id": "",
+        "confidence": 0.99,
+        "step_budget": 6,
+        "requires_clarification": True,
+        "clarification_question": "Should I run this as a shell task or just explain it?",
+        "reason": "ambiguous_request",
+    }
+    env = {
+        "CORTEX_INTENT_ROUTER": "llm",
+        "CORTEX_INTENT_ROUTER_MOCK_JSON": json.dumps(decision),
+    }
+    payload = _run_dispatch(
+        text="help me with this",
+        extra_env=env,
+    )
+    assert payload["mode"] == "chat"
+    assert "shell task" in payload["reply"].lower()
+    assert payload["reason"] == "intent_router_clarification"
