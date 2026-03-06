@@ -200,6 +200,8 @@ def run_posttask_phase(
         fallback_rules: list[str] = []
         source_lesson_rows: list[dict[str, Any]] = []
         structured_model_rows_added = 0
+        deterministic_gap_signatures: set[str] = set()
+        deterministic_reason_gap_pairs: set[tuple[str, str]] = set()
         if structured_lessons_required and structured_gap_rows and bool(contract_gap_deterministic_recipes):
             deterministic_rules = deps["_deterministic_gap_fix_recipes"](
                 adapter=adapter,
@@ -235,6 +237,10 @@ def run_posttask_phase(
                         "source_kind": "deterministic",
                     }
                 )
+                if gap_signature:
+                    deterministic_gap_signatures.add(gap_signature)
+                if reason_code and gap_type:
+                    deterministic_reason_gap_pairs.add((reason_code, gap_type))
             fallback_rules = list(deterministic_rules)
             metrics["v2_structured_fallback_lessons"] = len(deterministic_rules)
 
@@ -256,6 +262,24 @@ def run_posttask_phase(
                     continue
                 trigger_signature = str(structured_payload.get("trigger_gap_signature", "")).strip()
                 gap_row = structured_gap_by_signature.get(trigger_signature, {})
+                reason_code = str(structured_payload.get("reason_code", "")).strip()
+                gap_type = str(structured_payload.get("gap_type", "")).strip()
+
+                # Deterministic recipes are the safer source of truth. If a
+                # model-generated lesson targets a gap family already covered by
+                # deterministic repair logic, skip it instead of storing a
+                # second, noisier version of the same fix.
+                if trigger_signature and trigger_signature in deterministic_gap_signatures:
+                    metrics["v2_schema_rejection_counts"]["covered_by_deterministic_recipe"] = int(
+                        metrics["v2_schema_rejection_counts"].get("covered_by_deterministic_recipe", 0)
+                    ) + 1
+                    continue
+                if reason_code and gap_type and (reason_code, gap_type) in deterministic_reason_gap_pairs:
+                    metrics["v2_schema_rejection_counts"]["covered_by_deterministic_recipe"] = int(
+                        metrics["v2_schema_rejection_counts"].get("covered_by_deterministic_recipe", 0)
+                    ) + 1
+                    continue
+
                 action_template = str(structured_payload.get("action_template", "")).strip()
                 expected_evidence = str(structured_payload.get("expected_evidence", "")).strip()
                 normalized_note = " ".join(text.split()).strip()
@@ -273,8 +297,8 @@ def run_posttask_phase(
                     {
                         "lesson_text": lesson_text,
                         "gap_row": gap_row,
-                        "reason_code": str(structured_payload.get("reason_code", "")).strip(),
-                        "gap_type": str(structured_payload.get("gap_type", "")).strip(),
+                        "reason_code": reason_code,
+                        "gap_type": gap_type,
                         "gap_signature": trigger_signature,
                         "action_template": action_template,
                         "expected_evidence": expected_evidence,
@@ -297,7 +321,13 @@ def run_posttask_phase(
                 }
             )
 
-        if structured_lessons_required and structured_gap_rows and structured_model_rows_added == 0:
+        if (
+            structured_lessons_required
+            and structured_gap_rows
+            and structured_model_rows_added == 0
+            and not deterministic_gap_signatures
+            and not deterministic_reason_gap_pairs
+        ):
             legacy_sources = list(lesson_result.filtered_lessons) + list(v2_reflection.filtered_lessons)
             backfilled_count = 0
             for idx, legacy_lesson in enumerate(legacy_sources):

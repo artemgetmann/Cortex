@@ -18,6 +18,7 @@ def _match(
     gap_signature: str = "",
     action_template: str = "",
     expected_evidence: str = "",
+    status: str = "candidate",
 ):
     lesson = SimpleNamespace(
         lesson_id=lesson_id,
@@ -28,6 +29,7 @@ def _match(
         gap_signature=gap_signature,
         action_template=action_template,
         expected_evidence=expected_evidence,
+        status=status,
     )
     retrieval_score = SimpleNamespace(
         score=score,
@@ -139,3 +141,116 @@ def test_non_dynamic_task_allows_structured_executable_same_task_fallback() -> N
         min_score=0.55,
     )
     assert [m.lesson.lesson_id for m in selected] == ["lsn_structured_exec"]
+
+
+def test_same_task_structured_fallback_prefers_promoted_and_dedupes_family() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_candidate_query_a",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.18,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|ledger_aggregate",
+            action_template='run_sqlite(sql="SELECT 1")',
+            expected_evidence="ledger aggregate present",
+            status="candidate",
+        ),
+        _match(
+            lesson_id="lsn_promoted_query_b",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.16,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template='run_sqlite(sql="SELECT 2")',
+            expected_evidence="reject count present",
+            status="promoted",
+        ),
+        _match(
+            lesson_id="lsn_candidate_error_budget",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.15,
+            text_similarity=0.02,
+            reason_code="too_many_errors",
+            gap_type="error_budget",
+            gap_signature="too_many_errors|error_budget|max=1",
+            action_template='run_sqlite(sql="SELECT 3")',
+            expected_evidence="lower error count",
+            status="candidate",
+        ),
+    ]
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="incremental_reconcile",
+        domain="sqlite",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_promoted_query_b"]
+
+
+def test_same_task_structured_fallback_caps_to_two_families_without_promoted() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_query_best",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.18,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|ledger_aggregate",
+            action_template='run_sqlite(sql="SELECT 1")',
+            expected_evidence="ledger aggregate present",
+        ),
+        _match(
+            lesson_id="lsn_query_dup",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.12,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template='run_sqlite(sql="SELECT 2")',
+            expected_evidence="reject count present",
+        ),
+        _match(
+            lesson_id="lsn_error_budget",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.17,
+            text_similarity=0.02,
+            reason_code="too_many_errors",
+            gap_type="error_budget",
+            gap_signature="too_many_errors|error_budget|max=1",
+            action_template='run_sqlite(sql="SELECT 3")',
+            expected_evidence="lower error count",
+        ),
+        _match(
+            lesson_id="lsn_pattern",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.16,
+            text_similarity=0.02,
+            reason_code="missing_required_pattern",
+            gap_type="required_sql_pattern",
+            gap_signature="missing_required_pattern|required_sql_pattern|begin",
+            action_template='run_sqlite(sql="BEGIN IMMEDIATE; SELECT 4; COMMIT;")',
+            expected_evidence="explicit transaction",
+        ),
+    ]
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="incremental_reconcile",
+        domain="sqlite",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_query_best", "lsn_error_budget"]

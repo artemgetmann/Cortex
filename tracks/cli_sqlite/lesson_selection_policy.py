@@ -180,6 +180,27 @@ def _select_high_signal_prerun_matches(
         sem_sim = float(getattr(score_obj, "semantic_similarity", 0.0) or 0.0)
         return text_sim >= 0.02 or sem_sim >= 0.10
 
+    def _lesson_status_rank(lesson_obj: Any) -> int:
+        # Pre-run memory should trust proven lessons first. Candidates are
+        # still useful for cold start, but they should not crowd out promoted
+        # signal when both exist.
+        status = str(getattr(lesson_obj, "status", "")).strip().lower()
+        if status == "promoted":
+            return 0
+        if status == "candidate":
+            return 1
+        return 2
+
+    def _structured_prerun_family_key(lesson_obj: Any) -> str:
+        # Use broad failure family, not exact signature, so one task does not
+        # inject three near-identical "fix required query" recipes at once.
+        reason = str(getattr(lesson_obj, "reason_code", "")).strip()
+        gap_type = str(getattr(lesson_obj, "gap_type", "")).strip()
+        if reason or gap_type:
+            return f"rg:{reason}|{gap_type}"
+        signature = str(getattr(lesson_obj, "gap_signature", "")).strip()
+        return f"sig:{signature}" if signature else ""
+
     normalized_domain = str(domain).strip().lower()
     limit = max(0, int(max_results))
     threshold = float(min_score)
@@ -234,6 +255,7 @@ def _select_high_signal_prerun_matches(
     # - structured lessons are already validated and safer than free-form text
     # - this applies to any task id, not only dynamic chat ids
     same_task_min_score = 0.05
+    structured_same_task_candidates: list[Any] = []
     for match in matches:
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
@@ -253,10 +275,58 @@ def _select_high_signal_prerun_matches(
             continue
         if float(getattr(score, "score", 0.0) or 0.0) < same_task_min_score:
             continue
-        selected.append(match)
-        seen_ids.add(lesson_id)
-        if len(selected) >= limit:
-            break
+        structured_same_task_candidates.append(match)
+
+    if structured_same_task_candidates:
+        promoted_candidates = [
+            match
+            for match in structured_same_task_candidates
+            if _lesson_status_rank(getattr(match, "lesson", None)) == 0
+        ]
+        candidate_pool = (
+            promoted_candidates if promoted_candidates else structured_same_task_candidates
+        )
+
+        # Collapse multiple lessons from the same failure family into one
+        # strongest row. This keeps pre-run context small and mirrors the
+        # shell hotfix lane where one focused lesson helped more than a bundle.
+        best_by_family: dict[str, Any] = {}
+        ordered_family_keys: list[str] = []
+        for match in candidate_pool:
+            lesson = getattr(match, "lesson", None)
+            if lesson is None:
+                continue
+            family_key = _structured_prerun_family_key(lesson) or str(
+                getattr(lesson, "lesson_id", "")
+            ).strip()
+            if not family_key:
+                continue
+            current = best_by_family.get(family_key)
+            if current is None:
+                best_by_family[family_key] = match
+                ordered_family_keys.append(family_key)
+                continue
+            current_lesson = getattr(current, "lesson", None)
+            current_score = getattr(getattr(current, "score", None), "score", 0.0) or 0.0
+            new_score = float(getattr(getattr(match, "score", None), "score", 0.0) or 0.0)
+            current_rank = _lesson_status_rank(current_lesson)
+            new_rank = _lesson_status_rank(lesson)
+            if (new_rank, -new_score) < (current_rank, -current_score):
+                best_by_family[family_key] = match
+
+        structured_limit = min(limit, 2)
+        for family_key in ordered_family_keys:
+            match = best_by_family.get(family_key)
+            if match is None:
+                continue
+            lesson = getattr(match, "lesson", None)
+            lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
+            if not lesson_id or lesson_id in seen_ids:
+                continue
+            selected.append(match)
+            seen_ids.add(lesson_id)
+            if len(selected) >= structured_limit:
+                break
 
     if selected or not _is_dynamic_task(task_id):
         return selected
