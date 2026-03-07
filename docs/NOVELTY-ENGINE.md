@@ -205,6 +205,7 @@ Status in this worktree:
 
 - implemented as `tracks/cli_sqlite/novelty_engine.py`
 - CLI entrypoint: `tracks/cli_sqlite/scripts/run_novelty_engine.py`
+- integrated into `tracks/cli_sqlite/scripts/run_learning_curve.py` behind `--curriculum-mode novelty`
 - current scope is intentionally small:
   - reads existing `session-*/metrics.json`
   - groups tasks into explicit families
@@ -215,6 +216,17 @@ Quick test:
 
 ```bash
 python3 tracks/cli_sqlite/scripts/run_novelty_engine.py --format text
+```
+
+Learning-curve smoke:
+
+```bash
+python3 tracks/cli_sqlite/scripts/run_learning_curve.py \
+  --task-id incremental_reconcile \
+  --domain sqlite \
+  --curriculum-mode novelty \
+  --sessions 3 \
+  --start-session 9601
 ```
 
 ### Phase 2
