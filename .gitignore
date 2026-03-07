@@ -64,14 +64,7 @@ tracks/cli_sqlite/sessions/run_ledger.jsonl
 tracks/cli_sqlite/sessions/run_lifecycle.jsonl
 tracks/cli_sqlite/sessions/variant_scoreboard.jsonl
 tracks/cli_sqlite/sessions/hotfix.patch
-tracks/cli_sqlite/runtime/**/sessions/session-*/
-tracks/cli_sqlite/runtime/**/sessions/run_service_state.json
-tracks/cli_sqlite/runtime/**/sessions/run_lifecycle.jsonl
-tracks/cli_sqlite/runtime/**/sessions/run_ledger.jsonl
-tracks/cli_sqlite/runtime/**/sessions/variant_scoreboard.jsonl
-tracks/cli_sqlite/runtime/**/learning/*.jsonl
-tracks/cli_sqlite/runtime/**/learning/*.json
-tracks/cli_sqlite/runtime/**/learning/*.lock
+tracks/cli_sqlite/runtime/
 tracks/cli_sqlite/reports/_tmp_learning_state_backup_*/
 tracks/cli_sqlite/reports/smoke_capability_*.log
 tracks/cli_sqlite/reports/sqlite_transfer_nano_smoke.*
