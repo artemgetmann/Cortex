@@ -1,0 +1,7 @@
+event_id,category,amount,batch_id
+e1,drums,5,b7
+e2,bass,4,b7
+e3,lead,3,b7
+e4,drums,8,b7
+e2,bass,4,b7
+e5,lead,INVALID,b7

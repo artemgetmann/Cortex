@@ -31,7 +31,7 @@ _SQL_KEYWORDS = re.compile(
     r"INTEGER|TEXT|REAL|BLOB|NULL|NOT NULL|UNIQUE|INDEX|TRANSACTION|"
     r"SUM|COUNT|AVG|MAX|MIN|HAVING|DISTINCT|UNION|EXCEPT|INTERSECT|"
     r"VALUES|INTO|FROM|TABLE|VIEW|TRIGGER|"
-    r"fixture_seed|ledger|rejects|checkpoint_log|sales|error_log|inventory"
+    r"fixture_seed|ledger|rejects|checkpoint_log|batch_audit|sales|error_log|inventory"
     r")\b"
 )
 
@@ -90,7 +90,7 @@ def _sqlite_gap_fix_recipe(gap: dict[str, Any]) -> str:
         else ""
     )
 
-    if reason == "required_query_mismatch" and query_id == "reject_count":
+    if reason == "required_query_mismatch" and query_id in {"reject_count", "reject_breakdown"}:
         return (
             "Deterministic sqlite recipe (reject_count): run_sqlite(sql=\"PRAGMA table_info(rejects);\") "
             "then run_sqlite(sql=\""
@@ -102,6 +102,14 @@ def _sqlite_gap_fix_recipe(gap: dict[str, Any]) -> str:
             "WHERE NOT EXISTS ("
             "SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id AND r.reason = 'duplicate_event'"
             ");\"). "
+            f"Then run validator query exactly: {query_sql}{expected_suffix}"
+        )
+    if reason == "required_query_mismatch" and query_id == "batch_audit_row":
+        return (
+            "Deterministic sqlite recipe (batch_audit): run_sqlite(sql=\""
+            "INSERT OR REPLACE INTO batch_audit(batch_tag, accepted_count, rejected_count) "
+            "SELECT 'BATCH-MAY-01', (SELECT COUNT(*) FROM ledger), (SELECT COUNT(*) FROM rejects);"
+            "\"). "
             f"Then run validator query exactly: {query_sql}{expected_suffix}"
         )
     if reason == "required_query_mismatch" and query_id in {"ledger_aggregate", "ledger_count"}:
@@ -191,6 +199,31 @@ def _sqlite_incremental_forced_repair_recipe(*, task_id: str, gap: dict[str, Any
             "WHERE NOT EXISTS (SELECT 1 FROM rejects r WHERE r.event_id = dup.event_id AND r.reason = 'duplicate_event'); "
             "INSERT OR REPLACE INTO checkpoint_log(checkpoint_tag, row_count) "
             "SELECT 'CKP-APR-01', COUNT(*) FROM ledger WHERE checkpoint_tag = 'CKP-APR-01'; "
+            "COMMIT;"
+        )
+    elif task_key == "incremental_reconcile_audit_transfer":
+        repair_sql = (
+            "BEGIN IMMEDIATE; "
+            "INSERT INTO ledger(event_id, category, amount, batch_id) "
+            "SELECT fs.event_id, fs.category, CAST(fs.amount AS INTEGER), fs.batch_id "
+            "FROM fixture_seed fs "
+            "WHERE ((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) "
+            "AND trim(fs.amount) NOT IN ('', '-') "
+            "AND fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE f2.event_id = fs.event_id) "
+            "AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id); "
+            "INSERT INTO rejects(event_id, reason) "
+            "SELECT fs.event_id, "
+            "CASE "
+            "WHEN NOT (((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) AND trim(fs.amount) NOT IN ('', '-')) THEN 'invalid_amount' "
+            "ELSE 'duplicate_event' "
+            "END "
+            "FROM fixture_seed fs "
+            "WHERE ("
+            "NOT (((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) AND trim(fs.amount) NOT IN ('', '-'))"
+            "OR fs.rowid != (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE f2.event_id = fs.event_id)) "
+            "AND NOT EXISTS (SELECT 1 FROM rejects r WHERE r.event_id = fs.event_id); "
+            "INSERT OR REPLACE INTO batch_audit(batch_tag, accepted_count, rejected_count) "
+            "SELECT 'BATCH-MAY-01', (SELECT COUNT(*) FROM ledger), (SELECT COUNT(*) FROM rejects); "
             "COMMIT;"
         )
     else:

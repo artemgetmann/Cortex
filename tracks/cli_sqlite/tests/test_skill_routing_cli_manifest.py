@@ -68,3 +68,30 @@ def test_route_manifest_entries_prefers_task_id_hint_variant() -> None:
     selected = route_manifest_entries(task=task_text, entries=entries, top_k=1)
     assert selected
     assert selected[0].skill_ref == "sqlite/incremental-reconcile-nano"
+
+
+def test_route_manifest_entries_prefers_audit_transfer_task_hint() -> None:
+    entries = [
+        SkillManifestEntry(
+            skill_ref="sqlite/import-aggregate",
+            title="sqlite-import-aggregate",
+            description="Import and aggregate rows.",
+            path="/tmp/generic",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+        SkillManifestEntry(
+            skill_ref="sqlite/incremental-reconcile-audit-transfer",
+            title="sqlite-incremental-reconcile-audit-transfer",
+            description="Dedupe, reject invalid rows, and write batch audit.",
+            path="/tmp/audit",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+    ]
+    task_text = "SQLite task: incremental_reconcile_audit_transfer.\nGoal: reconcile rows with batch audit."
+    selected = route_manifest_entries(task=task_text, entries=entries, top_k=1)
+    assert selected
+    assert selected[0].skill_ref == "sqlite/incremental-reconcile-audit-transfer"
