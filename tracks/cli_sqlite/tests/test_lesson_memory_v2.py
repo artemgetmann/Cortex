@@ -57,6 +57,30 @@ def _record(
 
 
 class LessonStoreV2Tests(unittest.TestCase):
+    def test_store_preserves_long_deterministic_action_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            long_sql = (
+                'run_sqlite(sql="BEGIN IMMEDIATE; '
+                + " ".join(f"INSERT INTO ledger VALUES ({idx}, 'bass', {idx}, 'BATCH-REPLAY-01');" for idx in range(150))
+                + ' COMMIT;")'
+            )
+            row = _record(
+                session_id=1000,
+                rule_text=f"WHEN gap_signature=replay: {long_sql} EXPECT: replay_steps",
+                domain="sqlite",
+                task_id="incremental_reconcile_replay_safe",
+                reason_code="required_query_mismatch",
+                gap_type="required_query",
+                gap_signature="required_query_mismatch|required_query|replay_steps",
+                action_template=long_sql,
+                expected_evidence="required_query_mismatch|required_query|replay_steps",
+            )
+            upsert_lesson_records(path, [row])
+            stored = load_lesson_records(path)[0]
+            self.assertEqual(stored.action_template, long_sql)
+            self.assertTrue(stored.rule_text.endswith("EXPECT: replay_steps"))
+
     def test_upsert_dedups_and_merges_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "lessons_v2.jsonl"

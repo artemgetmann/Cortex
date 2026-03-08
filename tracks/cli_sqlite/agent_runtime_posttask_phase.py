@@ -75,6 +75,23 @@ def run_posttask_phase(
     suppressed_lesson_ids: list[str] = []
 
     if posttask_learn and client is not None:
+        def _is_verifier_only_deterministic_recipe(recipe_text: str, action_template: str) -> bool:
+            """
+            Do not convert pure validator nudges into reusable execution memory.
+
+            First principles:
+            - post-run diagnostics can say "check row counts"
+            - pre-run memory must tell the agent how to fix the task
+            - otherwise the system learns to verify failure instead of repair it
+            """
+            recipe_lower = str(recipe_text or "").strip().lower()
+            action_lower = str(action_template or "").strip().lower()
+            if "run validator query and reconcile data exactly" in recipe_lower:
+                return True
+            if "expected_rows=" in action_lower and "run_sqlite(sql=\"select" in action_lower:
+                return True
+            return False
+
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode and bool(skill_manifest_entries)
         if not bool(skill_manifest_entries):
             metrics["posttask_skill_patching_skipped_by_mode"] = True
@@ -223,6 +240,8 @@ def run_posttask_phase(
                 # If we cannot extract a real tool call, skip this row instead of
                 # generating a lesson that retrieval will reject later.
                 if structured_lessons_required and not action_template:
+                    continue
+                if _is_verifier_only_deterministic_recipe(recipe, action_template):
                     continue
                 expected_evidence = gap_signature or f"{reason_code}|{gap_type}"
                 source_lesson_rows.append(

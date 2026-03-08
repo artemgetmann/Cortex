@@ -41,11 +41,22 @@ def _format_v2_lesson_block(
         lesson_id = str(getattr(lesson, "lesson_id", ""))
         lesson_ids.append(lesson_id)
         score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
-        rule_text = (
-            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
-            if use_placebo
-            else str(getattr(lesson, "rule_text", ""))
-        )
+        if use_placebo:
+            rule_text = _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
+        else:
+            # Prefer structured lesson fields over raw rule_text because the
+            # stored rule can be long and clipped. For execution memory we want
+            # the minimal actionable core, not a half-truncated paragraph.
+            gap_signature = str(getattr(lesson, "gap_signature", "")).strip()
+            action_template = str(getattr(lesson, "action_template", "")).strip()
+            expected_evidence = str(getattr(lesson, "expected_evidence", "")).strip()
+            if gap_signature and action_template and expected_evidence:
+                rule_text = (
+                    f"WHEN gap_signature={gap_signature}: "
+                    f"{action_template} EXPECT: {expected_evidence}"
+                )
+            else:
+                rule_text = str(getattr(lesson, "rule_text", ""))
         lines.append(f"- ({score_value:.2f}) {rule_text}")
     return "\n".join(lines), [value for value in lesson_ids if value]
 
@@ -72,6 +83,8 @@ def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
                 "reason_code": str(getattr(lesson, "reason_code", "")),
                 "gap_type": str(getattr(lesson, "gap_type", "")),
                 "gap_signature": str(getattr(lesson, "gap_signature", "")),
+                "action_template": str(getattr(lesson, "action_template", "")),
+                "expected_evidence": str(getattr(lesson, "expected_evidence", "")),
                 "score": float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0,
                 "lane": str(getattr(match, "lane", "")),
             }
@@ -173,6 +186,24 @@ def _select_high_signal_prerun_matches(
             and str(getattr(lesson_obj, "expected_evidence", "")).strip()
         )
 
+    def _is_verifier_only_execution_lesson(lesson_obj: Any) -> bool:
+        """
+        Skip lessons that only tell the agent to re-run checks.
+
+        Why:
+        - these rows are useful as post-run diagnostics
+        - they are harmful as pre-run memory because they crowd out real fixes
+        - the failure pattern is: import/patch is broken, but memory says
+          "run SELECT and compare expected rows" instead of fixing the import
+        """
+        rule_text = str(getattr(lesson_obj, "rule_text", "")).strip().lower()
+        action_template = str(getattr(lesson_obj, "action_template", "")).strip().lower()
+        if "run validator query and reconcile data exactly" in rule_text:
+            return True
+        if "expected_rows=" in action_template and "run_sqlite(sql=\"select" in action_template:
+            return True
+        return False
+
     def _fallback_semantic_anchor(score_obj: Any) -> bool:
         # Keep fallback deterministic and conservative. We only consider
         # lessons that have at least minimal lexical/semantic overlap.
@@ -272,6 +303,8 @@ def _select_high_signal_prerun_matches(
         if not _has_structured_gap_fields(lesson):
             continue
         if not _has_executable_shape(lesson):
+            continue
+        if _is_verifier_only_execution_lesson(lesson):
             continue
         if float(getattr(score, "score", 0.0) or 0.0) < same_task_min_score:
             continue

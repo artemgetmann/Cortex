@@ -358,6 +358,7 @@ def openai_responses_request(
     input_items: list[dict[str, Any]],
     instructions: str,
     tools: list[dict[str, Any]] | None,
+    tool_choice: str | None = None,
     max_tokens: int,
     temperature: float | None,
 ) -> dict[str, Any]:
@@ -369,7 +370,10 @@ def openai_responses_request(
         base_payload["instructions"] = instructions_text
     if tools:
         base_payload["tools"] = tools
-        base_payload["tool_choice"] = "auto"
+        # Task-mode retries sometimes need a harder guarantee than prompt text.
+        # Allow the runtime loop to escalate from "auto" to "required" when a
+        # model repeatedly emits reasoning-only turns instead of real tool calls.
+        base_payload["tool_choice"] = str(tool_choice or "auto").strip() or "auto"
     if int(max_tokens) > 0:
         base_payload["max_output_tokens"] = int(max_tokens)
     reasoning_effort = str(os.getenv("OPENAI_RESPONSES_REASONING_EFFORT", "low")).strip().lower()
@@ -434,6 +438,7 @@ def openai_chat_completions_request(
     model: str,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
+    tool_choice: str | None = None,
     max_tokens: int,
     temperature: float | None,
 ) -> dict[str, Any]:
@@ -442,7 +447,9 @@ def openai_chat_completions_request(
     base_payload: dict[str, Any] = {"model": model, "messages": messages}
     if tools:
         base_payload["tools"] = tools
-        base_payload["tool_choice"] = "auto"
+        # Keep chat-completions fallback behavior aligned with Responses API so
+        # task-mode recovery can require a tool call when the model stalls.
+        base_payload["tool_choice"] = str(tool_choice or "auto").strip() or "auto"
     if temperature is not None:
         base_payload["temperature"] = float(temperature)
 
@@ -602,6 +609,7 @@ def create_executor_response_via_openai(
     tools: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     temperature: float | None = None,
+    tool_choice_override: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Run one executor turn via OpenAI transport and normalize it to Anthropic-style blocks.
@@ -611,6 +619,12 @@ def create_executor_response_via_openai(
     tool_names = [str(tool.get("name", "")).strip() for tool in tools if isinstance(tool, dict)]
     allowed_tool_names = {name for name in tool_names if name}
     assistant_blocks: list[dict[str, Any]] = []
+    normalized_tool_choice = str(tool_choice_override or "auto").strip() or "auto"
+    function_call_count = 0
+    output_item_count = 0
+    output_item_type_counts: dict[str, int] = {}
+    reasoning_only_turn = False
+    tool_parse_errors: list[str] = []
 
     def _decode_tool_arguments(raw_arguments: Any, *, call_kind: str, tool_name: str) -> tuple[dict[str, Any] | None, str | None]:
         if isinstance(raw_arguments, dict):
@@ -637,6 +651,7 @@ def create_executor_response_via_openai(
             model=model,
             messages=_anthropic_messages_to_openai_messages(messages=messages, system_prompt=system_prompt),
             tools=_anthropic_tools_to_openai_tools(tools),
+            tool_choice=normalized_tool_choice,
             max_tokens=1800,
             temperature=temperature,
         )
@@ -655,6 +670,8 @@ def create_executor_response_via_openai(
             tool_calls = []
         if not isinstance(tool_calls, list):
             raise RuntimeError(f"OpenAI executor tool_calls must be list, got {type(tool_calls).__name__}")
+        output_item_count = len(tool_calls)
+        output_item_type_counts = {"tool_call": len(tool_calls)}
         for idx, call in enumerate(tool_calls):
             if not isinstance(call, dict):
                 raise RuntimeError(f"OpenAI executor tool call at index {idx} must be object.")
@@ -672,12 +689,14 @@ def create_executor_response_via_openai(
                 tool_name=name,
             )
             if parse_warning:
+                tool_parse_errors.append(parse_warning)
                 assistant_blocks.append({"type": "text", "text": parse_warning})
                 continue
             if tool_input is None:
                 continue
             tool_call_id = str(call.get("id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{idx}"
             assistant_blocks.append({"type": "tool_use", "id": tool_call_id, "name": name, "input": tool_input})
+            function_call_count += 1
         api_variant = "chat_completions"
     else:
         payload = openai_responses_request(
@@ -686,6 +705,7 @@ def create_executor_response_via_openai(
             input_items=anthropic_messages_to_openai_responses_input(messages=messages),
             instructions=system_prompt,
             tools=_anthropic_tools_to_openai_responses_tools(tools),
+            tool_choice=normalized_tool_choice,
             max_tokens=1800,
             temperature=temperature,
         )
@@ -697,10 +717,14 @@ def create_executor_response_via_openai(
             output_items = []
         if not isinstance(output_items, list):
             raise RuntimeError(f"OpenAI executor output must be list, got {type(output_items).__name__}")
+        output_item_count = len(output_items)
+        output_item_type_counts = {}
         call_index = 0
         for idx, item in enumerate(output_items):
             if not isinstance(item, dict):
                 continue
+            item_type = str(item.get("type", "")).strip().lower() or "unknown"
+            output_item_type_counts[item_type] = int(output_item_type_counts.get(item_type, 0) or 0) + 1
             if str(item.get("type", "")).strip().lower() != "function_call":
                 continue
             name = str(item.get("name", "")).strip()
@@ -714,6 +738,7 @@ def create_executor_response_via_openai(
                 tool_name=name,
             )
             if parse_warning:
+                tool_parse_errors.append(parse_warning)
                 assistant_blocks.append({"type": "text", "text": parse_warning})
                 continue
             if tool_input is None:
@@ -721,6 +746,8 @@ def create_executor_response_via_openai(
             tool_call_id = str(item.get("call_id", "")).strip() or f"toolu_openai_{uuid.uuid4().hex[:12]}_{call_index}"
             call_index += 1
             assistant_blocks.append({"type": "tool_use", "id": tool_call_id, "name": name, "input": tool_input})
+            function_call_count += 1
+        reasoning_only_turn = function_call_count == 0 and bool(output_item_count)
         api_variant = "responses"
 
     usage_raw = payload.get("usage", {})
@@ -730,7 +757,12 @@ def create_executor_response_via_openai(
         "model": model,
         "response_id": str(payload.get("id", "")).strip(),
         "api": api_variant,
+        "tool_choice_requested": normalized_tool_choice,
+        "output_item_count": int(output_item_count),
+        "output_item_type_counts": dict(output_item_type_counts),
+        "function_call_count": int(function_call_count),
+        "reasoning_only_turn": bool(reasoning_only_turn),
+        "tool_parse_errors": list(tool_parse_errors),
         **usage,
     }
     return assistant_blocks, usage_payload
-

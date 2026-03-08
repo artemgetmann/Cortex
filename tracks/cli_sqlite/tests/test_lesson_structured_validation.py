@@ -35,6 +35,23 @@ def test_extract_action_template_from_legacy_lesson_for_bash() -> None:
     assert "git init source_repo" in action
 
 
+def test_extract_action_template_from_legacy_sqlite_balances_nested_parentheses() -> None:
+    lesson_text = (
+        '[deterministic_recipe] step1=run_sqlite(sql="BEGIN IMMEDIATE; '
+        "INSERT INTO ledger(event_id, category, amount, batch_id) "
+        "SELECT fs.event_id, fs.category, CAST(fs.amount AS INTEGER), fs.batch_id "
+        "FROM fixture_seed fs WHERE fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE f2.event_id = fs.event_id); "
+        "COMMIT;\") step2=run_sqlite(sql=\"SELECT 1;\")"
+    )
+    action = _extract_action_template_from_legacy_lesson(
+        lesson_text=lesson_text,
+        executor_tool_name="run_sqlite",
+    )
+    assert action.startswith('run_sqlite(sql="BEGIN IMMEDIATE;')
+    assert "SELECT MIN(f2.rowid)" in action
+    assert action.endswith('COMMIT;")')
+
+
 def test_validate_structured_model_lesson_accepts_bound_gap_and_action() -> None:
     lesson = SimpleNamespace(
         trigger_gap_signature="missing_required_file|required_file|target_repo/transfer_summary.txt",

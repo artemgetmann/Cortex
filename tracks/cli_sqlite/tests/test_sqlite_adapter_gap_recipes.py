@@ -115,3 +115,27 @@ def test_incremental_reconcile_audit_transfer_uses_forced_recipe() -> None:
     assert recipes[0].startswith("[forced_repair sqlite_incremental_required_query_mismatch_v1]")
     assert "batch_audit" in recipes[0]
     assert "invalid_amount" in recipes[0]
+
+
+def test_incremental_reconcile_replay_safe_uses_task_specific_forced_recipe() -> None:
+    adapter = SqliteAdapter()
+    gaps = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "query_id": "batch_audit_row",
+            "query_sql": "SELECT batch_tag, accepted_count, rejected_count, replay_count FROM batch_audit ORDER BY batch_tag;",
+            "expected_rows": [["BATCH-REPLAY-01", "4", "2", "2"]],
+        }
+    ]
+    recipes = adapter.deterministic_gap_recipes(
+        task_id="incremental_reconcile_replay_safe",
+        unresolved_gaps=gaps,
+        max_items=3,
+    )
+    assert recipes
+    assert recipes[0].startswith("[forced_repair sqlite_incremental_required_query_mismatch_v1]")
+    assert "batch_audit" in recipes[0]
+    assert "replay_log" in recipes[0]
+    assert "batch_id" in recipes[0]
+    assert "invalid_amount" in recipes[0]

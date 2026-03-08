@@ -16,6 +16,53 @@ def _parse_action_tool_name(action_template: str) -> str:
     return str(match.group(1)).strip()
 
 
+def _extract_balanced_tool_call(text: str) -> str:
+    """Extract the first syntactically balanced tool call from free text.
+
+    Why this exists:
+    - Legacy deterministic recipes often contain a full `run_sqlite(sql="...")`
+      snippet embedded inside prose.
+    - A regex that stops at the first `)` breaks as soon as the SQL itself
+      contains nested parentheses, which sqlite tasks do constantly.
+    """
+
+    source = str(text or "")
+    if not source:
+        return ""
+
+    for match in re.finditer(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", source):
+        start = int(match.start(0))
+        open_paren = source.find("(", start)
+        if open_paren < 0:
+            continue
+        depth = 0
+        quote_char = ""
+        escaped = False
+        for idx in range(open_paren, len(source)):
+            char = source[idx]
+            if quote_char:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote_char:
+                    quote_char = ""
+                continue
+            if char in {'"', "'"}:
+                quote_char = char
+                continue
+            if char == "(":
+                depth += 1
+                continue
+            if char == ")":
+                depth -= 1
+                if depth == 0:
+                    return source[start : idx + 1]
+                continue
+        # Unbalanced candidate; keep scanning later matches if any.
+    return ""
+
+
 def _action_template_is_placeholder_like(action_template: str) -> bool:
     text = str(action_template or "").strip().lower()
     if not text:
@@ -222,9 +269,9 @@ def _extract_action_template_from_legacy_lesson(
         return ""
 
     # If lesson already contains a tool-call snippet, keep it as-is when valid.
-    existing_call = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\))", text)
+    existing_call = _extract_balanced_tool_call(text)
     if existing_call:
-        candidate_call = " ".join(str(existing_call.group(1)).split()).strip()
+        candidate_call = " ".join(str(existing_call).split()).strip()
         if (
             candidate_call
             and not _action_template_is_placeholder_like(candidate_call)

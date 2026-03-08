@@ -1,0 +1,7 @@
+txn_id,account,amount
+T001,checking,500
+T002,savings,300
+T003,checking,INVALID
+T004,savings,200
+T005,checking,BAD_DATA
+T006,checking,150

@@ -16,6 +16,9 @@ from typing import Any, Iterable, Iterator, Sequence
 LESSON_STATUSES = ("candidate", "promoted", "suppressed", "archived")
 V2_SCHEMA = "lesson_store_v2"
 V2_VERSION = 1
+MAX_RULE_TEXT_CHARS = 16384
+MAX_ACTION_TEMPLATE_CHARS = 16384
+MAX_EXPECTED_EVIDENCE_CHARS = 1024
 
 _TEXT_WS_RE = re.compile(r"\s+")
 _TEXT_TOKEN_RE = re.compile(r"[^a-z0-9\s]+")
@@ -137,7 +140,10 @@ class LessonRecord:
         return cls(
             lesson_id=lesson_id,
             status=status,
-            rule_text=" ".join(str(rule_text).split())[:420],
+            # Deterministic repair memories can be long multi-step commands.
+            # If we clip them here, retrieval later activates a broken fragment
+            # and the model gets "memory" that cannot actually repair anything.
+            rule_text=" ".join(str(rule_text).split())[:MAX_RULE_TEXT_CHARS],
             normalized_rule=normalized,
             trigger_fingerprints=fingerprints,
             tags=lesson_tags,
@@ -147,8 +153,8 @@ class LessonRecord:
             reason_code=str(reason_code).strip(),
             gap_type=str(gap_type).strip(),
             gap_signature=str(gap_signature).strip(),
-            action_template=" ".join(str(action_template).split())[:420],
-            expected_evidence=" ".join(str(expected_evidence).split())[:420],
+            action_template=" ".join(str(action_template).split())[:MAX_ACTION_TEMPLATE_CHARS],
+            expected_evidence=" ".join(str(expected_evidence).split())[:MAX_EXPECTED_EVIDENCE_CHARS],
             source_session_ids=(int(session_id),) if int(session_id) > 0 else (),
             reliability=0.5,
             retrieval_count=0,
@@ -194,7 +200,7 @@ class LessonRecord:
             return cls(
                 lesson_id=lesson_id,
                 status=status,
-                rule_text=rule_text[:420],
+                rule_text=rule_text[:MAX_RULE_TEXT_CHARS],
                 normalized_rule=normalized_rule,
                 trigger_fingerprints=fingerprints,
                 tags=tags or _extract_tags_from_text(rule_text),
@@ -204,8 +210,8 @@ class LessonRecord:
                 reason_code=str(row.get("reason_code", "")).strip(),
                 gap_type=str(row.get("gap_type", "")).strip(),
                 gap_signature=str(row.get("gap_signature", "")).strip(),
-                action_template=" ".join(str(row.get("action_template", "")).split())[:420],
-                expected_evidence=" ".join(str(row.get("expected_evidence", "")).split())[:420],
+                action_template=" ".join(str(row.get("action_template", "")).split())[:MAX_ACTION_TEMPLATE_CHARS],
+                expected_evidence=" ".join(str(row.get("expected_evidence", "")).split())[:MAX_EXPECTED_EVIDENCE_CHARS],
                 source_session_ids=source_ids,
                 reliability=_clamp(float(row.get("reliability", 0.5) or 0.5), 0.0, 1.0),
                 retrieval_count=max(0, int(row.get("retrieval_count", 0) or 0)),
@@ -241,7 +247,7 @@ class LessonRecord:
         return cls(
             lesson_id=lesson_id,
             status="promoted",
-            rule_text=lesson_text[:420],
+            rule_text=lesson_text[:MAX_RULE_TEXT_CHARS],
             normalized_rule=normalized_rule,
             trigger_fingerprints=fingerprints,
             tags=_extract_tags_from_text(lesson_text),

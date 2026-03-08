@@ -73,3 +73,4 @@ tracks/cli_sqlite/reports/*_refactor.log
 tracks/cli_sqlite/reports/*_structured.log
 tracks/cli_sqlite/reports/*.log
 tracks/cli_sqlite/skills/**/*.bak
+tracks/cli_sqlite/skills/skills_manifest.json

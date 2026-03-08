@@ -95,3 +95,30 @@ def test_route_manifest_entries_prefers_audit_transfer_task_hint() -> None:
     selected = route_manifest_entries(task=task_text, entries=entries, top_k=1)
     assert selected
     assert selected[0].skill_ref == "sqlite/incremental-reconcile-audit-transfer"
+
+
+def test_route_manifest_entries_prefers_partial_failure_recovery_strict_hint() -> None:
+    entries = [
+        SkillManifestEntry(
+            skill_ref="sqlite/partial-failure-recovery",
+            title="sqlite-partial-failure-recovery",
+            description="Handle bad rows by routing them to error_log.",
+            path="/tmp/base",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+        SkillManifestEntry(
+            skill_ref="sqlite/partial-failure-recovery-strict",
+            title="sqlite-partial-failure-recovery-strict",
+            description="Validate numeric rows and use exact invalid_amount reason.",
+            path="/tmp/strict",
+            version=1,
+            last_updated="2026-02-01T00:00:00+00:00",
+            confidence=0.7,
+        ),
+    ]
+    task_text = "SQLite task: partial_failure_recovery_strict.\nGoal: recover strict invalid amount rows."
+    selected = route_manifest_entries(task=task_text, entries=entries, top_k=1)
+    assert selected
+    assert selected[0].skill_ref == "sqlite/partial-failure-recovery-strict"

@@ -176,6 +176,8 @@ def _run_arm(
     posttask_learn: bool,
     benchmark_placebo: bool,
     verbose: bool,
+    contract_gap_retry: bool,
+    contract_gap_retry_steps: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -214,8 +216,8 @@ def _run_arm(
             judge_docs=False,
             executor_docs=False,
             judge_diagnostic=LOCKED_JUDGE_DIAGNOSTIC,
-            contract_gap_retry=LOCKED_CONTRACT_GAP_RETRY,
-            contract_gap_retry_steps=LOCKED_CONTRACT_GAP_RETRY_STEPS,
+            contract_gap_retry=bool(contract_gap_retry),
+            contract_gap_retry_steps=max(0, int(contract_gap_retry_steps)),
             contract_gap_deterministic_recipes=LOCKED_CONTRACT_GAP_DETERMINISTIC_RECIPES,
             structured_lessons_required=LOCKED_STRUCTURED_LESSONS_REQUIRED,
             llm_backend=LOCKED_BACKEND,
@@ -226,7 +228,11 @@ def _run_arm(
         )
 
         metrics = dict(result.metrics or {})
-        _assert_locked_metrics(metrics=metrics, arm_id=arm_id)
+        _assert_locked_metrics(
+            metrics=metrics,
+            arm_id=arm_id,
+            expected_contract_gap_retry=bool(contract_gap_retry),
+        )
         row = {
             "arm": arm_id,
             "run_index": index + 1,
@@ -250,7 +256,7 @@ def _run_arm(
     return rows
 
 
-def _assert_locked_metrics(*, metrics: dict[str, Any], arm_id: str) -> None:
+def _assert_locked_metrics(*, metrics: dict[str, Any], arm_id: str, expected_contract_gap_retry: bool) -> None:
     """Fail fast if runtime drifted away from locked v1.5 policy."""
     backend = str(metrics.get("llm_backend") or "").strip()
     critic_model = str(metrics.get("critic_model") or "").strip()
@@ -270,9 +276,9 @@ def _assert_locked_metrics(*, metrics: dict[str, Any], arm_id: str) -> None:
         )
     # Some policy fields are enforced but not surfaced as top-level metrics in
     # current runtime output; assertions here only cover emitted keys.
-    if bool(metrics.get("contract_gap_retry_enabled")) != LOCKED_CONTRACT_GAP_RETRY:
+    if bool(metrics.get("contract_gap_retry_enabled")) != bool(expected_contract_gap_retry):
         raise RuntimeError(
-            f"[{arm_id}] contract_gap_retry drift: expected={LOCKED_CONTRACT_GAP_RETRY} "
+            f"[{arm_id}] contract_gap_retry drift: expected={bool(expected_contract_gap_retry)} "
             f"got={metrics.get('contract_gap_retry_enabled')}"
         )
     if bool(metrics.get("contract_gap_deterministic_recipes_enabled")) != LOCKED_CONTRACT_GAP_DETERMINISTIC_RECIPES:
@@ -297,6 +303,12 @@ def main() -> int:
         default=True,
         help="Start both arms from empty lessons files (default: true).",
     )
+    parser.add_argument(
+        "--contract-gap-retry-mode",
+        choices=["locked", "on", "off"],
+        default="locked",
+        help="Experimental proof override. 'locked' keeps v1.5 default; 'off' disables contract-gap retry for both arms.",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -304,6 +316,15 @@ def main() -> int:
         raise ValueError("--runs must be >= 1")
     if int(args.max_steps) <= 0:
         raise ValueError("--max-steps must be >= 1")
+
+    effective_contract_gap_retry = LOCKED_CONTRACT_GAP_RETRY
+    effective_contract_gap_retry_steps = LOCKED_CONTRACT_GAP_RETRY_STEPS
+    if str(args.contract_gap_retry_mode).strip() == "on":
+        effective_contract_gap_retry = True
+        effective_contract_gap_retry_steps = max(1, int(LOCKED_CONTRACT_GAP_RETRY_STEPS))
+    elif str(args.contract_gap_retry_mode).strip() == "off":
+        effective_contract_gap_retry = False
+        effective_contract_gap_retry_steps = 0
 
     cfg = _load_cfg_for_openai()
     baseline_holder = (
@@ -328,6 +349,8 @@ def main() -> int:
             posttask_learn=False,
             benchmark_placebo=True,
             verbose=bool(args.verbose),
+            contract_gap_retry=effective_contract_gap_retry,
+            contract_gap_retry_steps=effective_contract_gap_retry_steps,
         )
 
         # ON arm: same baseline, same locked runtime, learning enabled.
@@ -343,6 +366,8 @@ def main() -> int:
             posttask_learn=True,
             benchmark_placebo=False,
             verbose=bool(args.verbose),
+            contract_gap_retry=effective_contract_gap_retry,
+            contract_gap_retry_steps=effective_contract_gap_retry_steps,
         )
     finally:
         # Always restore caller state even on crash/interrupt.
@@ -367,7 +392,8 @@ def main() -> int:
                 "self_edit_mode": LOCKED_SELF_EDIT_MODE,
                 "benchmark_deterministic": LOCKED_BENCHMARK_DETERMINISTIC,
                 "structured_lessons_required": LOCKED_STRUCTURED_LESSONS_REQUIRED,
-                "contract_gap_retry": LOCKED_CONTRACT_GAP_RETRY,
+                "contract_gap_retry": bool(effective_contract_gap_retry),
+                "contract_gap_retry_mode": str(args.contract_gap_retry_mode),
                 "contract_gap_deterministic_recipes": LOCKED_CONTRACT_GAP_DETERMINISTIC_RECIPES,
                 "doc_retrieval": LOCKED_DOC_RETRIEVAL,
                 "doc_mode": LOCKED_DOC_MODE,

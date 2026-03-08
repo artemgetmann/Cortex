@@ -72,6 +72,7 @@ def test_request_executor_turn_routes_openai_with_injected_handler() -> None:
         tools=[{"name": "run_sqlite"}],
         messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
         runtime_temperature=None,
+        tool_choice_override="required",
         claude_print_fallback_model="claude-haiku-4-5",
         openai_request_fn=_fake_openai_request,
     )
@@ -80,6 +81,7 @@ def test_request_executor_turn_routes_openai_with_injected_handler() -> None:
     assert usage == {"backend": "openai"}
     assert captured["api_key"] == "test-key"
     assert captured["model"] == "gpt-5-nano"
+    assert captured["tool_choice_override"] == "required"
 
 
 def test_request_executor_turn_routes_claude_print_with_prompt_logger() -> None:
@@ -111,4 +113,3 @@ def test_request_executor_turn_routes_claude_print_with_prompt_logger() -> None:
     assert usage == {"backend": "claude_print"}
     assert captured["fallback_model"] == "claude-haiku-4-5"
     assert logged["prompt"] == "rendered prompt"
-

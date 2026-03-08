@@ -80,6 +80,7 @@ def test_openai_executor_uses_responses_and_parses_function_calls(
             "strict": True,
         }
     ]
+    assert captured["tool_choice"] == "auto"
     assert blocks == [
         {"type": "text", "text": "Running query"},
         {
@@ -92,6 +93,7 @@ def test_openai_executor_uses_responses_and_parses_function_calls(
     assert usage["backend"] == "openai"
     assert usage["api"] == "responses"
     assert usage["response_id"] == "resp_123"
+    assert usage["tool_choice_requested"] == "auto"
 
 
 def test_openai_executor_skips_malformed_function_call_arguments(
@@ -193,6 +195,7 @@ def test_openai_executor_respects_chat_completions_toggle(
     )
 
     assert isinstance(captured["messages"], list)
+    assert captured["tool_choice"] == "auto"
     assert blocks == [
         {"type": "text", "text": "Done"},
         {
@@ -205,6 +208,44 @@ def test_openai_executor_respects_chat_completions_toggle(
     assert usage["backend"] == "openai"
     assert usage["api"] == "chat_completions"
     assert usage["response_id"] == "chat_1"
+    assert usage["tool_choice_requested"] == "auto"
+
+
+def test_openai_executor_can_force_required_tool_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_USE_CHAT_COMPLETIONS", raising=False)
+    captured: dict[str, Any] = {}
+
+    def _fake_responses_request(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {
+            "id": "resp_required_1",
+            "output": [],
+            "usage": {"input_tokens": 5, "output_tokens": 1},
+        }
+
+    monkeypatch.setattr(openai_transport, "openai_responses_request", _fake_responses_request)
+
+    blocks, usage = openai_transport.create_executor_response_via_openai(
+        api_key="test-key",
+        model="gpt-5-nano",
+        system_prompt="System policy",
+        tools=[
+            {
+                "name": "run_sqlite",
+                "description": "Run SQL",
+                "input_schema": {"type": "object"},
+            }
+        ],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "execute now"}]}],
+        temperature=0.0,
+        tool_choice_override="required",
+    )
+
+    assert blocks == []
+    assert captured["tool_choice"] == "required"
+    assert usage["tool_choice_requested"] == "required"
 
 
 def test_openai_compat_messages_uses_responses_api(

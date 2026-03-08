@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from tracks.cli_sqlite.agent_cli import _select_high_signal_prerun_matches
+from tracks.cli_sqlite.agent_cli import _format_v2_lesson_block, _select_high_signal_prerun_matches
 
 
 def _match(
@@ -254,3 +254,68 @@ def test_same_task_structured_fallback_caps_to_two_families_without_promoted() -
         min_score=0.55,
     )
     assert [m.lesson.lesson_id for m in selected] == ["lsn_query_best", "lsn_error_budget"]
+
+
+def test_format_v2_lesson_block_prefers_structured_fields_over_raw_rule_text() -> None:
+    match = _match(
+        lesson_id="lsn_structured",
+        task_id="incremental_reconcile_replay_safe",
+        domain="sqlite",
+        score=0.71,
+        text_similarity=0.08,
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+        gap_signature="required_query_mismatch|required_query|replay_steps",
+        action_template='run_sqlite(sql="INSERT OR IGNORE INTO replay_log(batch_tag, replay_step) VALUES (\'BATCH-REPLAY-01\', 1);")',
+        expected_evidence="required_query_mismatch|required_query|replay_steps",
+    )
+    match.lesson.rule_text = "this raw rule text should not be used when structured fields exist"
+    block, lesson_ids = _format_v2_lesson_block([match], use_placebo=False, task_id="incremental_reconcile_replay_safe", domain="sqlite")
+    assert "WHEN gap_signature=required_query_mismatch|required_query|replay_steps:" in block
+    assert "this raw rule text should not be used" not in block
+    assert lesson_ids == ["lsn_structured"]
+
+
+def test_same_task_structured_fallback_skips_verifier_only_lessons() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_verifier_only",
+            task_id="partial_failure_recovery_strict",
+            domain="sqlite",
+            score=0.18,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|error_ids",
+            action_template='run_sqlite(sql="SELECT txn_id, reason FROM error_log ORDER BY txn_id; expected_rows=[[\"T003\",\"invalid_amount\"],[\"T005\",\"invalid_amount\"]]")',
+            expected_evidence="required_query_mismatch|required_query|error_ids",
+        ),
+        _match(
+            lesson_id="lsn_real_fix",
+            task_id="partial_failure_recovery_strict",
+            domain="sqlite",
+            score=0.14,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|valid_txn_count",
+            action_template='run_sqlite(sql="BEGIN TRANSACTION; INSERT INTO transactions(txn_id, account, amount) VALUES (\'T001\',\'checking\',500); COMMIT;")',
+            expected_evidence="4 rows inserted into transactions",
+        ),
+    ]
+    # Mimic stored deterministic validator text exactly enough to trigger the filter.
+    matches[0].lesson.rule_text = (
+        "[deterministic_recipe domain=sqlite task_id=partial_failure_recovery_strict] "
+        "Run validator query and reconcile data exactly: "
+        "SELECT txn_id, reason FROM error_log ORDER BY txn_id; "
+        'expected_rows=[["T003", "invalid_amount"], ["T005", "invalid_amount"]]'
+    )
+    matches[1].lesson.rule_text = "WHEN gap_signature=required_query_mismatch|required_query|valid_txn_count: insert valid rows first."
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="partial_failure_recovery_strict",
+        domain="sqlite",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_real_fix"]

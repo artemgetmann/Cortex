@@ -251,6 +251,18 @@ def _run_cli_agent_impl_extracted(
         auto_escalate=auto_escalate_critic,
         state=escalation_state,
     )
+    if llm_backend in {"openai", "openai_agents_sdk"}:
+        normalized_critic_model = str(critic_model_for_run or "").strip().lower()
+        # OpenAI-backed runs must not "escalate" into Anthropic model names.
+        # That does not make the critic stronger; it just creates a broken call
+        # path and silently kills lesson generation. Keep the critic on the
+        # caller-selected OpenAI family unless the caller explicitly passed a
+        # compatible OpenAI model.
+        if not normalized_critic_model.startswith(("gpt-", "o1", "o3", "o4")):
+            critic_model_for_run = model_critic
+            escalation_state["tier"] = _tier_from_model(model_critic)
+            escalation_state["override_runs_remaining"] = 0
+            escalation_state["last_trigger"] = "backend_family_lock"
 
     contract_path = TASKS_ROOT / task_id / "CONTRACT.json"
     has_contract = contract_path.exists()
@@ -392,6 +404,19 @@ def _run_cli_agent_impl_extracted(
             "tools": _clone_json(tools),
         }
         executor_input_bundles.append(executor_input_bundle)
+        # Generic task-mode escalation: after a no-tool recovery prompt has
+        # already been injected, stop relying on the model to volunteer tool
+        # use. Require one tool call so the loop keeps interacting with the
+        # environment instead of burning turns on pure reasoning.
+        tool_choice_override = None
+        if (
+            llm_backend == "openai"
+            and no_tool_recovery_prompts_used > 0
+            and step < max_steps
+            and bool(tools)
+        ):
+            tool_choice_override = "required"
+            executor_input_bundle["tool_choice_override"] = "required"
         assistant_blocks, usage = request_executor_turn(
             llm_backend=llm_backend,
             client=client,
@@ -401,6 +426,7 @@ def _run_cli_agent_impl_extracted(
             tools=tools,
             messages=messages,
             runtime_temperature=runtime_temperature,
+            tool_choice_override=tool_choice_override,
             prompt_logger=lambda prompt_text: executor_input_bundle.__setitem__("claude_print_prompt", prompt_text),
             claude_print_fallback_model=DEFAULT_EXECUTOR_MODEL,
             claude_print_request_fn=_create_executor_response_via_claude_print,
@@ -417,6 +443,7 @@ def _run_cli_agent_impl_extracted(
                 "output_item_count",
                 "output_item_type_counts",
                 "function_call_count",
+                "tool_parse_errors",
                 "text_block_count",
                 "reasoning_only_turn",
                 "retry_attempted",

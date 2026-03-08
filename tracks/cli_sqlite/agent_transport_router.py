@@ -157,6 +157,7 @@ def request_executor_turn(
     tools: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     runtime_temperature: float | None,
+    tool_choice_override: str | None = None,
     prompt_logger: Callable[[str], None] | None = None,
     claude_print_fallback_model: str,
     sdk_execution_state: OpenAIAgentsSDKExecutionState | None = None,
@@ -200,6 +201,7 @@ def request_executor_turn(
             tools=tools,
             messages=messages,
             temperature=runtime_temperature,
+            tool_choice_override=tool_choice_override,
         )
 
     if llm_backend == "openai_agents_sdk":
