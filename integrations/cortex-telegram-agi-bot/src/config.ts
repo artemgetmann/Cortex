@@ -313,7 +313,7 @@ export const CORTEX_AUTO_TASK_ROUTING =
   (process.env.CORTEX_AUTO_TASK_ROUTING || "true").toLowerCase() === "true";
 
 export const CORTEX_CONFIRMATION_ENABLED =
-  (process.env.CORTEX_CONFIRMATION_ENABLED || "true").toLowerCase() === "true";
+  (process.env.CORTEX_CONFIRMATION_ENABLED || "false").toLowerCase() === "true";
 
 export const CORTEX_TASK_DEFAULT_DOMAIN =
   process.env.CORTEX_TASK_DEFAULT_DOMAIN || "shell";
