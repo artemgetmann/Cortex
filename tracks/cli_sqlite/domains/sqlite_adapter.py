@@ -227,33 +227,41 @@ def _sqlite_incremental_forced_repair_recipe(*, task_id: str, gap: dict[str, Any
             "COMMIT;"
         )
     elif task_key == "incremental_reconcile_replay_safe":
-        repair_sql = (
+        replay_step_1_sql = (
             "BEGIN IMMEDIATE; "
             "INSERT INTO ledger(event_id, category, amount, batch_id) "
             "SELECT fs.event_id, fs.category, CAST(fs.amount AS INTEGER), fs.batch_id "
             "FROM fixture_seed fs "
-            "WHERE ((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) "
+            "WHERE trim(fs.amount) GLOB '[0-9]*' "
             "AND trim(fs.amount) NOT IN ('', '-') "
             "AND fs.rowid = (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE f2.event_id = fs.event_id) "
             "AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.event_id = fs.event_id); "
             "INSERT INTO rejects(event_id, reason, batch_id) "
-            "SELECT fs.event_id, "
-            "CASE "
-            "WHEN NOT (((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) AND trim(fs.amount) NOT IN ('', '-')) THEN 'invalid_amount' "
-            "ELSE 'duplicate_event' "
-            "END, "
-            "'BATCH-REPLAY-01' "
+            "SELECT fs.event_id, 'invalid_amount', 'BATCH-REPLAY-01' "
             "FROM fixture_seed fs "
-            "WHERE ("
-            "NOT (((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) AND trim(fs.amount) NOT IN ('', '-')) "
-            "OR fs.rowid != (SELECT MIN(f2.rowid) FROM fixture_seed f2 WHERE f2.event_id = fs.event_id)) "
+            "WHERE NOT (trim(fs.amount) GLOB '[0-9]*') "
             "AND NOT EXISTS ("
             "SELECT 1 FROM rejects r "
             "WHERE r.event_id = fs.event_id "
-            "AND r.reason = CASE "
-            "WHEN NOT (((trim(fs.amount) GLOB '[0-9]*') OR (trim(fs.amount) GLOB '-[0-9]*')) AND trim(fs.amount) NOT IN ('', '-')) THEN 'invalid_amount' "
-            "ELSE 'duplicate_event' "
-            "END "
+            "AND r.reason = 'invalid_amount' "
+            "AND r.batch_id = 'BATCH-REPLAY-01'"
+            "); "
+            "COMMIT;"
+        )
+        replay_step_2_sql = (
+            "BEGIN IMMEDIATE; "
+            "INSERT INTO rejects(event_id, reason, batch_id) "
+            "SELECT dup.event_id, 'duplicate_event', 'BATCH-REPLAY-01' "
+            "FROM ("
+            "SELECT event_id "
+            "FROM fixture_seed "
+            "GROUP BY event_id "
+            "HAVING COUNT(*) > 1"
+            ") dup "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM rejects r "
+            "WHERE r.event_id = dup.event_id "
+            "AND r.reason = 'duplicate_event' "
             "AND r.batch_id = 'BATCH-REPLAY-01'"
             "); "
             "INSERT OR IGNORE INTO replay_log(batch_tag, replay_step) VALUES ('BATCH-REPLAY-01', 1); "
@@ -289,6 +297,16 @@ def _sqlite_incremental_forced_repair_recipe(*, task_id: str, gap: dict[str, Any
             if isinstance(expected_rows, list)
             else ""
         )
+        if task_key == "incremental_reconcile_replay_safe":
+            return (
+                "[forced_repair sqlite_incremental_replay_safe_v1] "
+                f"query_id={query_id or 'required_query'} "
+                f"step1=run_sqlite(sql={json.dumps(replay_step_1_sql, ensure_ascii=True)}) "
+                f"step2=run_sqlite(sql={json.dumps(replay_step_2_sql, ensure_ascii=True)}) "
+                f"step3=run_sqlite(sql={json.dumps(query_sql, ensure_ascii=True)})"
+                f"{expected_suffix} "
+                "step4=if_mismatch_stop_and_report"
+            )
         return (
             "[forced_repair sqlite_incremental_required_query_mismatch_v1] "
             f"query_id={query_id or 'required_query'} "
@@ -300,6 +318,15 @@ def _sqlite_incremental_forced_repair_recipe(*, task_id: str, gap: dict[str, Any
 
     # Missing-pattern and error-budget gaps get the same deterministic closure
     # transaction so the model can satisfy all required SQL signals in one shot.
+    if task_key == "incremental_reconcile_replay_safe":
+        return (
+            "[forced_repair sqlite_incremental_replay_safe_closure_v1] "
+            f"step1=run_sqlite(sql={json.dumps(replay_step_1_sql, ensure_ascii=True)}) "
+            f"step2=run_sqlite(sql={json.dumps(replay_step_2_sql, ensure_ascii=True)}) "
+            "step3=run_sqlite(sql=\"SELECT COUNT(*) FROM ledger; SELECT COUNT(*) FROM rejects; "
+            "SELECT COUNT(*) FROM replay_log; SELECT COUNT(*) FROM batch_audit;\") "
+            "step4=if_errors_stop_and_report"
+        )
     return (
         "[forced_repair sqlite_incremental_closure_v1] "
         f"step1=run_sqlite(sql={json.dumps(repair_sql, ensure_ascii=True)}) "

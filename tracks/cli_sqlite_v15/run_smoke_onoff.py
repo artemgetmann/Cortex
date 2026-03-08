@@ -98,7 +98,59 @@ def _seed_empty_learning_snapshot() -> Path:
     # implicit file creation behavior.
     (snapshot / "lessons.jsonl").write_text("", encoding="utf-8")
     (snapshot / "lessons_v2.jsonl").write_text("", encoding="utf-8")
+    # Benchmarks should not inherit safety streak state from earlier unrelated
+    # runs. That state is product-useful, but it is a confounder for ON/OFF
+    # measurement because it changes behavior for reasons unrelated to memory.
+    (snapshot / "loop_watchdog_state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "safe_mode_active": False,
+                "safe_mode_failure_streak": 0,
+                "rejection_streak": 0,
+                "last_run_id": "",
+                "last_failure_signals": [],
+                "last_stop_flag": False,
+                "updated_at_ts": 0,
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return holder
+
+
+def _reset_watchdog_state(learning_root: Path) -> None:
+    """Reset watchdog state between benchmark sessions.
+
+    Why this exists:
+    - The watchdog tracks repeated failures across runs.
+    - That is valid for product behavior, but it contaminates benchmark runs
+      when we are trying to isolate lesson memory effects.
+    - We keep lessons between ON runs, but we reset watchdog streaks so each
+      session starts with the same safety posture.
+    """
+    learning_root.mkdir(parents=True, exist_ok=True)
+    (learning_root / "loop_watchdog_state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "safe_mode_active": False,
+                "safe_mode_failure_streak": 0,
+                "rejection_streak": 0,
+                "last_run_id": "",
+                "last_failure_signals": [],
+                "last_stop_flag": False,
+                "updated_at_ts": 0,
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _restore_learning_tree(*, snapshot_holder: Path, learning_root: Path) -> None:
@@ -184,6 +236,7 @@ def _run_arm(
     for index in range(runs):
         session_id = int(start_session) + index
         started = time.time()
+        _reset_watchdog_state(LEARNING_ROOT)
         result = agent_cli.run_cli_agent(
             cfg=cfg,
             task_id=task_id,

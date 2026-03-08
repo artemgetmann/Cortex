@@ -134,7 +134,10 @@ def test_incremental_reconcile_replay_safe_uses_task_specific_forced_recipe() ->
         max_items=3,
     )
     assert recipes
-    assert recipes[0].startswith("[forced_repair sqlite_incremental_required_query_mismatch_v1]")
+    assert recipes[0].startswith("[forced_repair sqlite_incremental_replay_safe_v1]")
+    assert "step1=run_sqlite" in recipes[0]
+    assert "step2=run_sqlite" in recipes[0]
+    assert "step3=run_sqlite" in recipes[0]
     assert "batch_audit" in recipes[0]
     assert "replay_log" in recipes[0]
     assert "batch_id" in recipes[0]
