@@ -14,6 +14,9 @@ _PLACEBO_HINT_BANK: tuple[str, ...] = (
     "Prioritize contract closure over stylistic or optional cleanup steps.",
     "When errors recur, simplify the plan and verify intermediate outputs explicitly.",
 )
+_MAX_INLINE_HINT_CHARS = 420
+_MAX_INLINE_ACTION_CHARS = 220
+_MAX_INLINE_EVIDENCE_CHARS = 180
 
 
 def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> str:
@@ -21,6 +24,133 @@ def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> st
     digest = hashlib.sha256(token).hexdigest()
     idx = int(digest[:8], 16) % len(_PLACEBO_HINT_BANK)
     return f"PLACEBO_CONTROL[{digest[:6]}]: {_PLACEBO_HINT_BANK[idx]}"
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _squash_ws(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _coarse_gap_anchor(lesson: Any) -> str:
+    signature = str(getattr(lesson, "gap_signature", "")).strip()
+    if signature:
+        return signature[:120]
+    reason = str(getattr(lesson, "reason_code", "")).strip()
+    gap_type = str(getattr(lesson, "gap_type", "")).strip()
+    if reason or gap_type:
+        return f"{reason}|{gap_type}".strip("|")
+    return "generic_gap"
+
+
+def _looks_like_giant_command_blob(text: str) -> bool:
+    payload = _squash_ws(text)
+    if not payload:
+        return False
+    if len(payload) > _MAX_INLINE_HINT_CHARS:
+        return True
+    if "run_bash(command=" in payload and (payload.count(";") >= 4 or payload.count("&&") >= 3):
+        return True
+    if payload.count("run_bash(") >= 2:
+        return True
+    if "HINT from prior sessions" in payload:
+        return True
+    return False
+
+
+def _action_template_is_inline_safe(action_template: str) -> bool:
+    text = _squash_ws(action_template)
+    if not text:
+        return False
+    if len(text) > _MAX_INLINE_ACTION_CHARS:
+        return False
+    if "\n" in action_template or "```" in action_template:
+        return False
+    if "run_bash(command=" in text and (text.count(";") >= 4 or text.count("&&") >= 3):
+        return False
+    return True
+
+
+def _lesson_trust_band(lesson: Any) -> str:
+    """
+    Soft firewall trust bands:
+    - trusted: proven and low-risk
+    - uncertain: available but lower confidence
+    - risky: keep in memory, but do not inject as executable command text
+    """
+    status = str(getattr(lesson, "status", "")).strip().lower()
+    reliability = _safe_float(getattr(lesson, "reliability", 0.5), default=0.5)
+    harmful_count = max(0, _safe_int(getattr(lesson, "harmful_count", 0), default=0))
+    contradiction_losses = max(0, _safe_int(getattr(lesson, "contradiction_losses", 0), default=0))
+    major_regressions = max(0, _safe_int(getattr(lesson, "major_regressions", 0), default=0))
+
+    if status in {"suppressed", "archived"}:
+        return "risky"
+    if contradiction_losses > 0 or major_regressions > 0:
+        return "risky"
+    if harmful_count >= 2 or reliability < 0.30:
+        return "risky"
+    if status == "promoted" and reliability >= 0.55 and harmful_count == 0:
+        return "trusted"
+    if reliability >= 0.70 and harmful_count == 0:
+        return "trusted"
+    return "uncertain"
+
+
+def _render_runtime_lesson_hint(
+    *,
+    lesson: Any,
+    use_placebo: bool = False,
+    task_id: str = "",
+    domain: str = "",
+) -> tuple[str, str, str]:
+    """
+    Build one runtime hint with a soft firewall.
+
+    Returns:
+    - hint text
+    - trust band: trusted|uncertain|risky|placebo
+    - mode: direct_action|summary|placebo
+    """
+    lesson_id = str(getattr(lesson, "lesson_id", ""))
+    if use_placebo:
+        return (
+            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain),
+            "placebo",
+            "placebo",
+        )
+
+    trust_band = _lesson_trust_band(lesson)
+    gap_signature = str(getattr(lesson, "gap_signature", "")).strip()
+    action_template = _squash_ws(str(getattr(lesson, "action_template", "")).strip())
+    expected_evidence = _squash_ws(str(getattr(lesson, "expected_evidence", "")).strip())[:_MAX_INLINE_EVIDENCE_CHARS]
+    if trust_band != "risky" and gap_signature and action_template and expected_evidence and _action_template_is_inline_safe(action_template):
+        return (
+            f"WHEN gap_signature={gap_signature}: {action_template} EXPECT: {expected_evidence}",
+            trust_band,
+            "direct_action",
+        )
+
+    raw_rule = _squash_ws(str(getattr(lesson, "rule_text", "")).strip())
+    if trust_band != "risky" and raw_rule and not _looks_like_giant_command_blob(raw_rule):
+        return (raw_rule[:_MAX_INLINE_HINT_CHARS], trust_band, "summary")
+
+    anchor = _coarse_gap_anchor(lesson)
+    evidence = expected_evidence or "confirm missing requirement is closed"
+    caution = f"CAUTION[{lesson_id[:8]}|{trust_band}]: focus on gap={anchor}. Verify with evidence: {evidence}"
+    return (_squash_ws(caution)[:_MAX_INLINE_HINT_CHARS], trust_band, "summary")
 
 
 def _format_v2_lesson_block(
@@ -42,23 +172,13 @@ def _format_v2_lesson_block(
         lesson_id = str(getattr(lesson, "lesson_id", ""))
         lesson_ids.append(lesson_id)
         score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
-        if use_placebo:
-            rule_text = _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
-        else:
-            # Prefer structured lesson fields over raw rule_text because the
-            # stored rule can be long and clipped. For execution memory we want
-            # the minimal actionable core, not a half-truncated paragraph.
-            gap_signature = str(getattr(lesson, "gap_signature", "")).strip()
-            action_template = str(getattr(lesson, "action_template", "")).strip()
-            expected_evidence = str(getattr(lesson, "expected_evidence", "")).strip()
-            if gap_signature and action_template and expected_evidence:
-                rule_text = (
-                    f"WHEN gap_signature={gap_signature}: "
-                    f"{action_template} EXPECT: {expected_evidence}"
-                )
-            else:
-                rule_text = str(getattr(lesson, "rule_text", ""))
-        lines.append(f"- ({score_value:.2f}) {rule_text}")
+        hint_text, _, _ = _render_runtime_lesson_hint(
+            lesson=lesson,
+            use_placebo=use_placebo,
+            task_id=task_id,
+            domain=domain,
+        )
+        lines.append(f"- ({score_value:.2f}) {hint_text}")
     return "\n".join(lines), [value for value in lesson_ids if value]
 
 
@@ -78,6 +198,7 @@ def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
             {
                 "lesson_id": str(getattr(lesson, "lesson_id", "")),
                 "status": str(getattr(lesson, "status", "")),
+                "trust_band": _lesson_trust_band(lesson),
                 "task_id": str(getattr(lesson, "task_id", "")),
                 "domain": str(getattr(lesson, "domain", "")),
                 "rule_text": str(getattr(lesson, "rule_text", "")),

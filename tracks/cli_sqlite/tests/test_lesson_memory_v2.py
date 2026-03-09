@@ -147,6 +147,47 @@ class RetrievalV2Tests(unittest.TestCase):
             self.assertTrue(matches)
             self.assertEqual(matches[0].lesson.lesson_id, exact.lesson_id)
 
+    def test_on_error_downranks_harmful_high_reliability_lesson(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lessons_v2.jsonl"
+            stable = _record(
+                session_id=1303,
+                rule_text="When init is missing, run git init source_repo before patch apply.",
+                fingerprints=("fp_init",),
+                tags=("syntax_structure",),
+                reliability=0.55,
+                domain="shell",
+                task_id="shell_git_transfer_hotfix_hard",
+            )
+            harmful = _record(
+                session_id=1304,
+                rule_text="Apply all patches immediately before init.",
+                fingerprints=("fp_init",),
+                tags=("syntax_structure",),
+                reliability=0.95,
+                domain="shell",
+                task_id="shell_git_transfer_hotfix_hard",
+            )
+            harmful = LessonRecord(
+                **{
+                    **harmful.__dict__,
+                    "harmful_count": 3,
+                    "contradiction_losses": 1,
+                }
+            )
+            upsert_lesson_records(path, [stable, harmful])
+            matches, _ = retrieve_on_error(
+                path=path,
+                error_text="missing required event git init source_repo",
+                fingerprint="fp_init",
+                domain="shell",
+                task_id="shell_git_transfer_hotfix_hard",
+                query_tags=("syntax_structure",),
+                max_results=2,
+            )
+            self.assertTrue(matches)
+            self.assertEqual(matches[0].lesson.lesson_id, stable.lesson_id)
+
     def test_retrieval_ignores_suppressed_and_conflict_loser(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "lessons_v2.jsonl"

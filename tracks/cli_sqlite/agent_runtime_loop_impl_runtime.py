@@ -778,12 +778,15 @@ def _run_cli_agent_impl_extracted(
                     hint_lanes: dict[str, str] = {}
                     for match in v2_matches:
                         lesson_id = str(match.lesson.lesson_id)
-                        # Placebo control keeps retrieval mechanics constant and
-                        # only swaps lesson content for generic deterministic hints.
-                        rule_text = (
-                            _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
-                            if benchmark_placebo
-                            else str(match.lesson.rule_text)
+                        # Soft firewall: keep retrieval active, but avoid
+                        # injecting low-trust raw command blobs directly into the
+                        # next model turn. Risky lessons are rewritten into safe
+                        # summary hints instead of being deleted.
+                        rule_text, trust_band, hint_mode = _render_runtime_lesson_hint(
+                            lesson=match.lesson,
+                            use_placebo=bool(benchmark_placebo),
+                            task_id=task_id,
+                            domain=domain,
                         )
                         lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
                         v2_hints.append(rule_text)
@@ -792,6 +795,8 @@ def _run_cli_agent_impl_extracted(
                                 "lesson_id": lesson_id,
                                 "rule_text": rule_text,
                                 "lane": lane,
+                                "trust_band": trust_band,
+                                "hint_mode": hint_mode,
                             }
                         )
                         retrieval_scores.append(
@@ -813,6 +818,12 @@ def _run_cli_agent_impl_extracted(
                         hint_lanes[rule_text] = lane
                         if lane == "transfer":
                             metrics["v2_transfer_lane_activations"] += 1
+                        if trust_band == "risky":
+                            metrics["v2_lesson_risky_count"] = int(metrics.get("v2_lesson_risky_count", 0) or 0) + 1
+                        if hint_mode != "direct_action":
+                            metrics["v2_lesson_firewall_rewrites"] = int(
+                                metrics.get("v2_lesson_firewall_rewrites", 0) or 0
+                            ) + 1
                     lesson_activation_records.append(
                         {
                             "step": step,

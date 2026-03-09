@@ -19,6 +19,11 @@ def _match(
     action_template: str = "",
     expected_evidence: str = "",
     status: str = "candidate",
+    rule_text: str = "",
+    reliability: float = 0.5,
+    harmful_count: int = 0,
+    contradiction_losses: int = 0,
+    major_regressions: int = 0,
 ):
     lesson = SimpleNamespace(
         lesson_id=lesson_id,
@@ -30,6 +35,11 @@ def _match(
         action_template=action_template,
         expected_evidence=expected_evidence,
         status=status,
+        rule_text=rule_text,
+        reliability=reliability,
+        harmful_count=harmful_count,
+        contradiction_losses=contradiction_losses,
+        major_regressions=major_regressions,
     )
     retrieval_score = SimpleNamespace(
         score=score,
@@ -274,6 +284,33 @@ def test_format_v2_lesson_block_prefers_structured_fields_over_raw_rule_text() -
     assert "WHEN gap_signature=required_query_mismatch|required_query|replay_steps:" in block
     assert "this raw rule text should not be used" not in block
     assert lesson_ids == ["lsn_structured"]
+
+
+def test_format_v2_lesson_block_soft_firewall_rewrites_risky_lessons_to_safe_summary() -> None:
+    match = _match(
+        lesson_id="lsn_risky",
+        task_id="shell_git_transfer_hotfix_hard",
+        domain="shell",
+        score=0.81,
+        text_similarity=0.07,
+        reason_code="missing_required_event_pattern",
+        gap_type="required_event_pattern",
+        gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+        action_template='run_bash(command="git -C target_repo init && git -C target_repo am ../hotfix_gamma.patch && git -C target_repo am ../hotfix_beta.patch && git -C target_repo am ../hotfix_alpha.patch")',
+        expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+        status="candidate",
+        reliability=0.12,
+        harmful_count=3,
+    )
+    block, lesson_ids = _format_v2_lesson_block(
+        [match],
+        use_placebo=False,
+        task_id="shell_git_transfer_hotfix_hard",
+        domain="shell",
+    )
+    assert "CAUTION[" in block
+    assert "run_bash(command=" not in block
+    assert lesson_ids == ["lsn_risky"]
 
 
 def test_same_task_structured_fallback_skips_verifier_only_lessons() -> None:

@@ -738,6 +738,21 @@ def _format_v2_lesson_block(
     )
 
 
+def _render_runtime_lesson_hint(
+    *,
+    lesson: Any,
+    use_placebo: bool = False,
+    task_id: str = "",
+    domain: str = "",
+) -> tuple[str, str, str]:
+    return _lesson_selection_policy._render_runtime_lesson_hint(
+        lesson=lesson,
+        use_placebo=use_placebo,
+        task_id=task_id,
+        domain=domain,
+    )
+
+
 def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
     return _lesson_selection_policy._serialize_prerun_v2_matches(matches)
 

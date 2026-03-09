@@ -84,6 +84,35 @@ def _recency_score(iso_ts: str) -> float:
     return _clamp(1.0 / (1.0 + (age_days / 14.0)), 0.0, 1.0)
 
 
+def _trust_multiplier(lesson: LessonRecord) -> float:
+    """
+    Soft-firewall trust weight for retrieval ranking.
+
+    We never erase lessons here. We only down-rank records that repeatedly hurt
+    outcomes, while still leaving room for uncertain lessons to be explored.
+    """
+    status = str(getattr(lesson, "status", "")).strip().lower()
+    if status in {"suppressed", "archived"}:
+        return 0.0
+
+    helpful_count = max(0, int(getattr(lesson, "helpful_count", 0) or 0))
+    harmful_count = max(0, int(getattr(lesson, "harmful_count", 0) or 0))
+    contradiction_losses = max(0, int(getattr(lesson, "contradiction_losses", 0) or 0))
+    major_regressions = max(0, int(getattr(lesson, "major_regressions", 0) or 0))
+
+    # Keep base retrieval behavior stable: trust only penalizes repeated harm.
+    # This avoids flattening semantic-rank wins where reliability differs but
+    # neither lesson has shown harmful behavior yet.
+    multiplier = 1.0
+    multiplier += min(0.06, 0.01 * float(helpful_count))
+    multiplier -= min(0.45, 0.15 * float(harmful_count))
+    if contradiction_losses > 0:
+        multiplier -= 0.25
+    if major_regressions > 0:
+        multiplier -= 0.15
+    return _clamp(multiplier, 0.15, 1.10)
+
+
 @dataclass(frozen=True)
 class RetrievalScore:
     lesson_id: str
@@ -470,6 +499,7 @@ def _build_score(
         + (0.05 * recency)
         + (0.45 * gap_match)
     )
+    total *= _trust_multiplier(lesson)
     return RetrievalScore(
         lesson_id=lesson.lesson_id,
         score=total,
