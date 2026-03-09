@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -450,6 +451,33 @@ def _gap_family_key_from_lesson(lesson: Any) -> str:
     return ""
 
 
+def _has_repo_init_gap(unresolved_gaps: list[dict[str, Any]]) -> bool:
+    """Detect unresolved gaps that indicate repository init/setup is missing."""
+    for row in unresolved_gaps:
+        if not isinstance(row, dict):
+            continue
+        detail = str(row.get("detail", "")).lower()
+        signature = str(row.get("gap_signature", "")).lower()
+        payload = f"{detail} {signature}"
+        if "git\\s+init" in payload:
+            return True
+    return False
+
+
+def _is_variant_specific_patch_apply_hint(lesson: Any) -> bool:
+    """
+    Identify overly specific hotfix apply hints that are usually wrong for init gaps.
+
+    We only suppress these when unresolved gaps are about repo init/setup.
+    """
+    rule_text = str(getattr(lesson, "rule_text", "")).lower()
+    action_template = str(getattr(lesson, "action_template", "")).lower()
+    payload = f"{rule_text}\n{action_template}"
+    has_variant_patch = bool(re.search(r"hotfix_(alpha|beta|gamma)\.(patch|txt)", payload))
+    mentions_apply = bool(re.search(r"\bgit\b[\s\S]{0,80}\bam\b", payload)) or "apply patch" in payload
+    return has_variant_patch and mentions_apply
+
+
 def _adaptive_gap_lesson_cap(
     *,
     unresolved_gaps: list[dict[str, Any]],
@@ -498,6 +526,7 @@ def _select_gap_targeted_matches(
         for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
         if key
     }
+    has_repo_init_gap = _has_repo_init_gap(unresolved_gaps)
     selected: list[Any] = []
     seen_lesson_ids: set[str] = set()
     used_families: set[str] = set()
@@ -511,6 +540,11 @@ def _select_gap_targeted_matches(
             continue
         score_value = float(getattr(score, "score", 0.0) or 0.0) if score is not None else 0.0
         if score_value < threshold:
+            continue
+        # Prevent a known bad pattern: when the unresolved blocker is repo init,
+        # injecting variant-specific "git am hotfix_beta.patch" hints causes
+        # the model to chase the wrong sub-problem.
+        if has_repo_init_gap and _is_variant_specific_patch_apply_hint(lesson):
             continue
         family_key = _gap_family_key_from_lesson(lesson)
         if unresolved_families:

@@ -670,6 +670,43 @@ def test_select_gap_targeted_matches_keeps_one_per_family() -> None:
     assert selected_ids == ["a1", "b1"]
 
 
+def test_select_gap_targeted_matches_skips_variant_patch_hint_for_init_gap() -> None:
+    unresolved = [
+        {
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            "detail": "(?is)git\\s+init\\s+source_repo",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="bad-variant-apply",
+            rule_text="WHEN gap_signature=missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo: run_bash(command=\"git -C target_repo am ../hotfix_beta.patch\") EXPECT: init fixed",
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            score=0.95,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="good-init-fix",
+            rule_text="When init missing, run_bash(command=\"git -C source_repo init && git -C target_repo init\")",
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            score=0.70,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=2,
+        min_score=0.20,
+    )
+    selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
+    assert selected_ids == ["good-init-fix"]
+
+
 def test_contract_gap_retry_injects_deterministic_recipe_hints(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

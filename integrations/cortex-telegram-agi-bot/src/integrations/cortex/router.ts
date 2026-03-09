@@ -244,7 +244,10 @@ function summarizeStatus(payload: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-function summarizeRunStatus(payload: Record<string, unknown>): string {
+function summarizeRunStatus(
+  payload: Record<string, unknown>,
+  trackedRunId?: string
+): string {
   const activeRows = Array.isArray(payload.active_runs)
     ? (payload.active_runs as Record<string, unknown>[])
     : [];
@@ -259,7 +262,10 @@ function summarizeRunStatus(payload: Record<string, unknown>): string {
       : [];
     return [
       "Cortex run status:",
-      `- run_id: ${run.run_id ?? "?"}`,
+      `- run_id: ${trackedRunId ?? run.run_id ?? "?"}`,
+      ...(trackedRunId && trackedRunId !== run.run_id
+        ? [`- internal_run_id: ${run.run_id ?? "?"}`]
+        : []),
       `- status: ${run.status ?? "?"}`,
       `- cancel_requested: ${run.cancel_requested ?? "?"}`,
       `- last_step: ${run.last_step ?? "?"}`,
@@ -280,7 +286,10 @@ function summarizeRunStatus(payload: Record<string, unknown>): string {
   return [
     "Cortex run status:",
     `- active_runs: ${activeRows.length}`,
-    `- latest_run_id: ${first.run_id ?? "?"}`,
+    `- latest_run_id: ${trackedRunId ?? first.run_id ?? "?"}`,
+    ...(trackedRunId && trackedRunId !== first.run_id
+      ? [`- internal_run_id: ${first.run_id ?? "?"}`]
+      : []),
     `- latest_status: ${first.status ?? "?"}`,
     `- latest_last_step: ${first.last_step ?? "?"}`,
   ].join("\n");
@@ -289,12 +298,14 @@ function summarizeRunStatus(payload: Record<string, unknown>): string {
 function summarizeRun(
   plan: Record<string, unknown> | undefined,
   result: Record<string, unknown> | undefined,
-  verbose: boolean
+  verbose: boolean,
+  transportRunId?: string
 ): string {
   const taskId = result?.task_id ?? plan?.task_id ?? "?";
   const domain = result?.domain ?? plan?.domain ?? "?";
   const ok = result?.ok ?? false;
-  const runId = result?.run_id ?? plan?.run_id ?? "?";
+  const internalRunId = result?.run_id ?? plan?.run_id ?? "?";
+  const runId = transportRunId || internalRunId;
   const runStatus = result?.run_status ?? "?";
   const sessionId = result?.session_id ?? "?";
   const sessionDir = result?.session_dir ?? "?";
@@ -311,6 +322,9 @@ function summarizeRun(
   const lines = [
     `Cortex run: ${ok ? "ok" : "failed"}`,
     `- run_id: ${runId}`,
+    ...(transportRunId && transportRunId !== internalRunId
+      ? [`- internal_run_id: ${internalRunId}`]
+      : []),
     `- run_status: ${runStatus}`,
     `- task_id: ${taskId}`,
     `- domain: ${domain}`,
@@ -381,8 +395,8 @@ function summarizePollUpdate(
     started > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - started)) : null;
   const terminal = status === "completed" || status === "failed" || status === "cancelled";
   const latestEvent = latestLifecycle ? String(latestLifecycle.event ?? "") : "";
-  const resolvedRunId = String(run.run_id ?? runId);
-  const signature = `${resolvedRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
+  const internalRunId = String(run.run_id ?? "");
+  const signature = `${runId}|${internalRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
   const hasNewLifecycleEvent = latestLifecycleTs > lastSeenLifecycleTs;
   const followups = Array.isArray(run.followups)
     ? (run.followups as unknown[])
@@ -413,7 +427,10 @@ function summarizePollUpdate(
               ? "Planning"
               : "Running";
   const lines = [
-    `Cortex live run ${resolvedRunId}`,
+    `Cortex live run ${runId}`,
+    ...(internalRunId && internalRunId !== runId
+      ? [`- internal_run_id: ${internalRunId}`]
+      : []),
     `- status: ${status}`,
     `- phase: ${phase}`,
     `- step: ${lastStep}`,
@@ -594,7 +611,8 @@ async function runTaskAndReply(
       summarizeRun(
         payload.plan as Record<string, unknown> | undefined,
         payload.result as Record<string, unknown> | undefined,
-        verbose
+        verbose,
+        runDispatch.runId
       )
     );
     return;
@@ -648,7 +666,7 @@ async function sendStatusReply(
   );
   await ctx.reply(
     isRunStatus
-      ? summarizeRunStatus(payload as Record<string, unknown>)
+      ? summarizeRunStatus(payload as Record<string, unknown>, activeRunId)
       : summarizeStatus(payload as Record<string, unknown>)
   );
 }
