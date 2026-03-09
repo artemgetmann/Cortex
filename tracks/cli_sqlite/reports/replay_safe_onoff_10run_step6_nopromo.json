@@ -1,0 +1,83 @@
+{
+  "suite": "incremental_reconcile_replay_safe",
+  "task_id": "incremental_reconcile_replay_safe",
+  "domain": "sqlite",
+  "curriculum_mode": "fixed",
+  "learning_mode": "strict",
+  "sessions": 10,
+  "max_steps": 6,
+  "model": {
+    "executor": "gpt-5-nano",
+    "judge": "gpt-5-nano",
+    "backend": "openai"
+  },
+  "flags": {
+    "benchmark_deterministic": true,
+    "doc_mode": "none",
+    "doc_retrieval": "off",
+    "judge_diagnostic": true,
+    "contract_gap_retry": true,
+    "contract_gap_retry_steps": 1,
+    "contract_gap_deterministic_recipes": true,
+    "structured_lessons_required": true,
+    "benchmark_promoted_only": false
+  },
+  "on": {
+    "log": "/tmp/replay_safe_on_10run_step6_nopromo.log",
+    "start_session": 63101,
+    "pass_rate": 1.0,
+    "last5_pass_rate": 1.0,
+    "median_steps_to_success": 6,
+    "mean_score": 1.0,
+    "mean_error_count": 0.2,
+    "mean_lesson_activations": 2.6,
+    "mean_retrieval_help_ratio": 0.9,
+    "lessons_in": 0,
+    "lessons_out": 3.2,
+    "rows": [
+      {"run":1,"session":63101,"score":1.0,"pass":true,"steps":6,"errors":1,"lessons_in":0,"lessons_out":3,"activations":0,"help_ratio":0.0},
+      {"run":2,"session":63102,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":3,"activations":2,"help_ratio":1.0},
+      {"run":3,"session":63103,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":2,"activations":2,"help_ratio":1.0},
+      {"run":4,"session":63104,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":3,"help_ratio":1.0},
+      {"run":5,"session":63105,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":3,"help_ratio":1.0},
+      {"run":6,"session":63106,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":3,"help_ratio":1.0},
+      {"run":7,"session":63107,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":3,"help_ratio":1.0},
+      {"run":8,"session":63108,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":3,"help_ratio":1.0},
+      {"run":9,"session":63109,"score":1.0,"pass":true,"steps":6,"errors":1,"lessons_in":0,"lessons_out":3,"activations":6,"help_ratio":1.0},
+      {"run":10,"session":63110,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":1,"activations":1,"help_ratio":1.0}
+    ]
+  },
+  "off": {
+    "log": "/tmp/replay_safe_off_10run_step6_nopromo.log",
+    "start_session": 63201,
+    "posttask_learn": false,
+    "pass_rate": 0.6,
+    "last5_pass_rate": 0.8,
+    "median_steps_to_success": 6,
+    "mean_score": 0.862,
+    "mean_error_count": 0.3,
+    "mean_lesson_activations": 0.0,
+    "mean_retrieval_help_ratio": 0.0,
+    "lessons_in": 0,
+    "lessons_out": 0,
+    "rows": [
+      {"run":1,"session":63201,"score":0.94,"pass":false,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":2,"session":63202,"score":0.89,"pass":false,"steps":6,"errors":2,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":3,"session":63203,"score":0.83,"pass":false,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":4,"session":63204,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":5,"session":63205,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":6,"session":63206,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":7,"session":63207,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":8,"session":63208,"score":0.33,"pass":false,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":9,"session":63209,"score":1.0,"pass":true,"steps":6,"errors":1,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0},
+      {"run":10,"session":63210,"score":1.0,"pass":true,"steps":6,"errors":0,"lessons_in":0,"lessons_out":0,"activations":0,"help_ratio":0.0}
+    ]
+  },
+  "delta": {
+    "pass_rate": 0.4,
+    "last5_pass_rate": 0.2,
+    "mean_error_count": -0.1,
+    "mean_lesson_activations": 2.6,
+    "mean_retrieval_help_ratio": 0.9
+  }
+}

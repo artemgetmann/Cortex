@@ -54,6 +54,29 @@ from tracks.cli_sqlite.variant_scoreboard import (
     select_best_variant_from_scoreboard,
 )
 
+
+def _first_present(mapping: dict, keys: list[str], default=None):
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return default
+
+
+def _metric_int(mapping: dict, keys: list[str], default: int = 0) -> int:
+    value = _first_present(mapping, keys, default=default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _metric_float(mapping: dict, keys: list[str], default: float = 0.0) -> float:
+    value = _first_present(mapping, keys, default=default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 BENCHMARK_DEFAULT_LEARNING_MODE = "strict" if "strict" in LEARNING_MODES else DEFAULT_LEARNING_MODE
 TRACK_ROOT = Path(__file__).resolve().parents[1]
 SESSIONS_ROOT = TRACK_ROOT / "sessions"
@@ -327,8 +350,31 @@ def main() -> int:
             "passed": m.get("eval_passed", False),
             "steps": m.get("steps", 0),
             "tool_errors": m.get("tool_errors", 0),
-            "lessons_loaded": m.get("lessons_loaded", 0),
-            "lessons_generated": m.get("lessons_generated", 0),
+            "lessons_loaded": _metric_int(
+                m,
+                ["lessons_loaded", "v2_lessons_loaded", "lesson_loads"],
+                default=0,
+            ),
+            "lessons_generated": _metric_int(
+                m,
+                ["v2_lessons_generated", "lessons_generated", "v2_candidate_lessons_generated", "lesson_candidates_generated"],
+                default=0,
+            ),
+            "lesson_activations": _metric_int(
+                m,
+                ["v2_lesson_activations", "lesson_activations", "activations"],
+                default=0,
+            ),
+            "retrieval_help_ratio": _metric_float(
+                m,
+                ["v2_retrieval_help_ratio", "retrieval_help_ratio", "lesson_retrieval_help_ratio"],
+                default=0.0,
+            ),
+            "error_count": _metric_int(
+                m,
+                ["error_count", "tool_errors", "errors", "v2_error_events"],
+                default=0,
+            ),
             "elapsed_s": round(elapsed, 1),
         }
         runtime_variant_id, runtime_variant_source = resolve_runtime_variant(
@@ -358,7 +404,10 @@ def main() -> int:
         status = "PASS" if row["passed"] else "FAIL"
         print(f"  [{status}] score={row['score']:.2f}  steps={row['steps']}  "
               f"errors={row['tool_errors']}  lessons_in={row['lessons_loaded']}  "
-              f"lessons_out={row['lessons_generated']}  ({row['elapsed_s']}s)")
+              f"lessons_out={row['lessons_generated']}  "
+              f"activations={row['lesson_activations']}  "
+              f"help={row['retrieval_help_ratio']:.2f}  "
+              f"({row['elapsed_s']}s)")
         print(
             "  [variant-scoreboard] variant={variant} score={score:.4f} quality={quality:.4f} speed={speed:.4f} cost={cost:.4f}".format(
                 variant=str(scoreboard_row.get("variant_id", "default")),
@@ -387,13 +436,14 @@ def main() -> int:
     print(f"\n{'='*60}")
     print(f"  LEARNING CURVE SUMMARY")
     print(f"{'='*60}")
-    print(f"{'Run':>4} {'Session':>8} {'Score':>6} {'Pass':>5} {'Steps':>6} {'Errs':>5} {'LessIn':>7} {'LessOut':>8} {'Time':>6}")
-    print(f"{'-'*4:>4} {'-'*8:>8} {'-'*6:>6} {'-'*5:>5} {'-'*6:>6} {'-'*5:>5} {'-'*7:>7} {'-'*8:>8} {'-'*6:>6}")
+    print(f"{'Run':>4} {'Session':>8} {'Score':>6} {'Pass':>5} {'Steps':>6} {'Errs':>5} {'LessIn':>7} {'LessOut':>8} {'Acts':>5} {'Help':>5} {'Time':>6}")
+    print(f"{'-'*4:>4} {'-'*8:>8} {'-'*6:>6} {'-'*5:>5} {'-'*6:>6} {'-'*5:>5} {'-'*7:>7} {'-'*8:>8} {'-'*5:>5} {'-'*5:>5} {'-'*6:>6}")
     for r in results:
         status = "Y" if r["passed"] else "N"
         print(f"{r['run']:>4} {r['session_id']:>8} {r['score']:>6.2f} {status:>5} "
               f"{r['steps']:>6} {r['tool_errors']:>5} {r['lessons_loaded']:>7} "
-              f"{r['lessons_generated']:>8} {r['elapsed_s']:>5.1f}s")
+              f"{r['lessons_generated']:>8} {r['lesson_activations']:>5} "
+              f"{r['retrieval_help_ratio']:>5.2f} {r['elapsed_s']:>5.1f}s")
 
     scores = [r["score"] for r in results]
     print(f"\nScore trajectory: {' -> '.join(f'{s:.2f}' for s in scores)}")
