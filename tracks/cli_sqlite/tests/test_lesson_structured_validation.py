@@ -107,3 +107,57 @@ def test_validate_structured_model_lesson_canonicalizes_partial_trigger_via_reas
     assert payload["trigger_gap_signature"] == (
         "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch"
     )
+
+
+def test_validate_structured_model_lesson_rejects_unanchored_action_for_gap() -> None:
+    lesson = SimpleNamespace(
+        trigger_gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+        reason_code="missing_required_event_pattern",
+        gap_type="required_event_pattern",
+        action_template='run_bash(command="git -C target_repo am ../hotfix_gamma.patch")',
+        expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+    )
+    unresolved = [
+        {
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "detail": "(?is)git\\s+init\\s+target_repo",
+        }
+    ]
+    ok, reason, payload = _validate_structured_model_lesson(
+        lesson=lesson,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools={"run_bash"},
+    )
+    assert ok is False
+    assert reason == "action_template_unanchored_to_gap"
+    assert payload == {}
+
+
+def test_validate_structured_model_lesson_accepts_anchored_action_for_gap() -> None:
+    lesson = SimpleNamespace(
+        trigger_gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+        reason_code="missing_required_event_pattern",
+        gap_type="required_event_pattern",
+        action_template='run_bash(command="git init target_repo && git -C target_repo checkout -b main")',
+        expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+    )
+    unresolved = [
+        {
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo",
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "detail": "(?is)git\\s+init\\s+target_repo",
+        }
+    ]
+    ok, reason, payload = _validate_structured_model_lesson(
+        lesson=lesson,
+        unresolved_gap_rows=unresolved,
+        allowed_action_tools={"run_bash"},
+    )
+    assert ok is True
+    assert reason == ""
+    assert payload["trigger_gap_signature"] == (
+        "missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+target_repo"
+    )

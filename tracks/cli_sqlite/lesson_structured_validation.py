@@ -150,6 +150,101 @@ def _expected_evidence_is_anchored(
     return any(tok in text for tok in semantic_tokens)
 
 
+def _action_is_anchored_to_gap(*, action_template: str, matched_row: dict[str, Any]) -> bool:
+    """
+    Reject action templates that do not mention the concrete missing item.
+
+    Why this exists:
+    - We observed lessons where the gap was "missing git init", but the action
+      was "git am patch". These are syntactically valid but behaviorally wrong.
+    - We keep this heuristic simple and domain-agnostic: if we can extract
+      meaningful anchor tokens from the unresolved gap row, at least one should
+      appear inside the action template.
+    """
+    reason_code = str(matched_row.get("reason_code", "") or "").strip().lower()
+    if reason_code != "missing_required_event_pattern":
+        # Keep validator permissive for non-event-pattern gaps. Query/file
+        # gaps can be satisfied by many equivalent commands and strict lexical
+        # overlap creates false negatives.
+        return True
+
+    action_text = str(action_template or "").strip().lower()
+    if not action_text:
+        return False
+
+    gap_text = " ".join(
+        [
+            str(matched_row.get("gap_signature", "") or ""),
+            str(matched_row.get("detail", "") or ""),
+            str(matched_row.get("reason_code", "") or ""),
+            str(matched_row.get("gap_type", "") or ""),
+        ]
+    ).lower()
+    if not gap_text:
+        return True
+
+    # Normalize regex-like signatures (`\s+`, punctuation noise) into plain
+    # lexical tokens so we can do a stable token overlap check.
+    normalized_gap_text = (
+        gap_text.replace("\\s+", " ")
+        .replace("\\s*", " ")
+        .replace("\\b", " ")
+        .replace("(?is)", " ")
+        .replace("(?i)", " ")
+    )
+    candidate_tokens = set(re.findall(r"[a-z0-9_./-]{3,}", normalized_gap_text))
+    stop_tokens = {
+        "missing",
+        "required",
+        "pattern",
+        "event",
+        "query",
+        "reason",
+        "code",
+        "type",
+        "detail",
+        "file",
+        "content",
+        "surface",
+        "cli",
+        "not",
+        "found",
+        "error",
+        "budget",
+        "max",
+        "run_bash",
+        "run_sqlite",
+        "git",
+    }
+    anchor_tokens = {
+        tok
+        for tok in candidate_tokens
+        if tok not in stop_tokens
+        and len(tok) >= 4
+        and not tok.startswith("missing_")
+        and not tok.startswith("required_")
+        and not tok.endswith("_pattern")
+    }
+    if not anchor_tokens:
+        return True
+    def _normalize_token(token: str) -> str:
+        cleaned = str(token).strip().lower()
+        while cleaned.startswith("../"):
+            cleaned = cleaned[3:]
+        while cleaned.startswith("./"):
+            cleaned = cleaned[2:]
+        return cleaned
+
+    anchor_norm = {_normalize_token(token) for token in anchor_tokens if _normalize_token(token)}
+    action_tokens = set(re.findall(r"[a-z0-9_./-]{3,}", action_text))
+    action_norm = {_normalize_token(token) for token in action_tokens if _normalize_token(token)}
+    overlap = anchor_norm.intersection(action_norm)
+    # Event-pattern gaps should preserve both the operation token and the
+    # target token (for example: "init" + "target_repo"), not just one.
+    minimum_overlap = 2 if len(anchor_tokens) >= 2 else 1
+    return len(overlap) >= minimum_overlap
+
+
 def _allowed_action_tools_for_adapter(*, adapter: DomainAdapter, opaque_tools: bool) -> set[str]:
     alias_map = adapter.build_alias_map(opaque=opaque_tools)
     allowed = {
@@ -217,6 +312,8 @@ def _validate_structured_model_lesson(
         return False, "invalid_action_template_shape", {}
     if tool_name not in allowed_action_tools:
         return False, "invalid_action_template_tool", {}
+    if not _action_is_anchored_to_gap(action_template=action_template, matched_row=matched_row):
+        return False, "action_template_unanchored_to_gap", {}
 
     if not expected_evidence:
         return False, "missing_expected_evidence", {}
