@@ -753,6 +753,19 @@ def _render_runtime_lesson_hint(
     )
 
 
+def _safe_lesson_hint_text(
+    *,
+    lesson: Any,
+    rule_text: str,
+    max_chars: int = 320,
+) -> str:
+    return _lesson_selection_policy._safe_lesson_hint_text(
+        lesson=lesson,
+        rule_text=rule_text,
+        max_chars=max_chars,
+    )
+
+
 def _serialize_prerun_v2_matches(matches: list[Any]) -> list[dict[str, Any]]:
     return _lesson_selection_policy._serialize_prerun_v2_matches(matches)
 

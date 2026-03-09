@@ -737,6 +737,31 @@ def test_load_verification_spec_infers_required_files_and_manifest_keys(
     assert any("\\\"top_product\\\"\\s*:" in str(pattern) for pattern in manifest_row.get("patterns", []))
 
 
+def test_load_verification_spec_infers_plain_file_tokens_and_clean_repo_signal(
+    tmp_path: Path,
+) -> None:
+    tasks_root = tmp_path / "tasks"
+    task_dir = tasks_root / "shell_git_transfer_dynamic"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_text = (
+        "Goal:\n"
+        "Create and verify a git hotfix workflow: generate hotfix.txt and transfer_summary.txt,\n"
+        "apply hotfix patch cleanly, and prove final repo status is clean.\n"
+    )
+    task_dir.joinpath("task.md").write_text(task_text, encoding="utf-8")
+
+    spec = agent_cli._load_verification_spec(
+        tasks_root=tasks_root,
+        task_id="shell_git_transfer_dynamic",
+        task_text=task_text,
+    )
+
+    required_files = set(spec.get("required_files", []) or [])
+    assert "hotfix.txt" in required_files
+    assert "transfer_summary.txt" in required_files
+    assert "nothing to commit, working tree clean" in set(spec.get("exact_output_lines", []) or [])
+
+
 def test_low_confidence_verifier_uses_verification_json_required_file_probe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

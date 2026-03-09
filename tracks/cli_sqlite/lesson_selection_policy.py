@@ -17,6 +17,12 @@ _PLACEBO_HINT_BANK: tuple[str, ...] = (
 _MAX_INLINE_HINT_CHARS = 420
 _MAX_INLINE_ACTION_CHARS = 220
 _MAX_INLINE_EVIDENCE_CHARS = 180
+_UNSAFE_HINT_MARKERS: tuple[str, ...] = (
+    "```",
+    "<<",
+    "$(",
+    "\x00",
+)
 
 
 def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> str:
@@ -151,6 +157,40 @@ def _render_runtime_lesson_hint(
     evidence = expected_evidence or "confirm missing requirement is closed"
     caution = f"CAUTION[{lesson_id[:8]}|{trust_band}]: focus on gap={anchor}. Verify with evidence: {evidence}"
     return (_squash_ws(caution)[:_MAX_INLINE_HINT_CHARS], trust_band, "summary")
+
+
+def _safe_lesson_hint_text(
+    *,
+    lesson: Any,
+    rule_text: str,
+    max_chars: int = 320,
+) -> str:
+    """
+    Backward-compatible safe hint API used by tests and older call sites.
+
+    This delegates to the newer runtime hint renderer so we keep one safety
+    policy path for both prompt artifacts and runtime injections.
+    """
+    raw_rule = str(rule_text or "")
+    if any(marker in raw_rule for marker in _UNSAFE_HINT_MARKERS):
+        return ""
+    raw_compact = _squash_ws(raw_rule)
+    if raw_compact and raw_compact.count(";") > 8:
+        return ""
+
+    hint, _, _ = _render_runtime_lesson_hint(
+        lesson=lesson,
+        use_placebo=False,
+        task_id=str(getattr(lesson, "task_id", "")),
+        domain=str(getattr(lesson, "domain", "")),
+    )
+    compact = _squash_ws(hint or rule_text)
+    if not compact:
+        return ""
+    limit = max(64, int(max_chars))
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 3)] + "..."
 
 
 def _format_v2_lesson_block(

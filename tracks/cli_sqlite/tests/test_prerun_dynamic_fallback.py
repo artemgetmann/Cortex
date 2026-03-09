@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from tracks.cli_sqlite.agent_cli import _format_v2_lesson_block, _select_high_signal_prerun_matches
+from tracks.cli_sqlite.agent_cli import (
+    _format_v2_lesson_block,
+    _safe_lesson_hint_text,
+    _select_high_signal_prerun_matches,
+)
 
 
 def _match(
@@ -398,3 +402,18 @@ def test_same_task_structured_fallback_skips_verifier_only_lessons() -> None:
         min_score=0.55,
     )
     assert [m.lesson.lesson_id for m in selected] == ["lsn_real_fix"]
+
+
+def test_safe_lesson_hint_text_rejects_unsafe_raw_payload() -> None:
+    lesson = SimpleNamespace(
+        lesson_id="lsn_unsafe",
+        gap_signature="",
+        action_template="",
+        expected_evidence="",
+    )
+    hint = _safe_lesson_hint_text(
+        lesson=lesson,
+        rule_text='```bash\ncat > out.txt <<EOF\nboom\nEOF\n```',
+        max_chars=320,
+    )
+    assert hint == ""
