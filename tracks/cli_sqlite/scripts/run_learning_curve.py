@@ -220,6 +220,7 @@ def main() -> int:
         mode=args.curriculum_mode,
         task_id=args.task_id,
         domain=args.domain,
+        sessions_root=SESSIONS_ROOT,
     )
     results: list[dict] = []
     scoreboard_rows: list[dict[str, object]] = []

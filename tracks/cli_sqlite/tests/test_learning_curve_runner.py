@@ -87,7 +87,7 @@ def test_learning_curve_auto_mode_uses_curriculum_planner(monkeypatch: pytest.Mo
     monkeypatch.setattr(
         run_learning_curve,
         "create_curriculum_planner",
-        lambda mode, task_id, domain: _FakePlanner(),
+        lambda mode, task_id, domain, sessions_root=None: _FakePlanner(),
     )
 
     def _fake_run_cli_agent(**kwargs: Any) -> SimpleNamespace:
@@ -139,6 +139,77 @@ def test_learning_curve_auto_mode_uses_curriculum_planner(monkeypatch: pytest.Mo
     assert all(bool(call.get("benchmark_placebo", False)) is False for call in calls)
     assert recorded_runs == [1, 2]
     assert len(recorded_outcomes) == 2
+
+
+def test_learning_curve_novelty_mode_passes_sessions_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+    planner_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(run_learning_curve, "load_config", lambda: object())
+
+    class _FakePlanner:
+        def propose_next(self, *, run_index: int):
+            return SimpleNamespace(
+                task_id="incremental_reconcile_audit_transfer",
+                domain="sqlite",
+                rationale="novelty slot=transfer_probe",
+            )
+
+        def record_outcome(self, outcome: Any) -> None:  # noqa: ARG002
+            return None
+
+    def _fake_create_curriculum_planner(*, mode: str, task_id: str, domain: str, sessions_root: Any):
+        planner_calls.append(
+            {
+                "mode": mode,
+                "task_id": task_id,
+                "domain": domain,
+                "sessions_root": sessions_root,
+            }
+        )
+        return _FakePlanner()
+
+    def _fake_run_cli_agent(**kwargs: Any) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return SimpleNamespace(
+            metrics={
+                "eval_score": 0.75,
+                "eval_passed": False,
+                "steps": 4,
+                "tool_errors": 1,
+                "lessons_loaded": 0,
+                "lessons_generated": 1,
+                "repeated_error_signatures": ["audit"],
+            }
+        )
+
+    monkeypatch.setattr(run_learning_curve, "create_curriculum_planner", _fake_create_curriculum_planner)
+    monkeypatch.setattr(run_learning_curve, "run_cli_agent", _fake_run_cli_agent)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_learning_curve.py",
+            "--task-id",
+            "incremental_reconcile",
+            "--domain",
+            "sqlite",
+            "--curriculum-mode",
+            "novelty",
+            "--sessions",
+            "1",
+            "--start-session",
+            "72300",
+        ],
+    )
+
+    rc = run_learning_curve.main()
+
+    assert rc == 0
+    assert planner_calls[0]["mode"] == "novelty"
+    assert planner_calls[0]["domain"] == "sqlite"
+    assert planner_calls[0]["sessions_root"] == run_learning_curve.SESSIONS_ROOT
+    assert calls[0]["task_id"] == "incremental_reconcile_audit_transfer"
 
 
 def test_learning_curve_openai_defaults_executor_and_judge(monkeypatch: pytest.MonkeyPatch) -> None:

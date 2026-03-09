@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from tracks.cli_sqlite import curriculum_planner
 
 
@@ -66,3 +70,34 @@ def test_auto_planner_retries_unresolved_then_progresses() -> None:
 
     run_4 = planner.propose_next(run_index=4)
     assert run_4.task_id != "import_aggregate"
+
+
+def test_novelty_planner_prefers_domain_recommendations(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class _Snapshot:
+        recommendations = [
+            type(
+                "Rec",
+                (),
+                {
+                    "domain": "shell",
+                    "task_id": "shell_git_transfer_hotfix_hard",
+                    "slot": "known_weak",
+                    "bucket": "known_weak",
+                    "novelty_score": 2.5,
+                },
+            )()
+        ]
+        families = []
+
+    monkeypatch.setattr("tracks.cli_sqlite.novelty_engine.build_snapshot", lambda sessions_root: _Snapshot())
+    planner = curriculum_planner.NoveltyCurriculumPlanner(
+        seed_task_id="shell_git_transfer_hotfix",
+        domain="shell",
+        sessions_root=tmp_path / "sessions",
+    )
+
+    decision = planner.propose_next(run_index=1)
+
+    assert decision.task_id == "shell_git_transfer_hotfix_hard"
+    assert decision.domain == "shell"
+    assert "novelty slot=known_weak" in decision.rationale

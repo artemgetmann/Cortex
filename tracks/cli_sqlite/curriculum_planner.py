@@ -6,10 +6,11 @@ used both in scripts and in unit tests without extra runtime dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
-CURRICULUM_MODES: tuple[str, ...] = ("fixed", "auto")
+CURRICULUM_MODES: tuple[str, ...] = ("fixed", "auto", "novelty")
 DEFAULT_CURRICULUM_MODE = "fixed"
 
 
@@ -332,13 +333,110 @@ class AdaptiveCurriculumPlanner:
         )
 
 
+class NoveltyCurriculumPlanner:
+    """Planner that asks the novelty engine which task family is worth practicing next.
+
+    This planner is intentionally conservative:
+    - it stays inside the requested domain for this first integration pass
+    - it reads existing session metrics instead of creating another state store
+    - it falls back to the seed task when novelty evidence is missing
+    """
+
+    def __init__(
+        self,
+        *,
+        seed_task_id: str,
+        domain: str,
+        sessions_root: Path | None,
+    ) -> None:
+        self._seed_task_id = str(seed_task_id)
+        self._domain = str(domain)
+        self._sessions_root = sessions_root
+
+    def record_outcome(self, outcome: CurriculumOutcome) -> None:  # noqa: ARG002
+        # No in-memory adaptation is needed here because the engine reads the
+        # freshly written metrics.json artifacts from disk between runs.
+        return None
+
+    def propose_next(self, *, run_index: int) -> CurriculumDecision:
+        if self._sessions_root is None:
+            return CurriculumDecision(
+                task_id=self._seed_task_id,
+                domain=self._domain,
+                planner_score=0.0,
+                rationale="novelty fallback: sessions_root unavailable",
+            )
+
+        from tracks.cli_sqlite.novelty_engine import build_snapshot
+
+        snapshot = build_snapshot(sessions_root=self._sessions_root)
+        domain_recommendations = [item for item in snapshot.recommendations if item.domain == self._domain]
+        if domain_recommendations:
+            choice = domain_recommendations[0]
+            return CurriculumDecision(
+                task_id=choice.task_id,
+                domain=self._domain,
+                planner_score=float(choice.novelty_score),
+                rationale=(
+                    f"novelty slot={choice.slot} bucket={choice.bucket} "
+                    f"score={choice.novelty_score:.2f}"
+                ),
+            )
+
+        domain_families = [item for item in snapshot.families if item.domain == self._domain]
+        if domain_families:
+            ranked = sorted(
+                domain_families,
+                key=lambda item: (
+                    _bucket_priority(item.bucket),
+                    -float(item.novelty_score),
+                    item.family_id,
+                ),
+            )
+            choice = ranked[0]
+            return CurriculumDecision(
+                task_id=choice.suggested_task_id,
+                domain=self._domain,
+                planner_score=float(choice.novelty_score),
+                rationale=(
+                    f"novelty family={choice.family_id} bucket={choice.bucket} "
+                    f"score={choice.novelty_score:.2f}"
+                ),
+            )
+
+        return CurriculumDecision(
+            task_id=self._seed_task_id,
+            domain=self._domain,
+            planner_score=0.0,
+            rationale=f"novelty fallback for run {int(run_index)}",
+        )
+
+
+def _bucket_priority(bucket: str) -> int:
+    order = {
+        "known_weak": 0,
+        "transfer_probe": 1,
+        "new_family": 2,
+        "bad_instrument": 3,
+        "saturated": 4,
+    }
+    return order.get(str(bucket).strip(), 9)
+
+
 def create_curriculum_planner(
     *,
     mode: str,
     task_id: str,
     domain: str,
-) -> FixedCurriculumPlanner | AdaptiveCurriculumPlanner:
+    sessions_root: Path | None = None,
+) -> FixedCurriculumPlanner | AdaptiveCurriculumPlanner | NoveltyCurriculumPlanner:
     normalized_mode = str(mode).strip().lower() or DEFAULT_CURRICULUM_MODE
+    if normalized_mode == "novelty":
+        return NoveltyCurriculumPlanner(
+            seed_task_id=task_id,
+            domain=domain,
+            sessions_root=sessions_root,
+        )
     if normalized_mode == "auto":
         return AdaptiveCurriculumPlanner(
             seed_task_id=task_id,
