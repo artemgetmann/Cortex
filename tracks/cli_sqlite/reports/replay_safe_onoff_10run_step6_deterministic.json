@@ -1,0 +1,256 @@
+{
+  "task_id": "incremental_reconcile_replay_safe",
+  "domain": "sqlite",
+  "curriculum_mode": "fixed",
+  "learning_mode": "strict",
+  "sessions": 10,
+  "max_steps": 6,
+  "backend": "openai",
+  "executor_model": "gpt-5-nano",
+  "judge_model": "gpt-5-nano",
+  "flags": [
+    "benchmark-deterministic",
+    "doc-mode none",
+    "doc-retrieval off",
+    "judge-diagnostic",
+    "contract-gap-retry",
+    "contract-gap-retry-steps 1",
+    "contract-gap-deterministic-recipes",
+    "structured-lessons-required",
+    "benchmark-promoted-only"
+  ],
+  "artifacts": {
+    "on_log": "/tmp/replay_safe_on_10run_step6.log",
+    "off_log": "/tmp/replay_safe_off_10run_step6.log"
+  },
+  "on": {
+    "sessions": [
+      {
+        "run": 1,
+        "session": 61001,
+        "score": 0.94,
+        "pass": false,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 3
+      },
+      {
+        "run": 2,
+        "session": 61002,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 3,
+        "session": 61003,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 1,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 4,
+        "session": 61004,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 5,
+        "session": 61005,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 6,
+        "session": 61006,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 7,
+        "session": 61007,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 3
+      },
+      {
+        "run": 8,
+        "session": 61008,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 2
+      },
+      {
+        "run": 9,
+        "session": 61009,
+        "score": 0.89,
+        "pass": false,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 3
+      },
+      {
+        "run": 10,
+        "session": 61010,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 1
+      }
+    ],
+    "summary": {
+      "pass_count": 7,
+      "pass_rate": 0.7,
+      "last5_pass_count": 3,
+      "last5_pass_rate": 0.6,
+      "median_steps_to_success": 6,
+      "mean_lessons_in": 0.0,
+      "mean_lessons_out": 2.2,
+      "mean_errors": 0.1,
+      "mean_score": 0.966
+    }
+  },
+  "off": {
+    "sessions": [
+      {
+        "run": 1,
+        "session": 62001,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 2,
+        "session": 62002,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 1,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 3,
+        "session": 62003,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 4,
+        "session": 62004,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 5,
+        "session": 62005,
+        "score": 0.83,
+        "pass": false,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 6,
+        "session": 62006,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 7,
+        "session": 62007,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 1,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 8,
+        "session": 62008,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 9,
+        "session": 62009,
+        "score": 0.89,
+        "pass": false,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      },
+      {
+        "run": 10,
+        "session": 62010,
+        "score": 1.0,
+        "pass": true,
+        "steps": 6,
+        "errors": 0,
+        "lessons_in": 0,
+        "lessons_out": 0
+      }
+    ],
+    "summary": {
+      "pass_count": 8,
+      "pass_rate": 0.8,
+      "last5_pass_count": 4,
+      "last5_pass_rate": 0.8,
+      "median_steps_to_success": 6.0,
+      "mean_lessons_in": 0.0,
+      "mean_lessons_out": 0.0,
+      "mean_errors": 0.2,
+      "mean_score": 0.972
+    }
+  }
+}
