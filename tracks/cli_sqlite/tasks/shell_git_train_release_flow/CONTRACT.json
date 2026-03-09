@@ -18,7 +18,7 @@
   },
   "signals": {
     "required_event_patterns": [
-      "(?is)git\\s+init\\s+trainer_repo",
+      "(?is)(git\\s+init\\s+trainer_repo|git\\s+-C\\s+trainer_repo\\s+init|cd\\s+(?:\\./|\\.\\./)*trainer_repo\\b.*?git\\s+init\\b)",
       "(?is)git\\s+checkout\\s+-b\\s+main",
       "(?is)git\\s+checkout\\s+-b\\s+feature/release-flow",
       "(?is)git\\s+merge\\s+--no-ff\\s+feature/release-flow",

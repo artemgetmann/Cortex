@@ -19,8 +19,8 @@
   },
   "signals": {
     "required_event_patterns": [
-      "(?is)git\\s+init\\s+source_repo",
-      "(?is)git\\s+init\\s+target_repo",
+      "(?is)(git\\s+init\\s+source_repo|git\\s+-C\\s+source_repo\\s+init|cd\\s+(?:\\./|\\.\\./)*source_repo\\b.*?git\\s+init\\b)",
+      "(?is)(git\\s+init\\s+target_repo|git\\s+-C\\s+target_repo\\s+init|cd\\s+(?:\\./|\\.\\./)*target_repo\\b.*?git\\s+init\\b)",
       "(?is)git\\s+am\\s+\\.\\./__PATCH_FILE__",
       "(?is)__COMMIT_MESSAGE__",
       "(?is)__VERIFICATION_LINE__"
