@@ -1,0 +1,4 @@
+Retry backoff tune:
+Prefer deterministic values in runtime variants.
+Retry profile beta
+Set initial delay to 300ms
