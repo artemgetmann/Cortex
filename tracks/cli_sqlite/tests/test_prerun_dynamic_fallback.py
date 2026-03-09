@@ -153,6 +153,48 @@ def test_non_dynamic_task_allows_structured_executable_same_task_fallback() -> N
     assert [m.lesson.lesson_id for m in selected] == ["lsn_structured_exec"]
 
 
+def test_same_task_structured_fallback_skips_over_broad_shell_action_templates() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_shell_broad",
+            task_id="shell_git_transfer_hotfix_hard",
+            domain="shell",
+            score=0.19,
+            text_similarity=0.03,
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            action_template=(
+                'run_bash(command="git init source_repo; git init target_repo; '
+                'git -C source_repo checkout -b main; git -C target_repo checkout -b main")'
+            ),
+            expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            status="promoted",
+        ),
+        _match(
+            lesson_id="lsn_shell_focused",
+            task_id="shell_git_transfer_hotfix_hard",
+            domain="shell",
+            score=0.12,
+            text_similarity=0.02,
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            action_template='run_bash(command="git init source_repo")',
+            expected_evidence="missing_required_event_pattern|required_event_pattern|(?is)git\\s+init\\s+source_repo",
+            status="candidate",
+        ),
+    ]
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="shell_git_transfer_hotfix_hard",
+        domain="shell",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_shell_focused"]
+
+
 def test_same_task_structured_fallback_prefers_promoted_and_dedupes_family() -> None:
     matches = [
         _match(

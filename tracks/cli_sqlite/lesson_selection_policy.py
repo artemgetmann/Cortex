@@ -326,6 +326,31 @@ def _select_high_signal_prerun_matches(
             return True
         return False
 
+    def _is_over_broad_shell_action_template(lesson_obj: Any) -> bool:
+        """
+        Drop shell action templates that bundle too many commands.
+
+        Why:
+        - Broad "do everything at once" shell templates are brittle under tight
+          step budgets and have been correlated with harmful activations.
+        - Pre-run retrieval should prefer one focused corrective action.
+        """
+        lesson_domain = str(getattr(lesson_obj, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != "shell":
+            return False
+        action_template = str(getattr(lesson_obj, "action_template", "")).strip()
+        if not action_template.lower().startswith("run_bash("):
+            return False
+        normalized = _squash_ws(action_template)
+        delimiter_count = normalized.count(";") + normalized.count("&&") + normalized.count("||")
+        if delimiter_count >= 3:
+            return True
+        if len(normalized) > 220 and delimiter_count >= 2:
+            return True
+        if "source_repo" in normalized and "target_repo" in normalized and delimiter_count >= 2:
+            return True
+        return False
+
     def _fallback_semantic_anchor(score_obj: Any) -> bool:
         # Keep fallback deterministic and conservative. We only consider
         # lessons that have at least minimal lexical/semantic overlap.
@@ -425,6 +450,8 @@ def _select_high_signal_prerun_matches(
         if not _has_structured_gap_fields(lesson):
             continue
         if not _has_executable_shape(lesson):
+            continue
+        if _is_over_broad_shell_action_template(lesson):
             continue
         if _is_verifier_only_execution_lesson(lesson):
             continue
