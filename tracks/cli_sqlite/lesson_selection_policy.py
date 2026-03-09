@@ -15,12 +15,85 @@ _PLACEBO_HINT_BANK: tuple[str, ...] = (
     "When errors recur, simplify the plan and verify intermediate outputs explicitly.",
 )
 
+_UNSAFE_HINT_MARKERS: tuple[str, ...] = (
+    "```",
+    "<<",
+    "$(",
+    "\x00",
+)
+
+_ACTION_TOOL_RE = re.compile(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
+
 
 def _placebo_hint_for_lesson(*, lesson_id: str, task_id: str, domain: str) -> str:
     token = f"{domain}|{task_id}|{lesson_id}".encode("utf-8", "ignore")
     digest = hashlib.sha256(token).hexdigest()
     idx = int(digest[:8], 16) % len(_PLACEBO_HINT_BANK)
     return f"PLACEBO_CONTROL[{digest[:6]}]: {_PLACEBO_HINT_BANK[idx]}"
+
+
+def _collapse_hint_text(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _compact_action_template(action_template: str, *, max_chars: int = 180) -> str:
+    compact = _collapse_hint_text(action_template)
+    if not compact:
+        return ""
+    if len(compact) <= max_chars:
+        return compact
+    tool_match = _ACTION_TOOL_RE.match(compact)
+    if tool_match:
+        tool_name = str(tool_match.group(1)).strip()
+        if tool_name:
+            return f"{tool_name}(...)"
+    return compact[: max(0, int(max_chars) - 3)] + "..."
+
+
+def _structured_lesson_rule_text(lesson: Any) -> str:
+    gap_signature = str(getattr(lesson, "gap_signature", "")).strip()
+    action_template = str(getattr(lesson, "action_template", "")).strip()
+    expected_evidence = str(getattr(lesson, "expected_evidence", "")).strip()
+    if not (gap_signature and action_template and expected_evidence):
+        return ""
+    compact_action = _compact_action_template(action_template, max_chars=180)
+    compact_evidence = _collapse_hint_text(expected_evidence)
+    if len(compact_evidence) > 140:
+        compact_evidence = compact_evidence[:137] + "..."
+    return (
+        f"WHEN gap_signature={gap_signature}: "
+        f"{compact_action} EXPECT: {compact_evidence}"
+    )
+
+
+def _safe_lesson_hint_text(
+    *,
+    lesson: Any,
+    rule_text: str,
+    max_chars: int = 320,
+) -> str:
+    """
+    Build a safe, compact hint for runtime injection.
+
+    Why:
+    - raw lesson text can contain long multiline command payloads that degrade
+      tool-call quality (especially shell/sql argument quoting).
+    - runtime hint channel should carry only concise guidance, not executable
+      blobs copied verbatim from prior traces.
+    """
+    structured = _structured_lesson_rule_text(lesson)
+    candidate = structured or _collapse_hint_text(rule_text)
+    if not candidate:
+        return ""
+    if any(marker in candidate for marker in _UNSAFE_HINT_MARKERS):
+        return structured
+    if candidate.count(";") > 8 and not structured:
+        return ""
+    if len(candidate) > max(64, int(max_chars)):
+        if structured:
+            return candidate[: max(0, int(max_chars) - 3)] + "..."
+        return ""
+    return candidate
 
 
 def _format_v2_lesson_block(
@@ -45,19 +118,14 @@ def _format_v2_lesson_block(
         if use_placebo:
             rule_text = _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
         else:
-            # Prefer structured lesson fields over raw rule_text because the
-            # stored rule can be long and clipped. For execution memory we want
-            # the minimal actionable core, not a half-truncated paragraph.
-            gap_signature = str(getattr(lesson, "gap_signature", "")).strip()
-            action_template = str(getattr(lesson, "action_template", "")).strip()
-            expected_evidence = str(getattr(lesson, "expected_evidence", "")).strip()
-            if gap_signature and action_template and expected_evidence:
-                rule_text = (
-                    f"WHEN gap_signature={gap_signature}: "
-                    f"{action_template} EXPECT: {expected_evidence}"
-                )
-            else:
-                rule_text = str(getattr(lesson, "rule_text", ""))
+            # Keep prompt artifacts aligned with runtime safety constraints.
+            rule_text = _safe_lesson_hint_text(
+                lesson=lesson,
+                rule_text=str(getattr(lesson, "rule_text", "")),
+                max_chars=420,
+            )
+            if not rule_text:
+                continue
         lines.append(f"- ({score_value:.2f}) {rule_text}")
     return "\n".join(lines), [value for value in lesson_ids if value]
 
@@ -526,6 +594,11 @@ def _select_gap_targeted_matches(
         for key in (_gap_family_key_from_row(row) for row in unresolved_gaps if isinstance(row, dict))
         if key
     }
+    unresolved_signatures = {
+        str(row.get("gap_signature", "")).strip()
+        for row in unresolved_gaps
+        if isinstance(row, dict) and str(row.get("gap_signature", "")).strip()
+    }
     has_repo_init_gap = _has_repo_init_gap(unresolved_gaps)
     selected: list[Any] = []
     seen_lesson_ids: set[str] = set()
@@ -549,6 +622,13 @@ def _select_gap_targeted_matches(
         family_key = _gap_family_key_from_lesson(lesson)
         if unresolved_families:
             if not family_key or family_key not in unresolved_families:
+                continue
+            # Enforce check-linked retrieval: when unresolved signature rows are
+            # available, prefer exact signature binding. This keeps on-error
+            # hints tied to the active blocker instead of broad same-family
+            # guidance that can be directionally correct but action-wrong.
+            lesson_signature = str(getattr(lesson, "gap_signature", "")).strip()
+            if unresolved_signatures and lesson_signature and lesson_signature not in unresolved_signatures:
                 continue
             if family_key in used_families:
                 continue

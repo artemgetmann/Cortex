@@ -6,6 +6,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+_FILE_TOKEN_RE = re.compile(
+    r"\b([A-Za-z0-9_.\\/-]+\.(?:txt|md|json|csv|tsv|sql|patch|diff|xlsx|xlsm|yaml|yml|log))\b"
+)
+
 
 def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[str]:
     """
@@ -16,7 +20,10 @@ def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[s
     """
     if not str(task_text).strip():
         return []
-    marker = re.compile(r"print\s+exactly\s+(?:this|these)(?:\s+\d+)?\s+verification\s+line", re.IGNORECASE)
+    marker = re.compile(
+        r"(?:print\s+exactly\s+(?:this|these)(?:\s+\d+)?\s+verification\s+line|verify|verification|prove|confirm|show)",
+        re.IGNORECASE,
+    )
     lines = str(task_text).splitlines()
     capture = False
     collected: list[str] = []
@@ -57,6 +64,14 @@ def _extract_verification_lines(task_text: str, *, max_lines: int = 6) -> list[s
             continue
         seen.add(row)
         deduped.append(row)
+    lowered = str(task_text).lower()
+    if (
+        "repo status is clean" in lowered
+        or "final repo status is clean" in lowered
+        or "working tree is clean" in lowered
+    ):
+        if "nothing to commit, working tree clean" not in seen:
+            deduped.append("nothing to commit, working tree clean")
     return deduped[: max(1, int(max_lines))]
 
 
@@ -86,6 +101,10 @@ def _extract_required_files_from_task_text(task_text: str, *, max_files: int = 8
         r"\b(?:create|write|generate|save|output)\s+`([^`]+)`",
         re.IGNORECASE,
     )
+    file_like_verbs = re.compile(
+        r"\b(?:create|write|generate|save|output|produce|return|deliver)\b",
+        re.IGNORECASE,
+    )
     for line in str(task_text).splitlines():
         for match in pattern.findall(line):
             text = str(match).strip()
@@ -93,6 +112,28 @@ def _extract_required_files_from_task_text(task_text: str, *, max_files: int = 8
                 files.append(text)
             if len(files) >= max(1, int(max_files)):
                 return _dedupe_nonempty_text_rows(files)
+        if file_like_verbs.search(line):
+            for match in _FILE_TOKEN_RE.finditer(line):
+                text = str(match.group(1)).strip()
+                if text:
+                    prefix_full = line[: match.start()].lower()
+                    # Treat "from <file>" as input fixture reference, not a
+                    # required output artifact.
+                    if re.search(r"\bfrom\s+`?\s*$", prefix_full):
+                        continue
+                    files.append(text)
+                if len(files) >= max(1, int(max_files)):
+                    return _dedupe_nonempty_text_rows(files)
+    # Fallback: if task text explicitly references "file(s)" but does not use
+    # backticks, still infer common file-like tokens as deterministic anchors.
+    lowered = str(task_text).lower()
+    if "file" in lowered or "files" in lowered:
+        for token in _FILE_TOKEN_RE.findall(str(task_text)):
+            text = str(token).strip()
+            if text:
+                files.append(text)
+            if len(files) >= max(1, int(max_files)):
+                break
     return _dedupe_nonempty_text_rows(files)
 
 

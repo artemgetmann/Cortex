@@ -783,8 +783,14 @@ def _run_cli_agent_impl_extracted(
                         rule_text = (
                             _placebo_hint_for_lesson(lesson_id=lesson_id, task_id=task_id, domain=domain)
                             if benchmark_placebo
-                            else str(match.lesson.rule_text)
+                            else _safe_lesson_hint_text(
+                                lesson=match.lesson,
+                                rule_text=str(match.lesson.rule_text),
+                                max_chars=320,
+                            )
                         )
+                        if not str(rule_text).strip():
+                            continue
                         lane = str(getattr(match, "lane", "strict")).strip().lower() or "strict"
                         v2_hints.append(rule_text)
                         injected_lessons.append(

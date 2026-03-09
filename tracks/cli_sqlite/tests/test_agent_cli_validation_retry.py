@@ -670,6 +670,42 @@ def test_select_gap_targeted_matches_keeps_one_per_family() -> None:
     assert selected_ids == ["a1", "b1"]
 
 
+def test_select_gap_targeted_matches_prefers_exact_signature_when_available() -> None:
+    unresolved = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|q_exact",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="family_only_wrong_sig",
+            rule_text="same family but wrong query signature",
+            gap_signature="required_query_mismatch|required_query|q_other",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            score=0.95,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="exact_sig",
+            rule_text="exact query signature",
+            gap_signature="required_query_mismatch|required_query|q_exact",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            score=0.70,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=2,
+        min_score=0.20,
+    )
+    selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
+    assert selected_ids == ["exact_sig"]
+
+
 def test_select_gap_targeted_matches_skips_variant_patch_hint_for_init_gap() -> None:
     unresolved = [
         {
