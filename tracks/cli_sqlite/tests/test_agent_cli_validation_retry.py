@@ -43,6 +43,7 @@ class _FakeRetrievalMatch:
         gap_signature: str = "",
         reason_code: str = "",
         gap_type: str = "",
+        action_template: str = "",
         score: float = 1.0,
     ) -> None:
         self.lesson = SimpleNamespace(
@@ -51,6 +52,7 @@ class _FakeRetrievalMatch:
             gap_signature=gap_signature,
             reason_code=reason_code,
             gap_type=gap_type,
+            action_template=action_template,
         )
         self.lane = lane
         self.score = SimpleNamespace(score=score)
@@ -705,6 +707,49 @@ def test_select_gap_targeted_matches_skips_variant_patch_hint_for_init_gap() -> 
     )
     selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
     assert selected_ids == ["good-init-fix"]
+
+
+def test_select_gap_targeted_matches_suppresses_patch_apply_hint_on_prereq_error() -> None:
+    unresolved = [
+        {
+            "reason_code": "missing_required_event_pattern",
+            "gap_type": "required_event_pattern",
+            "gap_signature": "missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+            "detail": "(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="late-patch-apply",
+            rule_text=(
+                "WHEN gap_signature=missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch: "
+                'run_bash(command="git -C target_repo am ../hotfix_gamma.patch")'
+            ),
+            action_template='run_bash(command="git -C target_repo am ../hotfix_gamma.patch")',
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            score=0.95,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="other-non-patch-hint",
+            rule_text='run_bash(command="git init source_repo")',
+            action_template='run_bash(command="git init source_repo")',
+            gap_signature="missing_required_event_pattern|required_event_pattern|(?is)git\\s+am\\s+\\.\\./hotfix_gamma.patch",
+            reason_code="missing_required_event_pattern",
+            gap_type="required_event_pattern",
+            score=0.80,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=2,
+        min_score=0.20,
+        current_error_text="run_bash exited with code 1: source_repo/hotfix_gamma.txt: No such file or directory",
+    )
+    selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
+    assert selected_ids == ["other-non-patch-hint"]
 
 
 def test_contract_gap_retry_injects_deterministic_recipe_hints(

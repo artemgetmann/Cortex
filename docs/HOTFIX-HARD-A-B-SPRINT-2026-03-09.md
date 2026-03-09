@@ -135,3 +135,24 @@ Interpretation:
 Next patch target after Gate 2:
 1. add prerequisite-aware activation for shell lessons
 2. example: do not inject `git am ../patch` lesson unless patch artifact exists in current run state
+
+## Gate 3 update (same day)
+
+Patch:
+1. on-error lesson selection now suppresses patch-apply (`git am`) hints when current error indicates missing prerequisites (`source_repo`, missing patch/spec files, pathspec/could-not-open class failures)
+
+Smoke (`1800-1804`, ON only):
+1. pass rate `3/5`
+2. mean score `0.934`
+3. mean errors `0.0`
+4. mean activations `0.0`
+5. mean help ratio `0.0`
+
+Interpretation:
+1. harmful activation class was removed in this smoke
+2. but memory mechanism did not fire at all (`activations=0`), so this is not learning proof
+3. this lane currently behaves like plain execution variance, not memory-driven lift
+
+Decision after Gate 3:
+1. keep this suppression (it prevents obvious bad hints)
+2. for proof, move to a lane where OFF baseline is hard and structured lessons activate meaningfully

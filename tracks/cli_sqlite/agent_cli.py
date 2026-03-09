@@ -824,12 +824,14 @@ def _select_gap_targeted_matches(
     unresolved_gaps: list[dict[str, Any]],
     max_lessons: int,
     min_score: float = 0.25,
+    current_error_text: str = "",
 ) -> list[Any]:
     return _lesson_selection_policy._select_gap_targeted_matches(
         matches=matches,
         unresolved_gaps=unresolved_gaps,
         max_lessons=max_lessons,
         min_score=min_score,
+        current_error_text=current_error_text,
     )
 
 

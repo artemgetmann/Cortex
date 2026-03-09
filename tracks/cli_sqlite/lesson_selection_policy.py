@@ -626,6 +626,48 @@ def _is_variant_specific_patch_apply_hint(lesson: Any) -> bool:
     return has_variant_patch and mentions_apply
 
 
+def _is_patch_apply_prereq_miss_for_error(*, lesson: Any, current_error_text: str) -> bool:
+    """
+    Suppress patch-apply lessons when current error indicates missing prerequisites.
+
+    First-principles:
+    - A `git am ../patch` repair is a late-stage action.
+    - If current failure says spec/source artifact is missing, repeating `git am`
+      is usually a dead-end and burns steps.
+    """
+    error_text = str(current_error_text or "").strip().lower()
+    if not error_text:
+        return False
+    action_template = str(getattr(lesson, "action_template", "") or "").strip().lower()
+    rule_text = str(getattr(lesson, "rule_text", "") or "").strip().lower()
+    payload = f"{action_template}\n{rule_text}"
+    mentions_patch_apply = bool(re.search(r"\bgit\b[\s\S]{0,80}\bam\b", payload))
+    if not mentions_patch_apply:
+        return False
+
+    missing_markers = (
+        "no such file or directory",
+        "could not open",
+        "pathspec",
+        "filenotfounderror",
+        "jsondecodeerror",
+        "unbound variable",
+        "spec not found",
+        "variant_spec.json",
+    )
+    if not any(marker in error_text for marker in missing_markers):
+        return False
+
+    prereq_markers = (
+        "source_repo",
+        "target_repo",
+        "hotfix_",
+        "patch",
+        "variant_spec",
+    )
+    return any(marker in error_text for marker in prereq_markers)
+
+
 def _adaptive_gap_lesson_cap(
     *,
     unresolved_gaps: list[dict[str, Any]],
@@ -657,6 +699,7 @@ def _select_gap_targeted_matches(
     unresolved_gaps: list[dict[str, Any]],
     max_lessons: int,
     min_score: float = 0.25,
+    current_error_text: str = "",
 ) -> list[Any]:
     """
     Keep retrieval focused: up to N lessons, one per gap family.
@@ -693,6 +736,10 @@ def _select_gap_targeted_matches(
         # injecting variant-specific "git am hotfix_beta.patch" hints causes
         # the model to chase the wrong sub-problem.
         if has_repo_init_gap and _is_variant_specific_patch_apply_hint(lesson):
+            continue
+        # If current failure is a prerequisite miss, avoid late-stage patch
+        # apply hints (`git am ...`) that cannot succeed yet.
+        if _is_patch_apply_prereq_miss_for_error(lesson=lesson, current_error_text=current_error_text):
             continue
         family_key = _gap_family_key_from_lesson(lesson)
         if unresolved_families:

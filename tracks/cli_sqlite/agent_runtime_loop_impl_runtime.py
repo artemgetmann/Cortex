@@ -766,6 +766,7 @@ def _run_cli_agent_impl_extracted(
                     unresolved_gaps=contract_gap_state.latest_unresolved_gaps,
                     max_lessons=on_error_cap,
                     min_score=0.25,
+                    current_error_text=error_text,
                 )
                 metrics["v2_on_error_adaptive_lesson_cap"] = int(on_error_cap)
                 metrics["v2_on_error_lessons_selected"] = int(len(v2_matches))
