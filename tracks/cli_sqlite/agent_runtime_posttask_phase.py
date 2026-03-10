@@ -92,6 +92,32 @@ def run_posttask_phase(
                 return True
             return False
 
+        def _is_over_broad_runtime_action_template(action_template: str) -> bool:
+            """
+            Reject oversized multi-statement action templates for structured memory.
+
+            Why:
+            - long bundled SQL blobs are brittle and hard for nano to execute
+              reliably in one step
+            - these rows were repeatedly activated without raising pass rate
+            """
+            text = " ".join(str(action_template or "").split())
+            if not text:
+                return False
+            lowered = text.lower()
+            if lowered.startswith("run_sqlite("):
+                if len(text) > 320:
+                    return True
+                if text.count(";") >= 4:
+                    return True
+            if lowered.startswith("run_bash("):
+                if len(text) > 320:
+                    return True
+                shell_delims = text.count(";") + text.count("&&") + text.count("||")
+                if shell_delims >= 4:
+                    return True
+            return False
+
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode and bool(skill_manifest_entries)
         if not bool(skill_manifest_entries):
             metrics["posttask_skill_patching_skipped_by_mode"] = True
@@ -241,6 +267,8 @@ def run_posttask_phase(
                 # generating a lesson that retrieval will reject later.
                 if structured_lessons_required and not action_template:
                     continue
+                if _is_over_broad_runtime_action_template(action_template):
+                    continue
                 if _is_verifier_only_deterministic_recipe(recipe, action_template):
                     continue
                 expected_evidence = gap_signature or f"{reason_code}|{gap_type}"
@@ -301,6 +329,11 @@ def run_posttask_phase(
 
                 action_template = str(structured_payload.get("action_template", "")).strip()
                 expected_evidence = str(structured_payload.get("expected_evidence", "")).strip()
+                if _is_over_broad_runtime_action_template(action_template):
+                    metrics["v2_schema_rejection_counts"]["invalid_action_template_shape"] = int(
+                        metrics["v2_schema_rejection_counts"].get("invalid_action_template_shape", 0)
+                    ) + 1
+                    continue
                 normalized_note = " ".join(text.split()).strip()
                 if normalized_note:
                     lesson_text = (

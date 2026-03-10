@@ -199,6 +199,51 @@ def test_same_task_structured_fallback_skips_over_broad_shell_action_templates()
     assert [m.lesson.lesson_id for m in selected] == ["lsn_shell_focused"]
 
 
+def test_incremental_reconcile_skips_over_broad_sqlite_action_templates() -> None:
+    matches = [
+        _match(
+            lesson_id="lsn_sqlite_broad",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.18,
+            text_similarity=0.03,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template=(
+                'run_sqlite(sql="BEGIN IMMEDIATE; INSERT INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) '
+                "SELECT event_id, category, amount, batch_id, 'CKP-APR-01' FROM fixture_seed; "
+                "INSERT INTO rejects(event_id, reason) SELECT event_id, 'duplicate_event' FROM fixture_seed; "
+                "INSERT OR REPLACE INTO checkpoint_log(checkpoint_tag, row_count) SELECT 'CKP-APR-01', COUNT(*) FROM ledger; "
+                'COMMIT; SELECT COUNT(*) FROM ledger; SELECT COUNT(*) FROM rejects;")'
+            ),
+            expected_evidence="required_query_mismatch|required_query|reject_count",
+            status="promoted",
+        ),
+        _match(
+            lesson_id="lsn_sqlite_focused",
+            task_id="incremental_reconcile",
+            domain="sqlite",
+            score=0.11,
+            text_similarity=0.02,
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template='run_sqlite(sql="INSERT OR IGNORE INTO ledger(event_id, category, amount, batch_id, checkpoint_tag) SELECT event_id, category, amount, batch_id, \'CKP-APR-01\' FROM fixture_seed;")',
+            expected_evidence="required_query_mismatch|required_query|reject_count",
+            status="candidate",
+        ),
+    ]
+    selected = _select_high_signal_prerun_matches(
+        matches=matches,
+        task_id="incremental_reconcile",
+        domain="sqlite",
+        max_results=4,
+        min_score=0.55,
+    )
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_sqlite_focused"]
+
+
 def test_same_task_structured_fallback_prefers_promoted_and_dedupes_family() -> None:
     matches = [
         _match(

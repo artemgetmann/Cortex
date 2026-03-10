@@ -391,6 +391,32 @@ def _select_high_signal_prerun_matches(
             return True
         return False
 
+    def _is_over_broad_sqlite_action_template(lesson_obj: Any) -> bool:
+        """
+        Drop giant sqlite action templates for incremental_reconcile pre-run memory.
+
+        Why:
+        - very long multi-statement SQL repair blobs are brittle under tight
+          step budgets
+        - they were activating but not improving pass rate in this lane
+        - pre-run memory should prefer compact, executable fixes
+        """
+        if not is_incremental_reconcile_sqlite_lane:
+            return False
+        lesson_domain = str(getattr(lesson_obj, "domain", "")).strip().lower()
+        if lesson_domain and lesson_domain != "sqlite":
+            return False
+        action_template = str(getattr(lesson_obj, "action_template", "")).strip()
+        if not action_template.lower().startswith("run_sqlite("):
+            return False
+        normalized = _squash_ws(action_template)
+        statement_count = normalized.count(";")
+        if len(normalized) > 320:
+            return True
+        if statement_count >= 4:
+            return True
+        return False
+
     def _fallback_semantic_anchor(score_obj: Any) -> bool:
         # Keep fallback deterministic and conservative. We only consider
         # lessons that have at least minimal lexical/semantic overlap.
@@ -517,6 +543,8 @@ def _select_high_signal_prerun_matches(
         if not _has_structured_gap_fields(lesson):
             continue
         if not _has_executable_shape(lesson):
+            continue
+        if _is_over_broad_sqlite_action_template(lesson):
             continue
         if _is_over_broad_shell_action_template(lesson):
             continue
