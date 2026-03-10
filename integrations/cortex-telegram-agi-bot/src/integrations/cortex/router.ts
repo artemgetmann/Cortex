@@ -33,7 +33,7 @@ const verboseModeByScope = new Map<string, boolean>();
 
 // Polling is intentionally lightweight: fixed interval and throttled updates.
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
-const RUN_STATUS_UPDATE_THROTTLE_MS = 9000;
+const RUN_STATUS_UPDATE_THROTTLE_MS = 3500;
 const RUN_STATUS_POLL_EVENT_LIMIT = 6;
 
 const POSITIVE_CONFIRM = new Set([
@@ -568,7 +568,8 @@ async function runTaskAndReply(
     `Running via Cortex learning loop...\n` +
       `- run_id: ${runDispatch.runId}\n` +
       `- verbose: ${verbose ? "on" : "off"}\n` +
-      `- use /run-status for progress\n` +
+      `- live progress: on (auto)\n` +
+      `- use /run-status for manual refresh\n` +
       `- use /stop to request cancel`
   );
   const state = activeRuns.get(scope);
@@ -576,6 +577,9 @@ async function runTaskAndReply(
     state.progressMessageId = started.message_id;
   }
 
+  // Kick one immediate status poll so users see movement quickly, then continue
+  // with interval polling.
+  void maybeSendRunProgressUpdate(ctx, scope, runDispatch.runId);
   const pollTimer = startRunStatusPolling(ctx, scope, runDispatch.runId);
   let bridge: Awaited<ReturnType<typeof runCortexDispatch>>;
   try {
