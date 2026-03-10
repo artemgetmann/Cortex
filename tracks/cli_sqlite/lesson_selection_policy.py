@@ -820,10 +820,48 @@ def _select_gap_targeted_matches(
     selected: list[Any] = []
     seen_lesson_ids: set[str] = set()
     used_families: set[str] = set()
+
+    def _is_non_actionable_error_budget_lesson(lesson_obj: Any) -> bool:
+        """
+        Filter meta error-budget lessons that are not actionable repairs.
+
+        First-principles:
+        - "too_many_errors/error_budget" captures a symptom, not a fix.
+        - If a lesson for that symptom only repeats regex-ish snippets or
+          self-referential evidence, injecting it burns steps and increases
+          loopiness across domains.
+        """
+        reason = str(getattr(lesson_obj, "reason_code", "")).strip().lower()
+        gap_type = str(getattr(lesson_obj, "gap_type", "")).strip().lower()
+        gap_signature = str(getattr(lesson_obj, "gap_signature", "")).strip().lower()
+        action_template = str(getattr(lesson_obj, "action_template", "")).strip().lower()
+        expected_evidence = str(getattr(lesson_obj, "expected_evidence", "")).strip().lower()
+        rule_text = str(getattr(lesson_obj, "rule_text", "")).strip().lower()
+        combined = " ".join([gap_signature, action_template, expected_evidence, rule_text])
+        is_error_budget_family = (
+            reason == "too_many_errors"
+            or gap_type == "error_budget"
+            or "too_many_errors|error_budget" in combined
+            or ("too_many_errors" in combined and "error_budget" in combined)
+        )
+        if not is_error_budget_family:
+            return False
+        if not action_template:
+            return True
+        if "\\s+" in combined:
+            return True
+        if "too_many_errors" in expected_evidence or "error_budget" in expected_evidence:
+            return True
+        # Error-budget lessons are meta diagnostics in this selector. Keep
+        # retrieval focused on concrete contract-repair actions.
+        return True
+
     for match in matches:
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
         if lesson is None:
+            continue
+        if _is_non_actionable_error_budget_lesson(lesson):
             continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_lesson_ids:
@@ -857,4 +895,18 @@ def _select_gap_targeted_matches(
         # Strict unresolved-gap mode should prefer no hint over wrong hint.
         return []
     # No explicit unresolved gap context available: fallback to top-ranked rows.
-    return list(matches[:cap])
+    fallback_rows: list[Any] = []
+    for match in matches:
+        lesson = getattr(match, "lesson", None)
+        if lesson is None:
+            continue
+        if _is_non_actionable_error_budget_lesson(lesson):
+            continue
+        if has_repo_init_gap and _is_variant_specific_patch_apply_hint(lesson):
+            continue
+        if _is_patch_apply_prereq_miss_for_error(lesson=lesson, current_error_text=current_error_text):
+            continue
+        fallback_rows.append(match)
+        if len(fallback_rows) >= cap:
+            break
+    return fallback_rows

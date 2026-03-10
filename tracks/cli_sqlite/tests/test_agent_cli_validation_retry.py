@@ -44,6 +44,7 @@ class _FakeRetrievalMatch:
         reason_code: str = "",
         gap_type: str = "",
         action_template: str = "",
+        expected_evidence: str = "",
         score: float = 1.0,
     ) -> None:
         self.lesson = SimpleNamespace(
@@ -53,6 +54,7 @@ class _FakeRetrievalMatch:
             reason_code=reason_code,
             gap_type=gap_type,
             action_template=action_template,
+            expected_evidence=expected_evidence,
         )
         self.lane = lane
         self.score = SimpleNamespace(score=score)
@@ -788,6 +790,99 @@ def test_select_gap_targeted_matches_suppresses_patch_apply_hint_on_prereq_error
     assert selected_ids == ["other-non-patch-hint"]
 
 
+def test_select_gap_targeted_matches_blocks_non_actionable_error_budget_lessons() -> None:
+    unresolved = [
+        {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "gap_signature": "too_many_errors|error_budget|error_count=2 max_error_count=1",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="meta-error-budget",
+            rule_text=(
+                "WHEN gap_signature=too_many_errors|error_budget|error_count=2 max_error_count=1: "
+                'run_sqlite(sql="insert\\\\s+into\\\\s+ledger") '
+                "EXPECT: too_many_errors|error_budget|error_count=2 max_error_count=1"
+            ),
+            gap_signature="too_many_errors|error_budget|error_count=2 max_error_count=1",
+            reason_code="too_many_errors",
+            gap_type="error_budget",
+            action_template='run_sqlite(sql="insert\\\\s+into\\\\s+ledger")',
+            expected_evidence="too_many_errors|error_budget|error_count=2 max_error_count=1",
+            score=0.95,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=1,
+        min_score=0.20,
+    )
+    assert selected == []
+
+
+def test_select_gap_targeted_matches_blocks_error_budget_lesson_without_structured_fields() -> None:
+    unresolved = [
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+        },
+    ]
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="legacy-meta-error-budget",
+            rule_text=(
+                "WHEN gap_signature=too_many_errors|error_budget|error_count=2 max_error_count=1: "
+                'run_sqlite(sql="insert\\\\s+into\\\\s+ledger") '
+                "EXPECT: too_many_errors|error_budget|error_count=2 max_error_count=1"
+            ),
+            score=0.99,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=unresolved,
+        max_lessons=1,
+        min_score=0.20,
+    )
+    assert selected == []
+
+
+def test_select_gap_targeted_matches_fallback_respects_error_budget_filter() -> None:
+    matches = [
+        _FakeRetrievalMatch(
+            lesson_id="legacy-meta-error-budget",
+            rule_text=(
+                "WHEN gap_signature=too_many_errors|error_budget|error_count=2 max_error_count=1: "
+                'run_sqlite(sql="insert\\\\s+into\\\\s+ledger") '
+                "EXPECT: too_many_errors|error_budget|error_count=2 max_error_count=1"
+            ),
+            score=0.99,
+        ),
+        _FakeRetrievalMatch(
+            lesson_id="good-fallback",
+            rule_text='run_sqlite(sql="SELECT 1;")',
+            gap_signature="required_query_mismatch|required_query|q1",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+            action_template='run_sqlite(sql="SELECT 1;")',
+            expected_evidence="required_query_mismatch|required_query|q1",
+            score=0.40,
+        ),
+    ]
+    selected = agent_cli._select_gap_targeted_matches(
+        matches=matches,
+        unresolved_gaps=[],
+        max_lessons=1,
+        min_score=0.20,
+    )
+    selected_ids = [str(getattr(getattr(row, "lesson", None), "lesson_id", "")) for row in selected]
+    assert selected_ids == ["good-fallback"]
+
+
 def test_contract_gap_retry_injects_deterministic_recipe_hints(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -955,6 +1050,77 @@ def test_posttask_v2_learning_runs_without_skill_manifest(
         (sessions_root / "session-609" / "learning_artifacts.json").read_text(encoding="utf-8")
     )
     assert len(learning_artifacts.get("lesson_candidates") or []) >= 1
+
+
+def test_posttask_structured_lessons_autofill_expected_evidence_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    sessions_root, _adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-query-gap-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [
+                {
+                    "id": "reject_count",
+                    "sql": "SELECT COUNT(*) AS c FROM rejects;",
+                    "expected_rows": [["1"]],
+                }
+            ],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    def _fake_generate_lessons(**kwargs: Any) -> Any:
+        del kwargs
+        row = _lesson_row(
+            "Use reject-count verifier after dedupe write.",
+            trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template='run_sqlite(sql="SELECT COUNT(*) AS c FROM rejects;")',
+            expected_evidence="evidence_anchor=reject_count",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+        )
+        return SimpleNamespace(raw_lessons=[row], filtered_lessons=[row])
+
+    monkeypatch.setattr(agent_cli, "generate_lessons", _fake_generate_lessons)
+    monkeypatch.setattr(agent_cli, "store_lessons", lambda **kwargs: 0)
+    monkeypatch.setattr(agent_cli, "prune_lessons", lambda *args, **kwargs: None)
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=610,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=True,
+        structured_lessons_required=True,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=False,
+    )
+
+    learning_artifacts = json.loads(
+        (sessions_root / "session-610" / "learning_artifacts.json").read_text(encoding="utf-8")
+    )
+    candidates = learning_artifacts.get("lesson_candidates") or []
+    assert candidates, "expected at least one structured lesson candidate"
+    candidate = candidates[0]
+    assert candidate.get("gap_signature") == "required_query_mismatch|required_query|reject_count"
+    assert candidate.get("expected_evidence") == "required_query_mismatch|required_query|reject_count"
 
 
 def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:

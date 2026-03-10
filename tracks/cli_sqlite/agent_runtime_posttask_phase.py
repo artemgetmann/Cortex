@@ -473,6 +473,28 @@ def run_posttask_phase(
                         metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
                     ) + 1
                     continue
+                # Canonicalize expected evidence so strict pre-run retrieval can
+                # bind this lesson without access to unresolved-gap detail
+                # context. Token-only evidence (for example "reject_count")
+                # may validate at write-time but fails later in strict pre-run
+                # schema checks if it does not carry a stable gap anchor.
+                evidence_text = str(expected_evidence).strip()
+                evidence_lower = evidence_text.lower()
+                signature_lower = str(gap_signature).strip().lower()
+                reason_lower = str(reason_code).strip().lower()
+                gap_type_lower = str(gap_type).strip().lower()
+                has_anchor = bool(
+                    (signature_lower and signature_lower in evidence_lower)
+                    or (reason_lower and reason_lower in evidence_lower)
+                    or (gap_type_lower and gap_type_lower in evidence_lower)
+                )
+                if not has_anchor:
+                    expected_evidence = gap_signature or (
+                        f"{reason_code}|{gap_type}" if reason_code and gap_type else evidence_text
+                    )
+                    metrics["v2_structured_evidence_autofill"] = int(
+                        metrics.get("v2_structured_evidence_autofill", 0) or 0
+                    ) + 1
             tags = deps["extract_tags"](error=lesson_text)
             v2_candidates.append(
                 deps["lesson_record_cls"].from_candidate(
