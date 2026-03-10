@@ -35,6 +35,7 @@ const verboseModeByScope = new Map<string, boolean>();
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
 const RUN_STATUS_UPDATE_THROTTLE_MS = 3500;
 const RUN_STATUS_POLL_EVENT_LIMIT = 6;
+const RUN_STATUS_POLL_EVENT_LIMIT_VERBOSE = 12;
 
 const POSITIVE_CONFIRM = new Set([
   "yes",
@@ -53,6 +54,37 @@ type PollUpdate = {
   message: string;
   terminal: boolean;
 };
+
+function clipInline(text: string, max = 96): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(1, max - 3))}...`;
+}
+
+function describeLifecycleEvent(event: Record<string, unknown>): string {
+  const eventName = String(event.event ?? "").trim().toLowerCase();
+  const stepRaw = event.step;
+  const step = typeof stepRaw === "number" || typeof stepRaw === "string"
+    ? String(stepRaw).trim()
+    : "";
+  const trigger = String(event.trigger ?? "").trim();
+  if (eventName === "followup") {
+    const text = clipInline(String(event.text ?? ""), 80);
+    return text ? `followup(${text})` : "followup";
+  }
+  if (eventName === "contract_gap_retry") {
+    return trigger
+      ? `contract_gap_retry@${step || "?"} (${clipInline(trigger, 48)})`
+      : `contract_gap_retry@${step || "?"}`;
+  }
+  if (eventName === "step" && trigger) {
+    return `step@${step || "?"}: ${clipInline(trigger, 92)}`;
+  }
+  if (step) {
+    return `${eventName || "event"}@${step}`;
+  }
+  return eventName || "event";
+}
 
 function chatScope(chatId: number): string {
   return `tg-${chatId}`;
@@ -383,6 +415,10 @@ function summarizePollUpdate(
   const latestLifecycle = lifecycleEvents.length
     ? lifecycleEvents[lifecycleEvents.length - 1]
     : null;
+  const newLifecycleEvents = lifecycleEvents.filter((row) => {
+    const ts = Number((row as Record<string, unknown>).ts ?? 0);
+    return Number.isFinite(ts) && ts > lastSeenLifecycleTs;
+  });
   const latestLifecycleTs = latestLifecycle
     ? Number(latestLifecycle.ts ?? 0)
     : 0;
@@ -396,23 +432,14 @@ function summarizePollUpdate(
   const terminal = status === "completed" || status === "failed" || status === "cancelled";
   const latestEvent = latestLifecycle ? String(latestLifecycle.event ?? "") : "";
   const internalRunId = String(run.run_id ?? "");
-  const signature = `${runId}|${internalRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
-  const hasNewLifecycleEvent = latestLifecycleTs > lastSeenLifecycleTs;
+  const latestLifecycleSummary = latestLifecycle
+    ? describeLifecycleEvent(latestLifecycle)
+    : "";
+  const signature = `${runId}|${internalRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}|${latestLifecycleSummary}`;
+  const hasNewLifecycleEvent = newLifecycleEvents.length > 0;
   const followups = Array.isArray(run.followups)
     ? (run.followups as unknown[])
     : [];
-
-  let eventPart = "";
-  if (hasNewLifecycleEvent && latestLifecycle) {
-    const eventName = String(latestLifecycle.event ?? "event");
-    const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
-    if (eventName === "followup") {
-      const text = String(latestLifecycle.text ?? "").trim();
-      eventPart = text ? `, event=followup("${text.slice(0, 80)}")` : ", event=followup";
-    } else {
-      eventPart = `, event=${eventName}, event_step=${eventStep}`;
-    }
-  }
 
   const phase =
     status === "completed"
@@ -444,6 +471,10 @@ function summarizePollUpdate(
     lines.push(`- event: ${String(latestLifecycle.event ?? "event")}`);
     const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
     lines.push(`- event_step: ${eventStep}`);
+    const latestSummary = describeLifecycleEvent(latestLifecycle);
+    if (latestSummary) {
+      lines.push(`- event_detail: ${latestSummary}`);
+    }
   }
   if (verbose) {
     const runMetrics = (run.metrics as Record<string, unknown> | undefined) || {};
@@ -451,6 +482,16 @@ function summarizePollUpdate(
     lines.push(`- lesson_activations: ${runMetrics.v2_lesson_activations ?? "?"}`);
     lines.push(`- retrieval_help_ratio: ${runMetrics.v2_retrieval_help_ratio ?? "?"}`);
     lines.push(`- error_count: ${runMetrics.error_count ?? "?"}`);
+    if (newLifecycleEvents.length > 0) {
+      const updates = newLifecycleEvents
+        .slice(-4)
+        .map((row) => describeLifecycleEvent(row))
+        .filter((row) => row.length > 0)
+        .join(" | ");
+      if (updates) {
+        lines.push(`- live_updates: ${updates}`);
+      }
+    }
   }
 
   return {
@@ -470,8 +511,11 @@ async function maybeSendRunProgressUpdate(
   state.pollInFlight = true;
 
   try {
+    const eventLimit = state.verbose
+      ? RUN_STATUS_POLL_EVENT_LIMIT_VERBOSE
+      : RUN_STATUS_POLL_EVENT_LIMIT;
     const bridge = await runCortexDispatch(
-      `/status run_id=${runId} progress=on limit=${RUN_STATUS_POLL_EVENT_LIMIT}`,
+      `/status run_id=${runId} progress=on limit=${eventLimit}`,
       scope
     );
     if (!bridge.payload || bridge.payload.mode !== "status") return;
@@ -776,7 +820,9 @@ export async function maybeHandleCortexRoute(
     if (typeof verboseCmd.enabled === "boolean") {
       setVerboseMode(scope, verboseCmd.enabled);
       await ctx.reply(
-        `Verbose mode is now ${verboseCmd.enabled ? "on" : "off"} for this chat.`
+        verboseCmd.enabled
+          ? "Verbose mode is now on for this chat. Live progress will include tool actions and lesson events."
+          : "Verbose mode is now off for this chat."
       );
       return true;
     }
