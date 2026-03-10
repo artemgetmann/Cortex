@@ -420,16 +420,39 @@ def _select_high_signal_prerun_matches(
         return f"sig:{signature}" if signature else ""
 
     normalized_domain = str(domain).strip().lower()
+    is_incremental_reconcile_sqlite_lane = (
+        str(task_id).strip() == "incremental_reconcile" and normalized_domain == "sqlite"
+    )
     limit = max(0, int(max_results))
     threshold = float(min_score)
     selected: list[Any] = []
     seen_ids: set[str] = set()
+
+    def _is_generic_error_budget_lesson(lesson_obj: Any) -> bool:
+        """
+        Suppress generic error-budget lessons for the incremental_reconcile sqlite lane.
+
+        Why:
+        - these hints ("too many errors", "lower error count") are diagnostic,
+          not actionable repairs
+        - they repeatedly activated in this lane without improving pass rate
+        - pre-run channel should prioritize concrete executable repair guidance
+        """
+        if not is_incremental_reconcile_sqlite_lane:
+            return False
+        reason_code = str(getattr(lesson_obj, "reason_code", "")).strip().lower()
+        gap_type = str(getattr(lesson_obj, "gap_type", "")).strip().lower()
+        gap_signature = str(getattr(lesson_obj, "gap_signature", "")).strip().lower()
+        payload = " ".join([reason_code, gap_type, gap_signature])
+        return "too_many_errors" in payload or "error_budget" in payload
 
     # Pass 1: exact task+domain matches with non-trivial score.
     for match in matches:
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
         if lesson is None or score is None:
+            continue
+        if _is_generic_error_budget_lesson(lesson):
             continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_ids:
@@ -451,6 +474,8 @@ def _select_high_signal_prerun_matches(
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
         if lesson is None or score is None:
+            continue
+        if _is_generic_error_budget_lesson(lesson):
             continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_ids:
@@ -478,6 +503,8 @@ def _select_high_signal_prerun_matches(
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
         if lesson is None or score is None:
+            continue
+        if _is_generic_error_budget_lesson(lesson):
             continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_ids:
@@ -568,6 +595,8 @@ def _select_high_signal_prerun_matches(
         score = getattr(match, "score", None)
         if lesson is None or score is None:
             continue
+        if _is_generic_error_budget_lesson(lesson):
+            continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_ids:
             continue
@@ -595,6 +624,8 @@ def _select_high_signal_prerun_matches(
         lesson = getattr(match, "lesson", None)
         score = getattr(match, "score", None)
         if lesson is None or score is None:
+            continue
+        if _is_generic_error_budget_lesson(lesson):
             continue
         lesson_id = str(getattr(lesson, "lesson_id", "")).strip()
         if not lesson_id or lesson_id in seen_ids:

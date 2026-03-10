@@ -309,7 +309,10 @@ def test_same_task_structured_fallback_caps_to_two_families_without_promoted() -
         max_results=4,
         min_score=0.55,
     )
-    assert [m.lesson.lesson_id for m in selected] == ["lsn_query_best", "lsn_error_budget"]
+    # For incremental_reconcile/sqlite, generic error-budget lessons are
+    # intentionally suppressed from pre-run memory. The selector should keep
+    # concrete executable repair families instead.
+    assert [m.lesson.lesson_id for m in selected] == ["lsn_query_best", "lsn_pattern"]
 
 
 def test_format_v2_lesson_block_prefers_structured_fields_over_raw_rule_text() -> None:
