@@ -26,10 +26,19 @@ type ActiveRunState = {
   verbose: boolean;
 };
 
+type ValidationLaneMode = "auto" | "on" | "off";
+type ValidationLaneConfig = {
+  mode: ValidationLaneMode;
+  attempts?: number;
+  steps?: number;
+};
+
 const pendingTasks = new Map<string, PendingTask>();
 const activeRuns = new Map<string, ActiveRunState>();
 // Per-chat verbosity toggle for operators who want deeper internals.
 const verboseModeByScope = new Map<string, boolean>();
+// Per-chat validation lane for controlled ON/OFF evidence runs.
+const validationLaneByScope = new Map<string, ValidationLaneConfig>();
 
 // Polling is intentionally lightweight: fixed interval and throttled updates.
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
@@ -64,6 +73,128 @@ function isVerboseEnabled(scope: string): boolean {
 
 function setVerboseMode(scope: string, enabled: boolean): void {
   verboseModeByScope.set(scope, enabled);
+}
+
+function parseBoundedInt(
+  value: string,
+  minimum: number,
+  maximum: number
+): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const floored = Math.floor(parsed);
+  if (floored < minimum || floored > maximum) return null;
+  return floored;
+}
+
+function getValidationLane(scope: string): ValidationLaneConfig {
+  return validationLaneByScope.get(scope) || { mode: "auto" };
+}
+
+function summarizeValidationLane(config: ValidationLaneConfig): string {
+  return [
+    "Cortex validation lane:",
+    `- mode: ${config.mode}`,
+    `- attempts: ${config.attempts ?? "default"}`,
+    `- steps: ${config.steps ?? "default"}`,
+  ].join("\n");
+}
+
+function parseValidationCommand(
+  text: string,
+  scope: string
+): { handled: boolean; reply?: string } {
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0 || parts[0]?.toLowerCase() !== "/validation") {
+    return { handled: false };
+  }
+
+  if (parts.length === 1) {
+    return { handled: true, reply: summarizeValidationLane(getValidationLane(scope)) };
+  }
+
+  const modeRaw = (parts[1] || "").toLowerCase();
+  if (modeRaw === "status") {
+    return { handled: true, reply: summarizeValidationLane(getValidationLane(scope)) };
+  }
+  if (!["auto", "on", "off"].includes(modeRaw)) {
+    return {
+      handled: true,
+      reply:
+        "Use /validation auto|on|off [attempts=1..8] [steps=2..20], or /validation status.",
+    };
+  }
+
+  const next: ValidationLaneConfig = { mode: modeRaw as ValidationLaneMode };
+  for (const token of parts.slice(2)) {
+    const [keyRaw, valueRaw] = token.split("=", 2);
+    const key = (keyRaw || "").toLowerCase();
+    const value = (valueRaw || "").trim();
+    if (!key || !value) {
+      return {
+        handled: true,
+        reply:
+          "Invalid validation option. Use attempts=1..8 and steps=2..20.",
+      };
+    }
+    if (key === "attempts") {
+      const attempts = parseBoundedInt(value, 1, 8);
+      if (attempts === null) {
+        return { handled: true, reply: "attempts must be between 1 and 8." };
+      }
+      next.attempts = attempts;
+      continue;
+    }
+    if (key === "steps") {
+      const steps = parseBoundedInt(value, 2, 20);
+      if (steps === null) {
+        return { handled: true, reply: "steps must be between 2 and 20." };
+      }
+      next.steps = steps;
+      continue;
+    }
+    return {
+      handled: true,
+      reply:
+        "Unknown validation option. Use attempts=1..8 and/or steps=2..20.",
+    };
+  }
+
+  validationLaneByScope.set(scope, next);
+  return {
+    handled: true,
+    reply:
+      `${summarizeValidationLane(next)}\n` +
+      "- Applies to natural task routing in this chat.\n" +
+      "- Explicit /run and /learnrun commands still run as typed.",
+  };
+}
+
+function buildLearnrunFromNaturalPrompt(prompt: string, scope: string): string {
+  const lane = getValidationLane(scope);
+  const parts: string[] = ["/learnrun"];
+  if (lane.mode === "on") {
+    parts.push("learn=on");
+  } else if (lane.mode === "off") {
+    parts.push("learn=off");
+  }
+  if (typeof lane.attempts === "number") {
+    parts.push(`attempts=${lane.attempts}`);
+  }
+  if (typeof lane.steps === "number") {
+    parts.push(`steps=${lane.steps}`);
+  }
+  parts.push(prompt);
+  return parts.join(" ");
+}
+
+function extractRunControl(
+  runText: string,
+  key: "learn" | "attempts" | "steps"
+): string | undefined {
+  const pattern = new RegExp(`(?:^|\\s)${key}=([^\\s]+)`, "i");
+  const match = runText.match(pattern);
+  return match?.[1];
 }
 
 function parseVerboseCommand(
@@ -564,9 +695,15 @@ async function runTaskAndReply(
     verbose,
   });
 
+  const learnControl = extractRunControl(runText, "learn");
+  const attemptsControl = extractRunControl(runText, "attempts");
+  const stepsControl = extractRunControl(runText, "steps");
   const started = await ctx.reply(
     `Running via Cortex learning loop...\n` +
       `- run_id: ${runDispatch.runId}\n` +
+      `- learn: ${learnControl ?? "auto"}\n` +
+      `- attempts: ${attemptsControl ?? "adaptive-default"}\n` +
+      `- steps: ${stepsControl ?? "default"}\n` +
       `- verbose: ${verbose ? "on" : "off"}\n` +
       `- use /run-status for progress\n` +
       `- use /stop to request cancel`
@@ -781,6 +918,13 @@ export async function maybeHandleCortexRoute(
     );
     return true;
   }
+  const validationCmd = parseValidationCommand(normalized, scope);
+  if (validationCmd.handled) {
+    if (validationCmd.reply) {
+      await ctx.reply(validationCmd.reply);
+    }
+    return true;
+  }
   const pending = pendingTasks.get(scope);
   const taskIntent =
     CORTEX_AUTO_TASK_ROUTING &&
@@ -815,10 +959,7 @@ export async function maybeHandleCortexRoute(
   if (pending) {
     if (POSITIVE_CONFIRM.has(lowered)) {
       pendingTasks.delete(scope);
-      // Keep natural-language task routing domain-agnostic. The Python
-      // dispatcher infers domain/task when explicit controls are absent and
-      // now controls adaptive retries itself.
-      const runText = `/learnrun ${pending.prompt}`;
+      const runText = buildLearnrunFromNaturalPrompt(pending.prompt, scope);
       await runTaskAndReply(ctx, runText, chatId);
       return true;
     }
@@ -837,7 +978,7 @@ export async function maybeHandleCortexRoute(
     // task-mode instead of hijacking it as followup steering.
     if (taskIntent) {
       if (!CORTEX_CONFIRMATION_ENABLED) {
-        const runText = `/learnrun ${normalized}`;
+        const runText = buildLearnrunFromNaturalPrompt(normalized, scope);
         await runTaskAndReply(ctx, runText, chatId);
         return true;
       }
@@ -856,9 +997,7 @@ export async function maybeHandleCortexRoute(
   }
 
   if (!CORTEX_CONFIRMATION_ENABLED) {
-    // Same domain-agnostic routing path as the confirmation flow, but with
-    // learnrun semantics so memory loop can self-tune retries in one turn.
-    const runText = `/learnrun ${normalized}`;
+    const runText = buildLearnrunFromNaturalPrompt(normalized, scope);
     await runTaskAndReply(ctx, runText, chatId);
     return true;
   }

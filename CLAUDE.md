@@ -93,6 +93,7 @@ docs/
   MEMORY-V2-EXECUTION-PLAN.md      ← Living execution plan
   MEMORY-V2-AGNOSTIC-PLAN.md       ← Memory V2 requirements + status
   MEMORY-V2-BENCHMARKS.md          ← Benchmark runbook
+  TELEGRAM-REAL-TASK-VALIDATION.md ← Real-world ON/OFF Telegram validation protocol
   MEMORY-V2-CURRENT-FLOW.html      ← Current runtime diagram
   archive/                          ← Historical docs only (not source of truth)
 ```

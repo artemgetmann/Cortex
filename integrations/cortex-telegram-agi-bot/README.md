@@ -13,9 +13,10 @@ It keeps one goal: route task-like requests into Cortex (`execute -> judge -> le
 1. Normal chat messages stay in regular assistant mode.
 2. `/run ...` sends the request to Cortex bridge and returns run summary.
 3. `/learnstatus` fetches Cortex learning metrics.
-4. Auto-router detects task-like plain messages and sends them directly to Cortex task-mode.
-5. Set `CORTEX_CONFIRMATION_ENABLED=true` if you want the old `yes`/`no` confirmation gate.
-5. Cortex remains single source of truth. Any update to `tracks/cli_sqlite` immediately affects this bot.
+4. `/validation auto|on|off [attempts=1..8] [steps=2..20]` sets how natural-language task routing runs (controlled ON/OFF lane testing).
+5. Auto-router detects task-like plain messages and sends them directly to Cortex task-mode.
+6. Set `CORTEX_CONFIRMATION_ENABLED=true` if you want the old `yes`/`no` confirmation gate.
+7. Cortex remains single source of truth. Any update to `tracks/cli_sqlite` immediately affects this bot.
 
 ## Quick Start (This AGI Frontend)
 
@@ -243,6 +244,7 @@ stop - Interrupt current query
 status - Check what the bot is doing
 restart - Restart the bot
 run - Execute task via Cortex learning loop
+validation - Configure natural-language validation lane (auto/on/off)
 learnstatus - Show Cortex learning metrics
 ```
 
