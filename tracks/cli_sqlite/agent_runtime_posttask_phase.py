@@ -17,6 +17,49 @@ class PosttaskPhaseOutcome:
     suppressed_lesson_ids: list[str]
 
 
+def _is_error_budget_gap(
+    *,
+    reason_code: str,
+    gap_type: str,
+    gap_signature: str,
+) -> bool:
+    """
+    Detect meta error-budget gaps that describe failure volume, not task repair.
+    """
+    reason = str(reason_code or "").strip().lower()
+    gap = str(gap_type or "").strip().lower()
+    signature = str(gap_signature or "").strip().lower()
+    if reason == "too_many_errors":
+        return True
+    if gap == "error_budget":
+        return True
+    return "too_many_errors|error_budget" in signature
+
+
+def _prioritize_structured_gap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Keep concrete contract gaps ahead of meta error-budget gaps.
+
+    Why:
+    - When both exist, concrete gaps are usually the repair target.
+    - Error-budget rows are still useful, but as secondary diagnostics.
+    """
+    concrete_rows: list[dict[str, Any]] = []
+    budget_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if _is_error_budget_gap(
+            reason_code=str(row.get("reason_code", "")),
+            gap_type=str(row.get("gap_type", "")),
+            gap_signature=str(row.get("gap_signature", "")),
+        ):
+            budget_rows.append(row)
+        else:
+            concrete_rows.append(row)
+    return concrete_rows + budget_rows
+
+
 def run_posttask_phase(
     *,
     posttask_learn: bool,
@@ -118,6 +161,25 @@ def run_posttask_phase(
                     return True
             return False
 
+        def _has_structured_evidence_anchor(
+            *,
+            expected_evidence: str,
+            trigger_signature: str,
+            reason_code: str,
+            gap_type: str,
+        ) -> bool:
+            evidence = str(expected_evidence or "").strip().lower()
+            if not evidence:
+                return False
+            signature = str(trigger_signature or "").strip().lower()
+            reason = str(reason_code or "").strip().lower()
+            gap = str(gap_type or "").strip().lower()
+            return bool(
+                (signature and signature in evidence)
+                or (reason and reason in evidence)
+                or (gap and gap in evidence)
+            )
+
         patching_enabled = architecture_mode == "full" and not memory_v2_demo_mode and bool(skill_manifest_entries)
         if not bool(skill_manifest_entries):
             metrics["posttask_skill_patching_skipped_by_mode"] = True
@@ -195,8 +257,16 @@ def run_posttask_phase(
         metrics["critic_generation_error"] = str(getattr(lesson_result, "error", "") or "")
         metrics["critic_generation_parsed_items"] = int(getattr(lesson_result, "parsed_items", 0) or 0)
         metrics["critic_generation_raw_chars"] = len(str(getattr(lesson_result, "raw_response_text", "") or ""))
-        metrics["lessons_generated"] = deps["store_lessons"](path=lessons_path, lessons=lesson_result.filtered_lessons)
-        deps["prune_lessons"](lessons_path, max_per_task=20, domain_keywords=domain_keywords)
+        if structured_lessons_required:
+            # Strict mode should be driven by executable V2 lessons only.
+            # Persisting legacy free-text lessons here pollutes migration with
+            # non-executable rows that look "promoted" but cannot be retrieved
+            # by strict schema gates.
+            metrics["lessons_generated"] = 0
+            metrics["legacy_lessons_store_skipped_structured"] = True
+        else:
+            metrics["lessons_generated"] = deps["store_lessons"](path=lessons_path, lessons=lesson_result.filtered_lessons)
+            deps["prune_lessons"](lessons_path, max_per_task=20, domain_keywords=domain_keywords)
 
         v2_reflection = deps["generate_lessons"](
             client=client,
@@ -225,7 +295,16 @@ def run_posttask_phase(
         if not repeated_error_signatures:
             repeated_error_signatures = list(recurring_fingerprints)
         v2_candidates: list[Any] = []
-        structured_gap_rows = list(final_unresolved_gaps)
+        structured_gap_rows = _prioritize_structured_gap_rows(list(final_unresolved_gaps))
+        has_concrete_structured_gaps = any(
+            not _is_error_budget_gap(
+                reason_code=str(row.get("reason_code", "")),
+                gap_type=str(row.get("gap_type", "")),
+                gap_signature=str(row.get("gap_signature", "")),
+            )
+            for row in structured_gap_rows
+            if isinstance(row, dict)
+        )
         structured_gap_by_signature = {
             str(row.get("gap_signature", "")).strip(): row
             for row in structured_gap_rows
@@ -258,6 +337,15 @@ def run_posttask_phase(
                 reason_code = str(gap_row.get("reason_code", "")).strip()
                 gap_type = str(gap_row.get("gap_type", "")).strip()
                 gap_signature = str(gap_row.get("gap_signature", "")).strip()
+                if has_concrete_structured_gaps and _is_error_budget_gap(
+                    reason_code=reason_code,
+                    gap_type=gap_type,
+                    gap_signature=gap_signature,
+                ):
+                    metrics["v2_schema_rejection_counts"]["deprioritized_error_budget_meta"] = int(
+                        metrics["v2_schema_rejection_counts"].get("deprioritized_error_budget_meta", 0)
+                    ) + 1
+                    continue
                 action_template = deps["_extract_action_template_from_legacy_lesson"](
                     lesson_text=recipe,
                     executor_tool_name=str(adapter.executor_tool_name),
@@ -296,8 +384,34 @@ def run_posttask_phase(
             if not text:
                 continue
             if structured_lessons_required:
+                trigger_signature = str(getattr(lesson, "trigger_gap_signature", "")).strip()
+                reason_code_raw = str(getattr(lesson, "reason_code", "")).strip()
+                gap_type_raw = str(getattr(lesson, "gap_type", "")).strip()
+                expected_evidence_raw = str(getattr(lesson, "expected_evidence", "")).strip()
+                lesson_for_validation: Any = lesson
+                if trigger_signature and not _has_structured_evidence_anchor(
+                    expected_evidence=expected_evidence_raw,
+                    trigger_signature=trigger_signature,
+                    reason_code=reason_code_raw,
+                    gap_type=gap_type_raw,
+                ):
+                    # Strict mode needs anchored evidence, but model outputs are
+                    # often semantically right while omitting explicit gap tokens.
+                    # Canonicalize before validation so we keep executable
+                    # lessons instead of dropping them as schema noise.
+                    lesson_for_validation = SimpleNamespace(
+                        trigger_gap_signature=trigger_signature,
+                        reason_code=reason_code_raw,
+                        gap_type=gap_type_raw,
+                        action_template=str(getattr(lesson, "action_template", "")).strip(),
+                        expected_evidence=trigger_signature,
+                    )
+                    metrics["v2_structured_evidence_autofill_prevalidate"] = int(
+                        metrics.get("v2_structured_evidence_autofill_prevalidate", 0) or 0
+                    ) + 1
+
                 valid_structured, rejection_reason, structured_payload = deps["_validate_structured_model_lesson"](
-                    lesson=lesson,
+                    lesson=lesson_for_validation,
                     unresolved_gap_rows=structured_gap_rows,
                     allowed_action_tools=allowed_action_tools,
                 )
@@ -471,6 +585,18 @@ def run_posttask_phase(
                 if not signature_bound and not reason_gap_bound:
                     metrics["v2_schema_rejection_counts"]["unbound_trigger_gap_signature"] = int(
                         metrics["v2_schema_rejection_counts"].get("unbound_trigger_gap_signature", 0)
+                    ) + 1
+                    continue
+                if has_concrete_structured_gaps and _is_error_budget_gap(
+                    reason_code=reason_code,
+                    gap_type=gap_type,
+                    gap_signature=gap_signature,
+                ):
+                    # When a concrete unresolved gap exists, skip meta
+                    # error-budget memory so retrieval stays focused on
+                    # executable repair patterns.
+                    metrics["v2_schema_rejection_counts"]["deprioritized_error_budget_meta"] = int(
+                        metrics["v2_schema_rejection_counts"].get("deprioritized_error_budget_meta", 0)
                     ) + 1
                     continue
                 # Canonicalize expected evidence so strict pre-run retrieval can

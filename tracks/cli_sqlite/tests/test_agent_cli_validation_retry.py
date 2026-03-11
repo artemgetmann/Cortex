@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from tracks.cli_sqlite import agent_cli
+from tracks.cli_sqlite import agent_runtime_posttask_phase as posttask_phase
 from tracks.cli_sqlite.domain_adapter import DomainWorkspace, ToolResult
 from tracks.cli_sqlite.judge_llm import JudgeResult
 from tracks.cli_sqlite.memory_cli import read_events
@@ -1121,6 +1122,80 @@ def test_posttask_structured_lessons_autofill_expected_evidence_anchor(
     candidate = candidates[0]
     assert candidate.get("gap_signature") == "required_query_mismatch|required_query|reject_count"
     assert candidate.get("expected_evidence") == "required_query_mismatch|required_query|reject_count"
+    assert int(result.metrics.get("v2_structured_evidence_autofill_prevalidate", 0) or 0) >= 1
+
+
+def test_structured_mode_skips_legacy_lesson_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        _tool_use_response(tool_use_id="tool-1", tool_input={"sql": "SELECT 1;"}),
+    ]
+    _sessions_root, _adapter = _configure_retry_harness(monkeypatch, tmp_path, responses)
+    task_dir = Path(agent_cli.TASKS_ROOT) / "retry_task"
+    contract_payload = {
+        "id": "retry-contract-query-gap-v1",
+        "task_match": {"all": ["retry"], "any": []},
+        "signals": {
+            "required_event_patterns": ["tool=run_sqlite"],
+            "forbidden_event_patterns": [],
+            "required_queries": [
+                {
+                    "id": "reject_count",
+                    "sql": "SELECT COUNT(*) AS c FROM rejects;",
+                    "expected_rows": [["1"]],
+                }
+            ],
+            "required_sql_patterns": [],
+            "forbidden_sql_patterns": [],
+            "required_files": [],
+            "max_error_count": 0,
+        },
+    }
+    task_dir.joinpath("CONTRACT.json").write_text(json.dumps(contract_payload), encoding="utf-8")
+    cfg = SimpleNamespace(anthropic_api_key="test-key")
+
+    def _fake_generate_lessons(**kwargs: Any) -> Any:
+        del kwargs
+        row = _lesson_row(
+            "Use reject-count verifier after dedupe write.",
+            trigger_gap_signature="required_query_mismatch|required_query|reject_count",
+            action_template='run_sqlite(sql="SELECT COUNT(*) AS c FROM rejects;")',
+            expected_evidence="required_query_mismatch|required_query|reject_count",
+            reason_code="required_query_mismatch",
+            gap_type="required_query",
+        )
+        return SimpleNamespace(raw_lessons=[row], filtered_lessons=[row])
+
+    store_calls = {"count": 0}
+
+    def _fake_store_lessons(**kwargs: Any) -> int:
+        del kwargs
+        store_calls["count"] += 1
+        return 1
+
+    monkeypatch.setattr(agent_cli, "generate_lessons", _fake_generate_lessons)
+    monkeypatch.setattr(agent_cli, "store_lessons", _fake_store_lessons)
+    monkeypatch.setattr(agent_cli, "prune_lessons", lambda *args, **kwargs: None)
+
+    result = agent_cli.run_cli_agent(
+        cfg=cfg,
+        task_id="retry_task",
+        task=None,
+        session_id=611,
+        max_steps=1,
+        domain="sqlite",
+        posttask_learn=True,
+        structured_lessons_required=True,
+        require_skill_read=False,
+        llm_backend="anthropic",
+        contract_gap_retry=False,
+    )
+
+    assert store_calls["count"] == 0
+    assert bool(result.metrics.get("legacy_lessons_store_skipped_structured", False))
+    assert int(result.metrics.get("lessons_generated", -1)) == 0
 
 
 def test_validate_structured_model_lesson_requires_trigger_action_and_evidence() -> None:
@@ -1254,7 +1329,55 @@ def test_validate_structured_model_lesson_allows_semantic_anchor_from_gap_detail
     )
     assert ok is True
     assert reason == ""
-    assert payload["trigger_gap_signature"].startswith("missing_required_event_pattern|required_event_pattern")
+
+
+def test_is_error_budget_gap_detects_reason_type_or_signature() -> None:
+    assert posttask_phase._is_error_budget_gap(
+        reason_code="too_many_errors",
+        gap_type="required_query",
+        gap_signature="",
+    )
+    assert posttask_phase._is_error_budget_gap(
+        reason_code="required_query_mismatch",
+        gap_type="error_budget",
+        gap_signature="",
+    )
+    assert posttask_phase._is_error_budget_gap(
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+        gap_signature="too_many_errors|error_budget|error_count=3 max_error_count=1",
+    )
+    assert not posttask_phase._is_error_budget_gap(
+        reason_code="required_query_mismatch",
+        gap_type="required_query",
+        gap_signature="required_query_mismatch|required_query|reject_count",
+    )
+
+
+def test_prioritize_structured_gap_rows_places_concrete_before_error_budget() -> None:
+    rows = [
+        {
+            "reason_code": "too_many_errors",
+            "gap_type": "error_budget",
+            "gap_signature": "too_many_errors|error_budget|error_count=3 max_error_count=1",
+        },
+        {
+            "reason_code": "required_query_mismatch",
+            "gap_type": "required_query",
+            "gap_signature": "required_query_mismatch|required_query|reject_count",
+        },
+        {
+            "reason_code": "missing_required_pattern",
+            "gap_type": "required_sql_pattern",
+            "gap_signature": "missing_required_pattern|required_sql_pattern|ckp-apr-01",
+        },
+    ]
+    prioritized = posttask_phase._prioritize_structured_gap_rows(rows)
+    assert [str(row.get("gap_signature", "")) for row in prioritized] == [
+        "required_query_mismatch|required_query|reject_count",
+        "missing_required_pattern|required_sql_pattern|ckp-apr-01",
+        "too_many_errors|error_budget|error_count=3 max_error_count=1",
+    ]
 
 
 def test_extract_action_template_from_legacy_shell_lesson() -> None:
