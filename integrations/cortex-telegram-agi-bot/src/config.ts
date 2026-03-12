@@ -285,8 +285,10 @@ export const CORTEX_BRIDGE_ENABLED =
   (process.env.CORTEX_BRIDGE_ENABLED || "true").toLowerCase() === "true";
 
 // This bot should call Cortex as the single source of truth for learning logic.
+const BOT_ROOT = resolve(dirname(import.meta.dir), "..");
+const REPO_ROOT_FROM_BOT = resolve(BOT_ROOT, "..", "..");
 export const CORTEX_ROOT = resolveFromWorkingDir(
-  process.env.CORTEX_ROOT || "/Users/user/Programming_Projects/Cortex"
+  process.env.CORTEX_ROOT || REPO_ROOT_FROM_BOT
 );
 
 export const CORTEX_DISPATCHER_PATH = resolveFromWorkingDir(
