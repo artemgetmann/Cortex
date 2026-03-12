@@ -233,6 +233,18 @@ For live testing without touching OpenClaw or the existing `claude-code-telegram
 - `scripts/cortex_tg_agi_install_launchagent.sh`
 - `scripts/cortex_tg_agi_uninstall_launchagent.sh`
 
+Worktree/runtime rule (important):
+- LaunchAgent is pinned to the checkout where you run install.
+- If you switch to another worktree branch, re-run install there so live Telegram serves that checkout:
+  - `./scripts/cortex_tg_agi_install_launchagent.sh`
+- Startup now supports dynamic path binding by default (`CORTEX_DYNAMIC_PATHS=1`):
+  - `CORTEX_ROOT`, `CORTEX_DISPATCHER_PATH`, and `AI_WORKING_DIR` auto-bind to the current checkout.
+  - Set `CORTEX_DYNAMIC_PATHS=0` only if you intentionally want static pinned paths in `.env`.
+- Quick verification:
+  - `launchctl list | rg com.cortex-telegram-agi`
+  - `PID=$(launchctl list | awk '/com.cortex-telegram-agi/{print $1}')`
+  - `lsof -a -d cwd -p "$PID" | tail -n +2`
+
 Design:
 - Telegram bot is frontend only.
 - Cortex (`tracks/cli_sqlite`) is the brain.
