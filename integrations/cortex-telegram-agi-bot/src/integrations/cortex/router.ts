@@ -61,7 +61,7 @@ function clipInline(text: string, max = 96): string {
   return `${normalized.slice(0, Math.max(1, max - 3))}...`;
 }
 
-export function describeLifecycleEvent(event: Record<string, unknown>): string {
+function describeLifecycleEvent(event: Record<string, unknown>): string {
   const eventName = String(event.event ?? "").trim().toLowerCase();
   const stepRaw = event.step;
   const step = typeof stepRaw === "number" || typeof stepRaw === "string"
@@ -392,7 +392,7 @@ function summarizeRun(
   return lines.join("\n");
 }
 
-export function summarizePollUpdate(
+function summarizePollUpdate(
   statusPayload: Record<string, unknown>,
   runId: string,
   lastSeenLifecycleTs: number,
@@ -467,7 +467,7 @@ export function summarizePollUpdate(
   if (cancelRequested) {
     lines.push("- cancel_requested: true");
   }
-  if (latestLifecycle) {
+  if (hasNewLifecycleEvent && latestLifecycle) {
     lines.push(`- event: ${String(latestLifecycle.event ?? "event")}`);
     const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
     lines.push(`- event_step: ${eventStep}`);
@@ -482,11 +482,8 @@ export function summarizePollUpdate(
     lines.push(`- lesson_activations: ${runMetrics.v2_lesson_activations ?? "?"}`);
     lines.push(`- retrieval_help_ratio: ${runMetrics.v2_retrieval_help_ratio ?? "?"}`);
     lines.push(`- error_count: ${runMetrics.error_count ?? "?"}`);
-    const visibleLifecycleRows = lifecycleEvents.length > 0
-      ? lifecycleEvents
-      : newLifecycleEvents;
-    if (visibleLifecycleRows.length > 0) {
-      const updates = visibleLifecycleRows
+    if (newLifecycleEvents.length > 0) {
+      const updates = newLifecycleEvents
         .slice(-4)
         .map((row) => describeLifecycleEvent(row))
         .filter((row) => row.length > 0)
