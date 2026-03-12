@@ -311,44 +311,6 @@ def _run_cli_agent_impl_extracted(
                 "placebo_applied": bool(benchmark_placebo),
             }
         )
-
-    def _emit_step_lifecycle(*, current_step: int, trigger: str) -> None:
-        """Emit compact lifecycle breadcrumbs for transport UIs.
-
-        The Telegram bridge polls run lifecycle events, so this callback is the
-        cheapest place to expose actionable live state without coupling UI code
-        to executor internals.
-        """
-        if on_lifecycle_event is None:
-            return
-        trigger_text = str(trigger or "").strip()
-        if not trigger_text:
-            return
-        try:
-            on_lifecycle_event("step", {"step": int(current_step), "trigger": trigger_text})
-        except Exception:
-            # Lifecycle telemetry is best-effort and must never alter run behavior.
-            return
-
-    def _tool_trigger_suffix(tool_name: str, tool_input: dict[str, Any]) -> str:
-        # Keep progress payload compact; Telegram cards should show intent, not
-        # full command/sql blobs that can exceed message limits.
-        if tool_name == "run_bash":
-            command = " ".join(str(tool_input.get("command", "")).split())
-            if command:
-                return f" cmd={_clip_text(command, max_chars=96)}"
-        if tool_name == "run_sqlite":
-            sql_text = " ".join(str(tool_input.get("sql", "")).split())
-            if sql_text:
-                return f" sql={_clip_text(sql_text, max_chars=96)}"
-        return ""
-
-    if prerun_v2_ids:
-        _emit_step_lifecycle(
-            current_step=0,
-            trigger=f"lessons:prerun:{len(prerun_v2_ids)}",
-        )
-
     contradiction_loser_counts: dict[str, int] = defaultdict(int)
     repeated_error_signatures: list[str] = []
     promoted_lesson_ids: list[str] = []
@@ -885,14 +847,6 @@ def _run_cli_agent_impl_extracted(
                         metrics["v2_lesson_activations_placebo"] += len(v2_hints)
                     else:
                         metrics["v2_lesson_activations_effective"] += len(v2_hints)
-                    lesson_preview = ",".join(str(match.lesson.lesson_id) for match in v2_matches[:3])
-                    _emit_step_lifecycle(
-                        current_step=step,
-                        trigger=(
-                            f"lessons:on_error:{len(v2_hints)}"
-                            + (f" ids={_clip_text(lesson_preview, max_chars=72)}" if lesson_preview else "")
-                        ),
-                    )
 
                 # Legacy fallback keeps older runs usable while v2 memory warms up.
                 legacy_hints: list[str] = []
@@ -920,10 +874,6 @@ def _run_cli_agent_impl_extracted(
                         ]
                     if legacy_hints:
                         metrics["lesson_activations"] += len(legacy_hints)
-                        _emit_step_lifecycle(
-                            current_step=step,
-                            trigger=f"lessons:legacy:{len(legacy_hints)}",
-                        )
 
                 merged_hints = v2_hints or legacy_hints
                 if merged_hints:
@@ -953,13 +903,6 @@ def _run_cli_agent_impl_extracted(
 
             if on_step:
                 on_step(step, canonical_name, not result.is_error(), result.error)
-            _emit_step_lifecycle(
-                current_step=step,
-                trigger=(
-                    f"tool:{canonical_name}:{'ok' if not result.is_error() else 'error'}"
-                    + _tool_trigger_suffix(canonical_name, tool_input)
-                ),
-            )
 
             tool_results.append(_tool_result_block(tool_use_id, result))
 
@@ -1014,20 +957,12 @@ def _run_cli_agent_impl_extracted(
                         ),
                         flush=True,
                     )
-                _emit_step_lifecycle(
-                    current_step=step,
-                    trigger="recovery:no_tool_prompt",
-                )
                 step += 1
                 validation_retries_this_step = 0
                 validation_retry_capped_this_step = False
                 continue
             if verbose:
                 print(f"[step {step:03d}] no tool call; model stopped.", flush=True)
-            _emit_step_lifecycle(
-                current_step=step,
-                trigger="stop:no_tool_call",
-            )
             break
         messages.append({"role": "user", "content": tool_results})
         if retry_same_step and not saw_non_validation_tool_call:
