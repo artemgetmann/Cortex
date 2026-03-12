@@ -19,6 +19,19 @@ def _run_record(*, run_id: str, status: str) -> run_service.RunRecord:
     )
 
 
+def _run_record_with_session(*, run_id: str, status: str, session_id: int) -> run_service.RunRecord:
+    return run_service.RunRecord(
+        run_id=run_id,
+        session_id=session_id,
+        task_id="aggregate_report",
+        domain="gridtool",
+        status=status,
+        created_at_epoch_s=1.0,
+        updated_at_epoch_s=2.0,
+        started_at_epoch_s=1.0,
+    )
+
+
 def test_build_plan_parses_cancel_with_run_id() -> None:
     plan = dispatch._build_plan(
         "/cancel run_id=run_1730000000000_00000042",
@@ -123,13 +136,46 @@ def test_latest_lifecycle_events_uses_run_service_resolved_path(monkeypatch) -> 
     assert captured["path"] == expected_path
 
 
+def test_latest_lifecycle_events_falls_back_to_session_id(monkeypatch, tmp_path: Path) -> None:
+    lifecycle_path = tmp_path / "run_lifecycle.jsonl"
+    lifecycle_path.write_text(
+        "\n".join(
+            [
+                '{"ts": 1.0, "run_id": "run-8801-1", "session_id": 8801, "event": "started"}',
+                '{"ts": 2.0, "run_id": "run-8801-1", "session_id": 8801, "event": "step", "step": 2, "trigger": "tool:run_bash:ok"}',
+                '{"ts": 3.0, "run_id": "run-9999-1", "session_id": 9999, "event": "step", "step": 9}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dispatch.run_service, "resolve_lifecycle_path", lambda: lifecycle_path)
+    monkeypatch.setattr(
+        dispatch.run_service,
+        "list_events",
+        lambda run_id, *, max_events, lifecycle_path: [],
+    )
+    events = dispatch._latest_lifecycle_events(
+        run_id="run_1773000000000_00000001",
+        limit=4,
+        session_id=8801,
+    )
+    assert len(events) == 2
+    assert events[-1]["event"] == "step"
+    assert events[-1]["trigger"] == "tool:run_bash:ok"
+
+
 def test_status_payload_progress_mode_includes_lifecycle_events(monkeypatch) -> None:
     monkeypatch.setattr(dispatch.run_service, "list_active", lambda: [])
-    monkeypatch.setattr(dispatch.run_service, "get_run", lambda run_id: None)
+    monkeypatch.setattr(
+        dispatch.run_service,
+        "get_run",
+        lambda run_id: _run_record_with_session(run_id=run_id, status="running", session_id=8801),
+    )
     monkeypatch.setattr(
         dispatch,
         "_latest_lifecycle_events",
-        lambda run_id, limit: [{"ts": 11.0, "event": "step", "run_id": run_id}],
+        lambda run_id, limit, session_id=None: [{"ts": 11.0, "event": "step", "run_id": run_id}],
     )
     payload = dispatch._status_payload(
         chat_scope="tg-1",

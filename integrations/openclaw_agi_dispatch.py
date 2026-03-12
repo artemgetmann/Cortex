@@ -10,6 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -331,7 +332,55 @@ def _coerce_lifecycle_event(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _latest_lifecycle_events(*, run_id: str, limit: int) -> list[dict[str, Any]]:
+def _latest_lifecycle_events_by_session(
+    *,
+    session_id: int,
+    limit: int,
+    lifecycle_path: Path,
+) -> list[dict[str, Any]]:
+    """Fallback resolver for lifecycle rows keyed by internal run id.
+
+    The runtime writes rich step/tool breadcrumbs under its own run id shape
+    (for example ``run-<session>-<ts>``), while transport status polling uses
+    the external run-service id (``run_<ts>_<seq>``). When those differ, we
+    still want Telegram verbose mode to surface live actions, so we tail by
+    session id as a deterministic bridge.
+    """
+    if not lifecycle_path.exists():
+        return []
+    tail: deque[dict[str, Any]] = deque(maxlen=max(1, limit))
+    with lifecycle_path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            try:
+                row_session_id = int(parsed.get("session_id"))
+            except (TypeError, ValueError):
+                continue
+            if row_session_id != int(session_id):
+                continue
+            tail.append(dict(parsed))
+    matched: list[dict[str, Any]] = []
+    for row in tail:
+        normalized = _coerce_lifecycle_event(row)
+        if normalized is not None:
+            matched.append(normalized)
+    return matched
+
+
+def _latest_lifecycle_events(
+    *,
+    run_id: str,
+    limit: int,
+    session_id: int | None = None,
+) -> list[dict[str, Any]]:
     path = run_service.resolve_lifecycle_path()
     rows = run_service.list_events(run_id, max_events=max(1, limit), lifecycle_path=path)
     matched: list[dict[str, Any]] = []
@@ -339,7 +388,15 @@ def _latest_lifecycle_events(*, run_id: str, limit: int) -> list[dict[str, Any]]
         normalized = _coerce_lifecycle_event(row)
         if normalized is not None:
             matched.append(normalized)
-    return matched
+    if matched:
+        return matched
+    if session_id is None:
+        return matched
+    return _latest_lifecycle_events_by_session(
+        session_id=int(session_id),
+        limit=max(1, limit),
+        lifecycle_path=path,
+    )
 
 
 def _print_json(payload: dict[str, Any]) -> None:
@@ -1364,7 +1421,11 @@ def _status_payload(
     run_row = run_service.get_run(run_id) if run_id else None
     lifecycle_events: list[dict[str, Any]] = []
     if include_progress and run_id:
-        lifecycle_events = _latest_lifecycle_events(run_id=run_id, limit=progress_limit)
+        lifecycle_events = _latest_lifecycle_events(
+            run_id=run_id,
+            limit=progress_limit,
+            session_id=(int(run_row.session_id) if run_row is not None else None),
+        )
 
     return {
         "ok": True,
