@@ -186,3 +186,31 @@ def test_status_payload_progress_mode_includes_lifecycle_events(monkeypatch) -> 
     assert payload["progress_mode"] is True
     assert payload["progress_limit"] == 5
     assert len(payload["lifecycle_events"]) == 1
+
+
+def test_status_payload_progress_falls_back_to_active_run_when_requested_run_missing(
+    monkeypatch,
+) -> None:
+    active = _run_record_with_session(run_id="run_internal_active", status="running", session_id=9901)
+    monkeypatch.setattr(dispatch.run_service, "list_active", lambda: [active])
+    monkeypatch.setattr(dispatch.run_service, "get_run", lambda run_id: None)
+    captured: dict[str, object] = {}
+
+    def _fake_latest(run_id: str, limit: int, session_id: int | None = None):
+        captured["run_id"] = run_id
+        captured["session_id"] = session_id
+        captured["limit"] = limit
+        return [{"ts": 22.0, "event": "step", "run_id": run_id, "session_id": session_id}]
+
+    monkeypatch.setattr(dispatch, "_latest_lifecycle_events", _fake_latest)
+    payload = dispatch._status_payload(
+        chat_scope="tg-1",
+        run_id="run_transport_missing",
+        include_progress=True,
+        progress_limit=7,
+    )
+    assert payload["progress_mode"] is True
+    assert len(payload["lifecycle_events"]) == 1
+    assert captured["run_id"] == "run_internal_active"
+    assert captured["session_id"] == 9901
+    assert captured["limit"] == 7

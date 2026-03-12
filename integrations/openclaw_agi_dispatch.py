@@ -1417,14 +1417,24 @@ def _status_payload(
         recent_metrics = payload
         break
 
-    active_runs = [row.to_dict() for row in run_service.list_active()]
+    active_run_rows = run_service.list_active()
+    active_runs = [row.to_dict() for row in active_run_rows]
     run_row = run_service.get_run(run_id) if run_id else None
     lifecycle_events: list[dict[str, Any]] = []
-    if include_progress and run_id:
+    if include_progress and (run_id or active_run_rows):
+        progress_run_id = str(run_id or "").strip()
+        progress_session_id: int | None = int(run_row.session_id) if run_row is not None else None
+        if (not progress_run_id or run_row is None) and active_run_rows:
+            # Transport-facing run ids may differ from internal adaptive-attempt
+            # ids. When the requested id is not directly tracked, fall back to
+            # the freshest active run so progress streaming remains live.
+            freshest = active_run_rows[0]
+            progress_run_id = str(freshest.run_id)
+            progress_session_id = int(freshest.session_id)
         lifecycle_events = _latest_lifecycle_events(
-            run_id=run_id,
+            run_id=progress_run_id,
             limit=progress_limit,
-            session_id=(int(run_row.session_id) if run_row is not None else None),
+            session_id=progress_session_id,
         )
 
     return {
