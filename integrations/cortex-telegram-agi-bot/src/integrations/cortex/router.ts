@@ -12,6 +12,8 @@ type PendingTask = {
   createdAtMs: number;
 };
 
+type VerboseMode = "off" | "on" | "trace";
+
 type ActiveRunState = {
   runId: string;
   startedAtMs: number;
@@ -23,18 +25,19 @@ type ActiveRunState = {
   // Single progress card message edited in-place to avoid noisy chat spam.
   progressMessageId?: number;
   // Per-run snapshot of verbose mode so output format stays stable mid-run.
-  verbose: boolean;
+  verboseMode: VerboseMode;
 };
 
 const pendingTasks = new Map<string, PendingTask>();
 const activeRuns = new Map<string, ActiveRunState>();
 // Per-chat verbosity toggle for operators who want deeper internals.
-const verboseModeByScope = new Map<string, boolean>();
+const verboseModeByScope = new Map<string, VerboseMode>();
 
 // Polling is intentionally lightweight: fixed interval and throttled updates.
 const RUN_STATUS_POLL_INTERVAL_MS = 3000;
-const RUN_STATUS_UPDATE_THROTTLE_MS = 9000;
+const RUN_STATUS_UPDATE_THROTTLE_MS = 3500;
 const RUN_STATUS_POLL_EVENT_LIMIT = 6;
+const RUN_STATUS_POLL_EVENT_LIMIT_VERBOSE = 12;
 
 const POSITIVE_CONFIRM = new Set([
   "yes",
@@ -54,21 +57,57 @@ type PollUpdate = {
   terminal: boolean;
 };
 
+function clipInline(text: string, max = 96): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(1, max - 3))}...`;
+}
+
+export function describeLifecycleEvent(event: Record<string, unknown>): string {
+  const eventName = String(event.event ?? "").trim().toLowerCase();
+  const stepRaw = event.step;
+  const step = typeof stepRaw === "number" || typeof stepRaw === "string"
+    ? String(stepRaw).trim()
+    : "";
+  const trigger = String(event.trigger ?? "").trim();
+  if (eventName === "followup") {
+    const text = clipInline(String(event.text ?? ""), 80);
+    return text ? `followup(${text})` : "followup";
+  }
+  if (eventName === "contract_gap_retry") {
+    return trigger
+      ? `contract_gap_retry@${step || "?"} (${clipInline(trigger, 48)})`
+      : `contract_gap_retry@${step || "?"}`;
+  }
+  if (eventName === "step" && trigger) {
+    return `step@${step || "?"}: ${clipInline(trigger, 92)}`;
+  }
+  if (step) {
+    return `${eventName || "event"}@${step}`;
+  }
+  return eventName || "event";
+}
+
 function chatScope(chatId: number): string {
   return `tg-${chatId}`;
 }
 
-function isVerboseEnabled(scope: string): boolean {
-  return verboseModeByScope.get(scope) === true;
+function getVerboseMode(scope: string): VerboseMode {
+  return verboseModeByScope.get(scope) || "off";
 }
 
-function setVerboseMode(scope: string, enabled: boolean): void {
-  verboseModeByScope.set(scope, enabled);
+function isVerboseEnabled(scope: string): boolean {
+  const mode = getVerboseMode(scope);
+  return mode === "on" || mode === "trace";
+}
+
+function setVerboseMode(scope: string, mode: VerboseMode): void {
+  verboseModeByScope.set(scope, mode);
 }
 
 function parseVerboseCommand(
   text: string
-): { handled: boolean; enabled?: boolean; error?: string } {
+): { handled: boolean; mode?: VerboseMode; error?: string } {
   const parts = text.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0 || parts[0]?.toLowerCase() !== "/verbose") {
     return { handled: false };
@@ -78,14 +117,17 @@ function parseVerboseCommand(
   }
   const raw = (parts[1] || "").toLowerCase();
   if (raw === "on" || raw === "true" || raw === "1") {
-    return { handled: true, enabled: true };
+    return { handled: true, mode: "on" };
   }
   if (raw === "off" || raw === "false" || raw === "0") {
-    return { handled: true, enabled: false };
+    return { handled: true, mode: "off" };
+  }
+  if (raw === "trace") {
+    return { handled: true, mode: "trace" };
   }
   return {
     handled: true,
-    error: "Use /verbose on or /verbose off.",
+    error: "Use /verbose on, /verbose off, or /verbose trace.",
   };
 }
 
@@ -360,7 +402,7 @@ function summarizeRun(
   return lines.join("\n");
 }
 
-function summarizePollUpdate(
+export function summarizePollUpdate(
   statusPayload: Record<string, unknown>,
   runId: string,
   lastSeenLifecycleTs: number,
@@ -383,6 +425,10 @@ function summarizePollUpdate(
   const latestLifecycle = lifecycleEvents.length
     ? lifecycleEvents[lifecycleEvents.length - 1]
     : null;
+  const newLifecycleEvents = lifecycleEvents.filter((row) => {
+    const ts = Number((row as Record<string, unknown>).ts ?? 0);
+    return Number.isFinite(ts) && ts > lastSeenLifecycleTs;
+  });
   const latestLifecycleTs = latestLifecycle
     ? Number(latestLifecycle.ts ?? 0)
     : 0;
@@ -396,23 +442,14 @@ function summarizePollUpdate(
   const terminal = status === "completed" || status === "failed" || status === "cancelled";
   const latestEvent = latestLifecycle ? String(latestLifecycle.event ?? "") : "";
   const internalRunId = String(run.run_id ?? "");
-  const signature = `${runId}|${internalRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}`;
-  const hasNewLifecycleEvent = latestLifecycleTs > lastSeenLifecycleTs;
+  const latestLifecycleSummary = latestLifecycle
+    ? describeLifecycleEvent(latestLifecycle)
+    : "";
+  const signature = `${runId}|${internalRunId}|${status}|${lastStep}|${cancelRequested}|${latestLifecycleTs}|${latestEvent}|${latestLifecycleSummary}`;
+  const hasNewLifecycleEvent = newLifecycleEvents.length > 0;
   const followups = Array.isArray(run.followups)
     ? (run.followups as unknown[])
     : [];
-
-  let eventPart = "";
-  if (hasNewLifecycleEvent && latestLifecycle) {
-    const eventName = String(latestLifecycle.event ?? "event");
-    const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
-    if (eventName === "followup") {
-      const text = String(latestLifecycle.text ?? "").trim();
-      eventPart = text ? `, event=followup("${text.slice(0, 80)}")` : ", event=followup";
-    } else {
-      eventPart = `, event=${eventName}, event_step=${eventStep}`;
-    }
-  }
 
   const phase =
     status === "completed"
@@ -440,10 +477,14 @@ function summarizePollUpdate(
   if (cancelRequested) {
     lines.push("- cancel_requested: true");
   }
-  if (hasNewLifecycleEvent && latestLifecycle) {
+  if (latestLifecycle) {
     lines.push(`- event: ${String(latestLifecycle.event ?? "event")}`);
     const eventStep = latestLifecycle.step ?? run.last_step ?? "?";
     lines.push(`- event_step: ${eventStep}`);
+    const latestSummary = describeLifecycleEvent(latestLifecycle);
+    if (latestSummary) {
+      lines.push(`- event_detail: ${latestSummary}`);
+    }
   }
   if (verbose) {
     const runMetrics = (run.metrics as Record<string, unknown> | undefined) || {};
@@ -451,6 +492,19 @@ function summarizePollUpdate(
     lines.push(`- lesson_activations: ${runMetrics.v2_lesson_activations ?? "?"}`);
     lines.push(`- retrieval_help_ratio: ${runMetrics.v2_retrieval_help_ratio ?? "?"}`);
     lines.push(`- error_count: ${runMetrics.error_count ?? "?"}`);
+    const visibleLifecycleRows = lifecycleEvents.length > 0
+      ? lifecycleEvents
+      : newLifecycleEvents;
+    if (visibleLifecycleRows.length > 0) {
+      const updates = visibleLifecycleRows
+        .slice(-4)
+        .map((row) => describeLifecycleEvent(row))
+        .filter((row) => row.length > 0)
+        .join(" | ");
+      if (updates) {
+        lines.push(`- live_updates: ${updates}`);
+      }
+    }
   }
 
   return {
@@ -470,8 +524,13 @@ async function maybeSendRunProgressUpdate(
   state.pollInFlight = true;
 
   try {
+    const verbose = state.verboseMode !== "off";
+    const traceMode = state.verboseMode === "trace";
+    const eventLimit = verbose
+      ? RUN_STATUS_POLL_EVENT_LIMIT_VERBOSE
+      : RUN_STATUS_POLL_EVENT_LIMIT;
     const bridge = await runCortexDispatch(
-      `/status run_id=${runId} progress=on limit=${RUN_STATUS_POLL_EVENT_LIMIT}`,
+      `/status run_id=${runId} progress=on limit=${eventLimit}`,
       scope
     );
     if (!bridge.payload || bridge.payload.mode !== "status") return;
@@ -481,9 +540,39 @@ async function maybeSendRunProgressUpdate(
       statusPayload,
       runId,
       state.lastLifecycleTs,
-      state.verbose
+      verbose
     );
     if (!poll) return;
+
+    const lifecycleEvents = Array.isArray(statusPayload.lifecycle_events)
+      ? (statusPayload.lifecycle_events as Record<string, unknown>[])
+      : [];
+    const newLifecycleEvents = lifecycleEvents.filter((event) => {
+      const ts = Number(event.ts ?? 0);
+      return Number.isFinite(ts) && ts > state.lastLifecycleTs;
+    });
+    let maxLifecycleTs = state.lastLifecycleTs;
+    for (const event of lifecycleEvents) {
+      const ts = Number(event.ts ?? 0);
+      if (Number.isFinite(ts) && ts > maxLifecycleTs) {
+        maxLifecycleTs = ts;
+      }
+    }
+    if (traceMode && newLifecycleEvents.length > 0) {
+      const traceRows = newLifecycleEvents
+        .slice(-6)
+        .map((row) => describeLifecycleEvent(row))
+        .filter((row) => row.length > 0);
+      if (traceRows.length > 0) {
+        await ctx.reply(
+          [
+            `Cortex trace ${runId}`,
+            ...traceRows.map((row) => `- ${row}`),
+          ].join("\n")
+        );
+      }
+    }
+    state.lastLifecycleTs = maxLifecycleTs;
 
     const now = Date.now();
     // Even when signature is unchanged, refresh periodically so elapsed/phase
@@ -504,15 +593,6 @@ async function maybeSendRunProgressUpdate(
 
     state.lastProgressSignature = poll.signature;
     state.lastProgressSentAtMs = now;
-    const lifecycleEvents = Array.isArray(statusPayload.lifecycle_events)
-      ? (statusPayload.lifecycle_events as Record<string, unknown>[])
-      : [];
-    for (const event of lifecycleEvents) {
-      const ts = Number(event.ts ?? 0);
-      if (Number.isFinite(ts) && ts > state.lastLifecycleTs) {
-        state.lastLifecycleTs = ts;
-      }
-    }
     if (state.progressMessageId) {
       try {
         await ctx.api.editMessageText(
@@ -552,7 +632,8 @@ async function runTaskAndReply(
 ): Promise<void> {
   const scope = chatScope(chatId);
   const runDispatch = buildRunDispatchText(runText);
-  const verbose = isVerboseEnabled(scope);
+  const verboseMode = getVerboseMode(scope);
+  const verbose = verboseMode !== "off";
   activeRuns.set(scope, {
     runId: runDispatch.runId,
     startedAtMs: Date.now(),
@@ -561,14 +642,15 @@ async function runTaskAndReply(
     lastProgressSignature: "",
     lastProgressSentAtMs: 0,
     lastLifecycleTs: 0,
-    verbose,
+    verboseMode,
   });
 
   const started = await ctx.reply(
     `Running via Cortex learning loop...\n` +
       `- run_id: ${runDispatch.runId}\n` +
-      `- verbose: ${verbose ? "on" : "off"}\n` +
-      `- use /run-status for progress\n` +
+      `- verbose: ${verboseMode}\n` +
+      `- live progress: on (auto)\n` +
+      `- use /run-status for manual refresh\n` +
       `- use /stop to request cancel`
   );
   const state = activeRuns.get(scope);
@@ -576,6 +658,9 @@ async function runTaskAndReply(
     state.progressMessageId = started.message_id;
   }
 
+  // Kick one immediate status poll so users see movement quickly, then continue
+  // with interval polling.
+  void maybeSendRunProgressUpdate(ctx, scope, runDispatch.runId);
   const pollTimer = startRunStatusPolling(ctx, scope, runDispatch.runId);
   let bridge: Awaited<ReturnType<typeof runCortexDispatch>>;
   try {
@@ -769,15 +854,23 @@ export async function maybeHandleCortexRoute(
       await ctx.reply(verboseCmd.error);
       return true;
     }
-    if (typeof verboseCmd.enabled === "boolean") {
-      setVerboseMode(scope, verboseCmd.enabled);
-      await ctx.reply(
-        `Verbose mode is now ${verboseCmd.enabled ? "on" : "off"} for this chat.`
-      );
+    if (verboseCmd.mode) {
+      setVerboseMode(scope, verboseCmd.mode);
+      if (verboseCmd.mode === "off") {
+        await ctx.reply("Verbose mode is now off for this chat.");
+      } else if (verboseCmd.mode === "on") {
+        await ctx.reply(
+          "Verbose mode is now on for this chat. Live progress includes richer run internals."
+        );
+      } else {
+        await ctx.reply(
+          "Verbose trace is now on for this chat. New lifecycle events will stream as separate messages."
+        );
+      }
       return true;
     }
     await ctx.reply(
-      `Verbose mode is ${isVerboseEnabled(scope) ? "on" : "off"} for this chat.\nUse /verbose on or /verbose off.`
+      `Verbose mode is ${getVerboseMode(scope)} for this chat.\nUse /verbose on, /verbose off, or /verbose trace.`
     );
     return true;
   }

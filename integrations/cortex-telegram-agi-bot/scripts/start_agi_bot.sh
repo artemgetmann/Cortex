@@ -14,6 +14,16 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# Dynamic path wiring: by default, bind runtime paths to the current checkout
+# (repo/worktree) so operators do not need to rewrite .env when switching
+# worktrees. Set CORTEX_DYNAMIC_PATHS=0 to pin legacy/static paths.
+if [[ "${CORTEX_DYNAMIC_PATHS:-1}" != "0" ]]; then
+  REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
+  export CORTEX_ROOT="$REPO_ROOT"
+  export CORTEX_DISPATCHER_PATH="$REPO_ROOT/integrations/cortex_dispatch.py"
+  export AI_WORKING_DIR="$ROOT_DIR/workspace"
+fi
+
 cd "$ROOT_DIR"
 
 # LaunchAgent shells often have a minimal PATH. Resolve bun explicitly so the
