@@ -16,7 +16,7 @@ Project north-star guidance is maintained in `CLAUDE.md` (and `AGENTS.md`, which
 - **Negative learning result:** Under a tighter three-step protocol with a different model, learning ON passed `5/10` versus `7/10` for OFF, with low lesson activation. Memory did not help in that setup. See [Hard Transfer Benchmark ON/OFF](tracks/cli_sqlite/reports/hard_shell_git_transfer_hotfix_step3_onoff_10run.md).
 - **Failure diagnosis:** Controlled tests separated insufficient step budget, inactive memory retrieval, and model capability as distinct bottlenecks. See [Three-Part Diagnosis](tracks/cli_sqlite/reports/diag_three_part_openai_nano_2026-03-02.md).
 
-These are small controlled experiments, not a claim that continual learning or autonomous self-improvement is solved.
+These are small controlled experiments, not a claim that continual learning or autonomous self-improvement is solved. The main unresolved problem is generalization: making lessons improve performance across many unrelated tasks without task-specific tuning.
 
 ## The Problem
 
