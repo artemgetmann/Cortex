@@ -9,6 +9,15 @@ That breaks real productivity.
 
 Project north-star guidance is maintained in `CLAUDE.md` (and `AGENTS.md`, which symlinks to it).
 
+## Key Findings
+
+- **Architecture trade-off:** In a 10-run-per-arm comparison, the simplified architecture beat the full design `90%` to `80%` on the easier `gridtool` task, while the full design beat simplified `100%` to `60%` on the harder `fluxtool` holdout. There was no universal winner. See [Architecture A/B Findings](docs/archive/memory-v2-history/AB-FINDINGS.md).
+- **Positive learning result:** On one hard shell-transfer test with 10 runs per arm, learning ON passed `5/10` versus `2/10` for OFF and reduced mean errors from `5.5` to `3.7`. See [Shell Hotfix Hard ON/OFF](tracks/cli_sqlite/reports/2026-03-09_shell_hotfix_hard_onoff_step6_10run.md).
+- **Negative learning result:** Under a tighter three-step protocol with a different model, learning ON passed `5/10` versus `7/10` for OFF, with low lesson activation. Memory did not help in that setup. See [Hard Transfer Benchmark ON/OFF](tracks/cli_sqlite/reports/hard_shell_git_transfer_hotfix_step3_onoff_10run.md).
+- **Failure diagnosis:** Controlled tests separated insufficient step budget, inactive memory retrieval, and model capability as distinct bottlenecks. See [Three-Part Diagnosis](tracks/cli_sqlite/reports/diag_three_part_openai_nano_2026-03-02.md).
+
+These are small controlled experiments, not a claim that continual learning or autonomous self-improvement is solved.
+
 ## The Problem
 
 Most agent memory systems are either:
